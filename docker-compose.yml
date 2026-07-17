@@ -1,0 +1,76 @@
+name: stock-data-repository
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: stock-data-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stockdata}
+      POSTGRES_USER: ${POSTGRES_USER:-stockdata}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - /mnt/user/appdata/stock-data-repository/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stockdata} -d ${POSTGRES_DB:-stockdata}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - stock-data-backend
+
+  migrate:
+    build: .
+    image: stock-data-repository:0.1.5
+    container_name: stock-data-migrate
+    env_file: .env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - stock-data-backend
+
+  api:
+    build: .
+    image: stock-data-repository:0.1.5
+    container_name: stock-data-api
+    restart: unless-stopped
+    env_file: .env
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - /mnt/user/appdata/stock-data-repository/data:/data
+    ports:
+      - "8787:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stock-data-backend
+      - paradiesplayground
+
+  worker:
+    build: .
+    image: stock-data-repository:0.1.5
+    container_name: stock-data-worker
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "-m", "app.scheduler"]
+    volumes:
+      - /mnt/user/appdata/stock-data-repository/data:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - stock-data-backend
+
+networks:
+  stock-data-backend:
+    driver: bridge
+  paradiesplayground:
+    external: true
