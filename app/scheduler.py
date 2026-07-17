@@ -52,7 +52,7 @@ def main() -> None:
     scheduler.add_job(
         _run_sec,
         CronTrigger.from_crontab(settings.sec_sync_cron, timezone=settings.timezone),
-        id="sec_bulk",
+        id="sec_incremental",
         **common,
     )
     signal.signal(signal.SIGTERM, lambda *_: scheduler.shutdown(wait=False))

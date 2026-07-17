@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import Filing, FinancialFact, Security
+from app.models import Filing, FinancialFact, IngestionCheckpoint, IngestionRun, Security
 from app.providers.sec import SecClient
 from app.services.runs import RunTracker
 
@@ -50,6 +50,7 @@ DEFAULT_FACT_CONCEPTS = {
 }
 
 FINANCIAL_FORMS = ("10-K", "10-Q", "20-F", "40-F", "6-K", "8-K")
+SEC_CHECKPOINT_JOB = "sec_daily_index"
 
 
 def _parse_date(value: Any) -> date | None:
@@ -322,24 +323,86 @@ def _parse_master_index(text: str) -> dict[str, set[str]]:
     return changed
 
 
+def _quarters_between(start_date: date, end_date: date) -> list[tuple[int, int]]:
+    quarters: list[tuple[int, int]] = []
+    year, quarter = start_date.year, ((start_date.month - 1) // 3) + 1
+    end_key = (end_date.year, ((end_date.month - 1) // 3) + 1)
+    while (year, quarter) <= end_key:
+        quarters.append((year, quarter))
+        if quarter == 4:
+            year, quarter = year + 1, 1
+        else:
+            quarter += 1
+    return quarters
+
+
+def _select_index_dates(
+    available_dates: set[date],
+    checkpoint_date: date | None,
+    bootstrap_start_date: date,
+    end_date: date,
+    overlap_indexes: int,
+) -> list[date]:
+    eligible = sorted(index_date for index_date in available_dates if index_date <= end_date)
+    if checkpoint_date is None:
+        return [index_date for index_date in eligible if index_date >= bootstrap_start_date]
+
+    completed = [index_date for index_date in eligible if index_date <= checkpoint_date]
+    overlap = completed[-overlap_indexes:] if overlap_indexes else []
+    new_dates = [index_date for index_date in eligible if index_date > checkpoint_date]
+    return sorted(set(overlap + new_dates))
+
+
+def _legacy_sec_checkpoint(session: Session) -> date | None:
+    latest_run = session.scalar(
+        select(IngestionRun)
+        .where(IngestionRun.job_name == "sec_incremental", IngestionRun.status == "succeeded")
+        .order_by(IngestionRun.started_at_utc.desc())
+        .limit(1)
+    )
+    if latest_run and latest_run.details:
+        return _parse_date(latest_run.details.get("end_date"))
+    return None
+
+
 def sync_sec_incremental(session: Session, settings: Settings) -> tuple[int, int]:
-    """Refresh only SEC filers appearing in recent daily master indexes."""
+    """Refresh SEC filers from newly published daily indexes plus a small overlap."""
     tracker = RunTracker(session, "sec_incremental", "sec-edgar")
     seen = written = 0
     end_date = date.today() - timedelta(days=1)
-    start_date = end_date - timedelta(days=settings.sec_incremental_lookback_days - 1)
+    bootstrap_start_date = end_date - timedelta(days=settings.sec_incremental_lookback_days - 1)
+    checkpoint = session.get(IngestionCheckpoint, SEC_CHECKPOINT_JOB)
+    checkpoint_date = checkpoint.checkpoint_date if checkpoint else _legacy_sec_checkpoint(session)
+    discovery_start_date = (
+        checkpoint_date - timedelta(days=max(14, settings.sec_incremental_overlap_indexes * 4))
+        if checkpoint_date
+        else bootstrap_start_date
+    )
     allowed_ciks = _known_ciks(session)
     changed: dict[str, set[str]] = {}
     try:
         with SecClient(settings) as client:
-            current = start_date
-            while current <= end_date:
-                index_text = client.get_daily_master_index(current)
-                if index_text:
-                    for cik, forms in _parse_master_index(index_text).items():
-                        if cik in allowed_ciks:
-                            changed.setdefault(cik, set()).update(forms)
-                current += timedelta(days=1)
+            available_dates: set[date] = set()
+            for year, quarter in _quarters_between(discovery_start_date, end_date):
+                quarter_dates = client.get_daily_master_index_dates(year, quarter)
+                if quarter_dates is None:
+                    raise RuntimeError(f"SEC daily-index directory unavailable for {year} QTR{quarter}")
+                available_dates.update(quarter_dates)
+
+            index_dates = _select_index_dates(
+                available_dates,
+                checkpoint_date,
+                bootstrap_start_date,
+                end_date,
+                settings.sec_incremental_overlap_indexes,
+            )
+            for index_date in index_dates:
+                index_text = client.get_daily_master_index(index_date)
+                if index_text is None:
+                    raise RuntimeError(f"Listed SEC daily master index is unavailable: {index_date}")
+                for cik, forms in _parse_master_index(index_text).items():
+                    if cik in allowed_ciks:
+                        changed.setdefault(cik, set()).update(forms)
 
             for position, (cik, forms) in enumerate(sorted(changed.items()), start=1):
                 submissions = client.get_submissions(cik)
@@ -359,12 +422,31 @@ def sync_sec_incremental(session: Session, settings: Settings) -> tuple[int, int
                 if position % 100 == 0:
                     logger.info("SEC incremental processed %s/%s changed CIKs", position, len(changed))
 
+        new_checkpoint_date = max(index_dates, default=checkpoint_date)
+        if new_checkpoint_date is not None:
+            checkpoint_details = {
+                "processed_index_dates": [index_date.isoformat() for index_date in index_dates],
+                "overlap_indexes": settings.sec_incremental_overlap_indexes,
+            }
+            if checkpoint is None:
+                checkpoint = IngestionCheckpoint(
+                    job_name=SEC_CHECKPOINT_JOB,
+                    checkpoint_date=new_checkpoint_date,
+                    details=checkpoint_details,
+                )
+                session.add(checkpoint)
+            else:
+                checkpoint.checkpoint_date = new_checkpoint_date
+                checkpoint.details = checkpoint_details
+
         tracker.succeed(
             seen,
             written,
             {
-                "start_date": start_date.isoformat(),
+                "checkpoint_before": checkpoint_date.isoformat() if checkpoint_date else None,
+                "checkpoint_after": new_checkpoint_date.isoformat() if new_checkpoint_date else None,
                 "end_date": end_date.isoformat(),
+                "processed_index_dates": [index_date.isoformat() for index_date in index_dates],
                 "changed_ciks": len(changed),
             },
         )

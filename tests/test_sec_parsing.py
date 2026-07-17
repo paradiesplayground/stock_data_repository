@@ -1,9 +1,13 @@
+from datetime import date
 from decimal import Decimal
 
+from app.providers.sec import _parse_daily_master_dates
 from app.services.sec_ingestion import (
     _iter_company_fact_rows,
     _parse_master_index,
+    _quarters_between,
     _recent_filing_rows,
+    _select_index_dates,
     _upsert_filing_rows,
 )
 
@@ -117,3 +121,50 @@ def test_filing_upsert_treats_items_as_a_column() -> None:
 
     sql = str(session.statement)
     assert "items = excluded.items" in sql
+
+
+def test_daily_index_directory_parser_ignores_non_master_files() -> None:
+    payload = {
+        "directory": {
+            "item": [
+                {"name": "master.20260715.idx"},
+                {"name": "master.20260716.idx"},
+                {"name": "company.20260716.idx"},
+                {"name": "master.invalid.idx"},
+            ]
+        }
+    }
+
+    assert _parse_daily_master_dates(payload) == {
+        date(2026, 7, 15),
+        date(2026, 7, 16),
+    }
+
+
+def test_checkpoint_selects_new_indexes_and_two_completed_indexes() -> None:
+    available = {
+        date(2026, 7, 10),
+        date(2026, 7, 13),
+        date(2026, 7, 14),
+        date(2026, 7, 15),
+        date(2026, 7, 16),
+    }
+
+    selected = _select_index_dates(
+        available,
+        checkpoint_date=date(2026, 7, 14),
+        bootstrap_start_date=date(2026, 7, 10),
+        end_date=date(2026, 7, 16),
+        overlap_indexes=2,
+    )
+
+    assert selected == [
+        date(2026, 7, 13),
+        date(2026, 7, 14),
+        date(2026, 7, 15),
+        date(2026, 7, 16),
+    ]
+
+
+def test_quarter_discovery_crosses_year_boundary() -> None:
+    assert _quarters_between(date(2025, 12, 20), date(2026, 1, 5)) == [(2025, 4), (2026, 1)]

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6
+
+- Add a durable SEC daily-index checkpoint.
+- Process only new SEC index files plus a configurable two-index safety overlap.
+- Discover published index dates from SEC quarter directories so weekends and holidays do not
+  appear as failures.
+- Expose ingestion checkpoint state through `/v1/freshness`.
+
 ## 0.1.5
 
 - Fix the SEC filing upsert for the `items` column, whose name collides with

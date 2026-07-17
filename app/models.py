@@ -137,3 +137,14 @@ class IngestionRun(Base):
     source_as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class IngestionCheckpoint(Base):
+    __tablename__ = "ingestion_checkpoints"
+
+    job_name: Mapped[str] = mapped_column(String(128), primary_key=True)
+    checkpoint_date: Mapped[date] = mapped_column(Date)
+    details: Mapped[dict | None] = mapped_column(JSONB)
+    updated_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

@@ -113,7 +113,7 @@ Defaults use `America/Chicago`:
 | Job | Default | Reason |
 |---|---:|---|
 | Massive reference | 2:30 AM weekdays | Refresh ticker and CIK mappings |
-| SEC incremental data | 4:30 AM Tuesday-Saturday | Refresh only CIKs found in recent SEC daily indexes |
+| SEC incremental data | 4:30 AM Tuesday-Saturday | Resume from the last completed SEC index |
 | Massive daily bars | 3:20 PM weekdays | Allows the 15-minute delayed final market bar to become available |
 
 Cron expressions are configurable in `.env`. Because Starter is 15 minutes delayed, a downstream daily screen should run after ingestion completes—roughly 3:25 PM Central, not exactly 3:15 PM. Physics and exchange licensing remain stubbornly uninterested in our preferred notification time.
@@ -155,8 +155,11 @@ python -m app.cli sync-sec-incremental
 ```
 
 `sync-sec` is the initial bulk bootstrap and is not scheduled nightly. The worker uses
-`sync-sec-incremental`, reviewing recent SEC daily indexes and refreshing only changed
-companies. A manual bulk run can be used occasionally for reconciliation.
+`sync-sec-incremental`, resuming from a durable daily-index checkpoint and refreshing only
+companies in new index files. It also reprocesses the two most recently completed indexes as a
+safety overlap. `SEC_INCREMENTAL_LOOKBACK_DAYS` is used only for the first run when no checkpoint
+or successful prior incremental run exists. A manual bulk run can be used occasionally for
+reconciliation.
 
 Each job writes a row to `ingestion_runs`, including failures. The `/v1/freshness` endpoint exposes the latest state so downstream tools can treat stale or missing data as unverified.
 

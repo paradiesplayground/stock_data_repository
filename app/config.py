@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     sec_requests_per_second: int = Field(default=5, ge=1, le=10)
     sec_keep_archives: bool = True
     sec_incremental_lookback_days: int = Field(default=7, ge=1, le=31)
+    sec_incremental_overlap_indexes: int = Field(default=2, ge=0, le=10)
 
     data_dir: Path = Path("/data")
     api_bearer_token: str = ""

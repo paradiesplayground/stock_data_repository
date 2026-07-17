@@ -6,7 +6,14 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import DailyPriceBar, Filing, FinancialFact, IngestionRun, Security
+from app.models import (
+    DailyPriceBar,
+    Filing,
+    FinancialFact,
+    IngestionCheckpoint,
+    IngestionRun,
+    Security,
+)
 from app.security import require_api_token
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_api_token)])
@@ -47,9 +54,19 @@ def freshness(session: DbSession) -> dict[str, object]:
             )
     latest_trade_date = session.scalar(select(func.max(DailyPriceBar.trade_date)))
     latest_sec_filed = session.scalar(select(func.max(Filing.filed_date)))
+    checkpoints = session.scalars(select(IngestionCheckpoint).order_by(IngestionCheckpoint.job_name)).all()
     return {
         "latest_trade_date": latest_trade_date,
         "latest_sec_filing_date": latest_sec_filed,
+        "checkpoints": [
+            {
+                "job_name": checkpoint.job_name,
+                "checkpoint_date": checkpoint.checkpoint_date,
+                "updated_at_utc": checkpoint.updated_at_utc,
+                "details": checkpoint.details,
+            }
+            for checkpoint in checkpoints
+        ],
         "jobs": latest,
     }
 

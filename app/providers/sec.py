@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from datetime import date
 from pathlib import Path
@@ -9,6 +10,21 @@ import httpx
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
+
+DAILY_MASTER_PATTERN = re.compile(r"^master\.(\d{8})\.idx$")
+
+
+def _parse_daily_master_dates(payload: dict[str, Any]) -> set[date]:
+    dates: set[date] = set()
+    for item in payload.get("directory", {}).get("item", []):
+        match = DAILY_MASTER_PATTERN.match(str(item.get("name", "")))
+        if not match:
+            continue
+        try:
+            dates.add(date.fromisoformat(f"{match[1][:4]}-{match[1][4:6]}-{match[1][6:]}"))
+        except ValueError:
+            continue
+    return dates
 
 
 class SecClient:
@@ -120,5 +136,13 @@ class SecClient:
             f"{self.settings.sec_base_url.rstrip('/')}/Archives/edgar/daily-index/"
             f"{index_date.year}/QTR{quarter}/master.{index_date:%Y%m%d}.idx"
         )
-        response = self._get(url, missing_statuses=frozenset({403, 404}))
+        response = self._get(url)
         return response.text if response is not None else None
+
+    def get_daily_master_index_dates(self, year: int, quarter: int) -> set[date] | None:
+        url = (
+            f"{self.settings.sec_base_url.rstrip('/')}/Archives/edgar/daily-index/"
+            f"{year}/QTR{quarter}/index.json"
+        )
+        payload = self.get_json(url)
+        return _parse_daily_master_dates(payload) if payload is not None else None
