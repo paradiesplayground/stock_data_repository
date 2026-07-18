@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Add a stateless Streamable HTTP MCP service on host port 8788.
+- Expose six read-only tools for security search/lookup, price history, SEC facts, filings, and
+  ingestion freshness.
+- Keep screening, scoring, ranking, recommendations, sizing, and trading outside the data repo.
+
 ## 0.1.6
 
 - Add a durable SEC daily-index checkpoint.

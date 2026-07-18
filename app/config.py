@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     data_dir: Path = Path("/data")
     api_bearer_token: str = ""
 
+    mcp_host: str = "0.0.0.0"
+    mcp_port: int = Field(default=8001, ge=1, le=65535)
+
     timezone: str = "America/Chicago"
     market_sync_cron: str = "20 15 * * 1-5"
     reference_sync_cron: str = "30 2 * * 1-5"

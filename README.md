@@ -10,11 +10,12 @@ It deliberately does **not** screen, score, rank, recommend, size, or trade stoc
 
 ## Architecture
 
-The Compose project runs one application image in three roles:
+The Compose project runs one application image in four roles:
 
 - `migrate`: applies database migrations and exits
 - `api`: read-only FastAPI repository on host port `8787`
 - `worker`: scheduled Massive and SEC ingestion
+- `mcp`: read-only Streamable HTTP MCP service on host port `8788`
 
 PostgreSQL stores normalized data. Original SEC ZIP archives are retained under `/data/raw/sec` by default.
 
@@ -142,6 +143,30 @@ GET /v1/securities/{ticker}/filings
 
 Interactive OpenAPI documentation is available at `http://UNRAID-IP:8787/docs`.
 
+## Read-only MCP service
+
+The MCP endpoint is:
+
+```text
+http://UNRAID-IP:8788/mcp
+```
+
+It uses stateless Streamable HTTP and exposes:
+
+```text
+search_securities
+lookup_security
+get_price_history
+get_financial_facts
+get_filings
+get_data_freshness
+```
+
+The MCP service deliberately contains no screening or write tools. Keep it on a private network;
+do not port-forward `8788` to the public internet. ChatGPT cannot connect directly to a private
+LAN endpoint, so use OpenAI Secure MCP Tunnel when connecting this on-premises service to a
+supported ChatGPT product.
+
 ## Manual jobs
 
 ```bash
@@ -170,7 +195,3 @@ python -m pip install -r requirements-dev.txt
 ruff check app tests
 pytest
 ```
-
-## Planned next phase
-
-The MCP server will wrap these read-only repository functions and expose compact tools such as security lookup, price history, reported facts, filing metadata, and freshness. It will not add screening logic.
