@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Add a pinned OpenAI Secure MCP Tunnel client as a Compose service.
+- Route the tunnel to the MCP server over the private Compose network.
+- Keep the tunnel ID and runtime API key in `.env`, outside Git.
+- Bind the tunnel health/admin UI to Unraid loopback by default.
+
 ## 0.2.0
 
 - Add a stateless Streamable HTTP MCP service on host port 8788.
