@@ -16,6 +16,7 @@ The Compose project runs one application image in four roles:
 - `api`: read-only FastAPI repository on host port `8787`
 - `worker`: scheduled Massive and SEC ingestion
 - `mcp`: read-only Streamable HTTP MCP service on host port `8788`
+- `tunnel`: outbound-only OpenAI Secure MCP Tunnel client
 
 PostgreSQL stores normalized data. Original SEC ZIP archives are retained under `/data/raw/sec` by default.
 
@@ -67,6 +68,8 @@ DATABASE_URL=postgresql+psycopg://stockdata:THE_SAME_PASSWORD@postgres:5432/stoc
 MASSIVE_API_KEY=your-key-from-massive
 SEC_USER_AGENT=StockDataRepository your-real-email@example.com
 API_BEARER_TOKEN=another-long-random-token
+OPENAI_TUNNEL_ID=tunnel_your_id
+OPENAI_TUNNEL_API_KEY=your-runtime-api-key
 ```
 
 Do not paste API keys into chat, commit them, or bake them into the image.
@@ -166,6 +169,36 @@ The MCP service deliberately contains no screening or write tools. Keep it on a 
 do not port-forward `8788` to the public internet. ChatGPT cannot connect directly to a private
 LAN endpoint, so use OpenAI Secure MCP Tunnel when connecting this on-premises service to a
 supported ChatGPT product.
+
+### OpenAI Secure MCP Tunnel
+
+The `tunnel` service builds the pinned official OpenAI `tunnel-client` release and connects it to
+the MCP service over the private Compose network at `http://mcp:8001/mcp`. It opens an outbound
+HTTPS connection to OpenAI; no router port forwarding or Cloudflare Tunnel is required.
+
+Create both values before starting the Compose project:
+
+1. Create or inspect the tunnel in [OpenAI Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels).
+2. Create a separate runtime API key in [OpenAI Platform API keys](https://platform.openai.com/settings/organization/api-keys).
+3. Put the values in `.env` as `OPENAI_TUNNEL_ID` and `OPENAI_TUNNEL_API_KEY`.
+
+Do not use an OpenAI admin key for the long-running tunnel service. The runtime key's principal
+needs **Tunnels Read + Use** permission. Keep both values out of Git and chat.
+
+After deployment, check the containers and tunnel logs:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 tunnel
+```
+
+The tunnel's local health/admin UI is bound to `127.0.0.1:8789` on Unraid by default. To view it
+from a trusted LAN browser, set `TUNNEL_HEALTH_BIND` to the Unraid LAN IP in `.env`, redeploy, and
+open `http://UNRAID-IP:8789/ui`. Do not forward port `8789` to the internet.
+
+When the tunnel reports ready, open ChatGPT **Settings -> Plugins**, create a developer-mode app,
+choose **Tunnel** as the connection type, and select this tunnel. Tool discovery should find the
+six read-only tools listed above.
 
 ## Manual jobs
 
