@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Build the Python application image once through the `migrate` service.
+- Reuse the same local image for the API, worker, and MCP roles without registry pulls.
+- Use a stable local image tag to prevent old version-tagged images from accumulating.
+
 ## 0.2.1
 
 - Add a pinned OpenAI Secure MCP Tunnel client as a Compose service.
