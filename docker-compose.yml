@@ -21,7 +21,7 @@ services:
 
   migrate:
     build: .
-    image: stock-data-repository:0.2.1
+    image: stock-data-repository:local
     container_name: stock-data-migrate
     env_file: .env
     command: ["alembic", "upgrade", "head"]
@@ -32,8 +32,8 @@ services:
       - stock-data-backend
 
   api:
-    build: .
-    image: stock-data-repository:0.2.1
+    image: stock-data-repository:local
+    pull_policy: never
     container_name: stock-data-api
     restart: unless-stopped
     env_file: .env
@@ -55,8 +55,8 @@ services:
       - paradiesplayground
 
   worker:
-    build: .
-    image: stock-data-repository:0.2.1
+    image: stock-data-repository:local
+    pull_policy: never
     container_name: stock-data-worker
     restart: unless-stopped
     env_file: .env
@@ -70,8 +70,8 @@ services:
       - stock-data-backend
 
   mcp:
-    build: .
-    image: stock-data-repository:0.2.1
+    image: stock-data-repository:local
+    pull_policy: never
     container_name: stock-data-mcp
     restart: unless-stopped
     env_file: .env
