@@ -105,7 +105,7 @@ services:
       MCP_SERVER_URL: http://mcp:8001/mcp
       LOG_LEVEL: ${TUNNEL_LOG_LEVEL:-info}
       LOG_FORMAT: json
-      HEALTH_LISTEN_ADDR: :8080
+      HEALTH_LISTEN_ADDR: ":8080"
     ports:
       - "${TUNNEL_HEALTH_BIND:-127.0.0.1}:8789:8080"
     depends_on:
