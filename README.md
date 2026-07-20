@@ -80,6 +80,16 @@ Start the project:
 docker compose up -d --build
 ```
 
+The `migrate` service owns the single application-image build. The `api`, `worker`, and `mcp`
+services reuse `stock-data-repository:local` and never try to pull it from a registry. Do not add
+`build: .` back to those three services; doing so makes Compose rebuild the same image multiple
+times and produces several orphaned images during an update.
+
+Use **Update & Rebuild** after pulling application-code changes. The stable local tag prevents a
+new version-tagged image from accumulating on every release. Docker may still retain one replaced
+untagged image after a genuine rebuild; it is safe to remove after the updated containers are
+healthy.
+
 Check status:
 
 ```bash
