@@ -21,7 +21,7 @@ services:
 
   migrate:
     build: .
-    image: stock-data-repository:0.2.0
+    image: stock-data-repository:0.2.1
     container_name: stock-data-migrate
     env_file: .env
     command: ["alembic", "upgrade", "head"]
@@ -33,7 +33,7 @@ services:
 
   api:
     build: .
-    image: stock-data-repository:0.2.0
+    image: stock-data-repository:0.2.1
     container_name: stock-data-api
     restart: unless-stopped
     env_file: .env
@@ -56,7 +56,7 @@ services:
 
   worker:
     build: .
-    image: stock-data-repository:0.2.0
+    image: stock-data-repository:0.2.1
     container_name: stock-data-worker
     restart: unless-stopped
     env_file: .env
@@ -71,7 +71,7 @@ services:
 
   mcp:
     build: .
-    image: stock-data-repository:0.2.0
+    image: stock-data-repository:0.2.1
     container_name: stock-data-mcp
     restart: unless-stopped
     env_file: .env
@@ -89,6 +89,36 @@ services:
     networks:
       - stock-data-backend
       - paradiesplayground
+
+  tunnel:
+    build:
+      context: https://github.com/openai/tunnel-client.git#v0.0.10
+      args:
+        GIT_SHA: 105e17a
+        GOPROXY: https://proxy.golang.org
+    image: stock-data-tunnel-client:0.0.10
+    container_name: stock-data-tunnel
+    restart: unless-stopped
+    environment:
+      CONTROL_PLANE_TUNNEL_ID: ${OPENAI_TUNNEL_ID:?Set OPENAI_TUNNEL_ID in .env}
+      CONTROL_PLANE_API_KEY: ${OPENAI_TUNNEL_API_KEY:?Set OPENAI_TUNNEL_API_KEY in .env}
+      MCP_SERVER_URL: http://mcp:8001/mcp
+      LOG_LEVEL: ${TUNNEL_LOG_LEVEL:-info}
+      LOG_FORMAT: json
+      HEALTH_LISTEN_ADDR: :8080
+    ports:
+      - "${TUNNEL_HEALTH_BIND:-127.0.0.1}:8789:8080"
+    depends_on:
+      mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - stock-data-backend
 
 networks:
   stock-data-backend:
