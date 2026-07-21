@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.1
+
+- Make the scheduled market target configurable for same-day EOD or prior-session workflows.
+- Retry temporarily unavailable same-day EOD responses with configurable bounded backoff.
+- Reject partial grouped-daily payloads using absolute and prior-session coverage thresholds.
+- Apply the absolute completeness check to explicit one-day market reloads as well.
+- Prevent derived-feature jobs from succeeding against stale or materially incomplete prices.
+- Expose the expected session, configured schedules, and screening-readiness booleans in freshness.
+- Make feature queries select the latest snapshot on or before a requested date.
+- Preserve securities with unknown SIC codes when callers exclude known healthcare companies.
+- Calculate average dollar volume from each day's close and volume, and omit stale-price rows from
+  snapshot-wide feature queries.
+- Use the configured local timezone for SEC and market date boundaries.
+- Share one freshness implementation between the HTTP API and MCP service.
+
 ## 0.3.0
 
 - Add versioned daily derived fields without adding scores, rankings, or recommendations.

@@ -10,6 +10,7 @@ from app.services.massive_ingestion import (
     _dedupe_security_rows,
     latest_eligible_market_date,
     market_dates_to_sync,
+    market_target_date,
 )
 
 
@@ -63,6 +64,13 @@ def test_latest_eligible_market_date_skips_weekends() -> None:
     assert latest_eligible_market_date(date(2026, 7, 20)) == date(2026, 7, 17)
     assert latest_eligible_market_date(date(2026, 7, 19)) == date(2026, 7, 17)
     assert latest_eligible_market_date(date(2026, 7, 18)) == date(2026, 7, 17)
+
+
+def test_market_target_date_supports_same_day_and_lagged_workflows() -> None:
+    assert market_target_date(date(2026, 7, 20), 0) == date(2026, 7, 20)
+    assert market_target_date(date(2026, 7, 19), 0) == date(2026, 7, 17)
+    assert market_target_date(date(2026, 7, 20), 1) == date(2026, 7, 17)
+    assert market_target_date(date(2026, 7, 21), 1) == date(2026, 7, 20)
 
 
 def test_incremental_market_dates_catch_up_missing_weekdays() -> None:

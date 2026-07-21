@@ -141,13 +141,36 @@ Defaults use `America/Chicago`:
 |---|---:|---|
 | Massive reference | 2:30 AM weekdays | Refresh ticker and CIK mappings |
 | SEC incremental data | 4:30 AM Tuesday-Saturday | Resume from the last completed SEC index |
-| Massive daily bars | 2:20 AM Tuesday-Saturday | Catches up the prior session without requesting same-day data |
-| Derived daily fields | 5:30 AM Tuesday-Saturday | Runs after both source-ingestion jobs |
+| Massive daily bars | 4:30 PM weekdays | Request the current session's EOD bars after the close |
+| Derived daily fields | 5:00 PM weekdays | Runs after the market job and bounded publication retries |
 
-Cron expressions are configurable in `.env`. The scheduled market job resumes after missed runs
-and defaults to the latest weekday strictly before the current date, making it compatible with
-end-of-day access and preventing weekend requests. A downstream screen should run only after the
-repository reports the expected trade date as fresh.
+Cron expressions and the market-date target are configurable in `.env`. The default
+`MASSIVE_MARKET_LAG_DAYS=0` targets the current weekday, retries a temporarily unavailable EOD
+response, and rejects an unexpectedly partial result. Set it to `1` to use the prior-session
+morning workflow instead. Historical backfills remain conservative and never request the current
+session by default.
+
+The feature job refuses to publish a fresh snapshot unless the expected market date exists and
+contains at least `MASSIVE_MIN_DAILY_RESULTS` rows. `/v1/freshness` and `get_data_freshness`
+report `expected_market_date`, `market_is_current`, `features_are_current`, and
+`ready_for_screening`. Schedule downstream screening only after `ready_for_screening=true`; with
+the defaults, 5:30 PM Central is a reasonable starting time. U.S. market holidays are not inferred
+from weekdays, so a holiday will remain not ready instead of incorrectly blessing older data.
+
+The SEC daily-index job intentionally processes completed index dates through the prior calendar
+day. Same-day market bars therefore do not imply that SEC filings submitted that same afternoon
+have already appeared in the repository.
+
+For a conservative next-morning schedule, use:
+
+```dotenv
+MASSIVE_MARKET_LAG_DAYS=1
+MARKET_SYNC_CRON=20 2 * * 2-6
+FEATURE_SYNC_CRON=30 5 * * 2-6
+```
+
+For a plan with reliable 15-minute delayed data, you can move the same-day jobs earlier (for
+example, 3:25 PM and 3:50 PM Central) while keeping downstream screening after the feature job.
 
 ## Read-only API
 
@@ -197,7 +220,9 @@ query_security_features
 ```
 
 `query_security_features` applies caller-provided thresholds and sorting to deterministic fields.
-It does not contain a built-in strategy, score, ranking, position size, or recommendation. The MCP
+Snapshot-wide queries include only rows whose `price_date` matches the selected feature date;
+ticker-specific lookup still exposes older rows and their quality flags for diagnosis. The tool
+does not contain a built-in strategy, score, ranking, position size, or recommendation. The MCP
 service contains no write tools. Keep it on a private network;
 do not port-forward `8788` to the public internet. ChatGPT cannot connect directly to a private
 LAN endpoint, so use OpenAI Secure MCP Tunnel when connecting this on-premises service to a
@@ -231,7 +256,7 @@ open `http://UNRAID-IP:8789/ui`. Do not forward port `8789` to the internet.
 
 When the tunnel reports ready, open ChatGPT **Settings -> Plugins**, create a developer-mode app,
 choose **Tunnel** as the connection type, and select this tunnel. Refresh tool discovery after a
-v0.3.0 deployment so ChatGPT can see the eight read-only tools listed above.
+v0.3.x deployment so ChatGPT can see the eight read-only tools listed above.
 
 ## Manual jobs
 
@@ -248,8 +273,10 @@ python -m app.cli sync-sec
 python -m app.cli sync-sec-incremental
 ```
 
-Without `--date`, `sync-market` safely catches up every missing weekday through the latest eligible
-date. Use `--date` only when deliberately reloading or troubleshooting one session.
+Without `--date`, `sync-market` safely catches up every missing weekday through the configured
+market target. Use `--date` only when deliberately reloading or troubleshooting one session.
+An explicit market date also applies the minimum-row completeness check, but it does not wait
+through the scheduled job's same-day publication retry window.
 
 `sync-sec` is the initial bulk bootstrap and is not scheduled nightly. The worker uses
 `sync-sec-incremental`, resuming from a durable daily-index checkpoint and refreshing only

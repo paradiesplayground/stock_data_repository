@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     massive_base_url: str = "https://api.massive.com"
     massive_requests_per_minute: int = Field(default=5, ge=1, le=10000)
     massive_backfill_days: int = Field(default=400, ge=30, le=5000)
+    massive_market_lag_days: int = Field(default=0, ge=0, le=7)
+    massive_eod_retry_attempts: int = Field(default=4, ge=1, le=12)
+    massive_eod_retry_seconds: int = Field(default=300, ge=15, le=1800)
+    massive_min_daily_results: int = Field(default=5000, ge=100, le=50000)
+    massive_min_daily_coverage_ratio: float = Field(default=0.8, ge=0.25, le=1.0)
 
     sec_user_agent: str = ""
     sec_base_url: str = "https://www.sec.gov"
@@ -30,10 +35,10 @@ class Settings(BaseSettings):
     mcp_port: int = Field(default=8001, ge=1, le=65535)
 
     timezone: str = "America/Chicago"
-    market_sync_cron: str = "20 2 * * 2-6"
+    market_sync_cron: str = "30 16 * * 1-5"
     reference_sync_cron: str = "30 2 * * 1-5"
     sec_sync_cron: str = "30 4 * * 1-6"
-    feature_sync_cron: str = "30 5 * * 2-6"
+    feature_sync_cron: str = "0 17 * * 1-5"
     log_level: str = "INFO"
 
     @property

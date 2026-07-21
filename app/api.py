@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.mcp_queries import (
+    get_data_freshness as query_data_freshness,
     get_security_features as query_security_features_for_ticker,
     query_security_features as query_feature_rows,
 )
@@ -14,10 +15,7 @@ from app.models import (
     DailyPriceBar,
     Filing,
     FinancialFact,
-    IngestionCheckpoint,
-    IngestionRun,
     Security,
-    SecurityDailyFeature,
 )
 from app.security import require_api_token
 
@@ -34,48 +32,7 @@ def _security_or_404(session: Session, ticker: str) -> Security:
 
 @router.get("/freshness")
 def freshness(session: DbSession) -> dict[str, object]:
-    jobs = session.scalars(select(IngestionRun.job_name).distinct()).all()
-    latest: list[dict[str, object]] = []
-    for job in sorted(jobs):
-        run = session.scalar(
-            select(IngestionRun)
-            .where(IngestionRun.job_name == job)
-            .order_by(desc(IngestionRun.started_at_utc))
-            .limit(1)
-        )
-        if run:
-            latest.append(
-                {
-                    "job_name": run.job_name,
-                    "source": run.source,
-                    "status": run.status,
-                    "started_at_utc": run.started_at_utc,
-                    "completed_at_utc": run.completed_at_utc,
-                    "records_seen": run.records_seen,
-                    "records_written": run.records_written,
-                    "details": run.details,
-                    "error_message": run.error_message,
-                }
-            )
-    latest_trade_date = session.scalar(select(func.max(DailyPriceBar.trade_date)))
-    latest_sec_filed = session.scalar(select(func.max(Filing.filed_date)))
-    latest_feature_date = session.scalar(select(func.max(SecurityDailyFeature.as_of_date)))
-    checkpoints = session.scalars(select(IngestionCheckpoint).order_by(IngestionCheckpoint.job_name)).all()
-    return {
-        "latest_trade_date": latest_trade_date,
-        "latest_sec_filing_date": latest_sec_filed,
-        "latest_feature_date": latest_feature_date,
-        "checkpoints": [
-            {
-                "job_name": checkpoint.job_name,
-                "checkpoint_date": checkpoint.checkpoint_date,
-                "updated_at_utc": checkpoint.updated_at_utc,
-                "details": checkpoint.details,
-            }
-            for checkpoint in checkpoints
-        ],
-        "jobs": latest,
-    }
+    return query_data_freshness(session)
 
 
 @router.get("/features")

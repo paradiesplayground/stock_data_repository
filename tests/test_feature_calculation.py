@@ -151,5 +151,27 @@ def test_price_metrics_calculate_liquidity_and_drawdowns() -> None:
     assert "stale_price" not in flags
 
 
+def test_average_dollar_volume_uses_each_days_price() -> None:
+    as_of = date(2026, 7, 17)
+    rows = [
+        SimpleNamespace(
+            trade_date=as_of - timedelta(days=1),
+            close=Decimal("10"),
+            high=Decimal("10"),
+            volume=Decimal("100"),
+        ),
+        SimpleNamespace(
+            trade_date=as_of,
+            close=Decimal("20"),
+            high=Decimal("20"),
+            volume=Decimal("200"),
+        ),
+    ]
+
+    metrics, _ = _price_metrics(rows, as_of)
+
+    assert metrics["avg_dollar_volume_20d"] == Decimal("2500")
+
+
 def test_rsi_handles_flat_series_without_division_by_zero() -> None:
     assert _rsi([Decimal("10")] * 20) == Decimal("50")

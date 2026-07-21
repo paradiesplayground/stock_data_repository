@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo
 
 from dateutil.parser import isoparse
 from sqlalchemy import select, update
@@ -369,7 +370,7 @@ def sync_sec_incremental(session: Session, settings: Settings) -> tuple[int, int
     """Refresh SEC filers from newly published daily indexes plus a small overlap."""
     tracker = RunTracker(session, "sec_incremental", "sec-edgar")
     seen = written = 0
-    end_date = date.today() - timedelta(days=1)
+    end_date = datetime.now(ZoneInfo(settings.timezone)).date() - timedelta(days=1)
     bootstrap_start_date = end_date - timedelta(days=settings.sec_incremental_lookback_days - 1)
     checkpoint = session.get(IngestionCheckpoint, SEC_CHECKPOINT_JOB)
     checkpoint_date = checkpoint.checkpoint_date if checkpoint else _legacy_sec_checkpoint(session)

@@ -10,11 +10,12 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import DailyPriceBar, FinancialFact, Security, SecurityDailyFeature
+from app.services.massive_ingestion import local_today, market_target_date
 from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
 
-CALCULATION_VERSION = "1.0.0"
+CALCULATION_VERSION = "1.0.1"
 HUNDRED = Decimal("100")
 
 REVENUE_CONCEPTS = (
@@ -118,7 +119,12 @@ def _price_metrics(rows: list[DailyPriceBar], as_of_date: date) -> tuple[dict[st
         if last_20
         else None
     )
-    avg_dollar_volume = avg_volume * latest.close if avg_volume is not None else None
+    avg_dollar_volume = (
+        sum((row.volume * row.close for row in last_20), Decimal("0"))
+        / Decimal(len(last_20))
+        if last_20
+        else None
+    )
     previous_20 = eligible[-21:-1]
     prior_avg_volume = (
         sum((row.volume for row in previous_20), Decimal("0")) / Decimal(len(previous_20))
@@ -465,9 +471,27 @@ def calculate_daily_features(
     tracker = RunTracker(session, "derived_features", "massive+sec-edgar")
     seen = written = 0
     try:
-        effective_date = as_of_date or session.scalar(select(func.max(DailyPriceBar.trade_date)))
-        if effective_date is None:
+        latest_trade_date = session.scalar(select(func.max(DailyPriceBar.trade_date)))
+        if latest_trade_date is None:
             raise RuntimeError("Cannot calculate features before market data is loaded")
+        expected_date = market_target_date(
+            local_today(settings), settings.massive_market_lag_days
+        )
+        effective_date = as_of_date or expected_date
+        if as_of_date is None and latest_trade_date < expected_date:
+            raise RuntimeError(
+                f"Market data is stale: latest={latest_trade_date}, expected={expected_date}"
+            )
+        source_rows = session.scalar(
+            select(func.count(DailyPriceBar.id)).where(
+                DailyPriceBar.trade_date == effective_date
+            )
+        ) or 0
+        if source_rows < settings.massive_min_daily_results:
+            raise RuntimeError(
+                f"Market data is incomplete for {effective_date}: {source_rows} rows; "
+                f"expected at least {settings.massive_min_daily_results}"
+            )
 
         securities = session.scalars(
             select(Security).where(
@@ -571,6 +595,8 @@ def calculate_daily_features(
             written,
             {
                 "as_of_date": effective_date.isoformat(),
+                "expected_market_date": expected_date.isoformat(),
+                "source_market_rows": source_rows,
                 "calculation_version": CALCULATION_VERSION,
                 "price_rows_read": len(price_rows),
                 "financial_facts_read": len(fact_rows),

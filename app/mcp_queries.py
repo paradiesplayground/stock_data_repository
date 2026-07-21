@@ -1,10 +1,12 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.config import Settings, get_settings
 from app.models import (
     DailyPriceBar,
     Filing,
@@ -14,6 +16,7 @@ from app.models import (
     Security,
     SecurityDailyFeature,
 )
+from app.services.massive_ingestion import market_target_date
 
 
 def _date_value(value: str | None, field_name: str) -> date | None:
@@ -131,7 +134,12 @@ def query_security_features(
 ) -> dict[str, Any]:
     limit = _limit(limit, 500)
     requested_date = _date_value(as_of_date, "as_of_date")
-    effective_date = requested_date or session.scalar(select(func.max(SecurityDailyFeature.as_of_date)))
+    date_statement = select(func.max(SecurityDailyFeature.as_of_date))
+    if requested_date:
+        date_statement = date_statement.where(
+            SecurityDailyFeature.as_of_date <= requested_date
+        )
+    effective_date = session.scalar(date_statement)
     if effective_date is None:
         return {
             "as_of_date": None,
@@ -144,6 +152,7 @@ def query_security_features(
         .join(Security, Security.ticker == SecurityDailyFeature.ticker)
         .where(
             SecurityDailyFeature.as_of_date == effective_date,
+            SecurityDailyFeature.price_date == effective_date,
             Security.active.is_(True),
         )
     )
@@ -157,7 +166,7 @@ def query_security_features(
             | Security.sic_code.like("80%")
             | Security.sic_code.in_(("5047", "5122", "6324", "7352", "8731"))
         )
-        statement = statement.where(~healthcare)
+        statement = statement.where(or_(Security.sic_code.is_(None), ~healthcare))
 
     filters = (
         (min_price, SecurityDailyFeature.close, ">="),
@@ -428,7 +437,22 @@ def get_filings(
     }
 
 
-def get_data_freshness(session: Session) -> dict[str, Any]:
+def get_data_freshness(
+    session: Session,
+    settings: Settings | None = None,
+    current_time: datetime | None = None,
+) -> dict[str, Any]:
+    settings = settings or get_settings()
+    timezone = ZoneInfo(settings.timezone)
+    if current_time is None:
+        local_time = datetime.now(timezone)
+    elif current_time.tzinfo is None:
+        local_time = current_time.replace(tzinfo=timezone)
+    else:
+        local_time = current_time.astimezone(timezone)
+    expected_market_date = market_target_date(
+        local_time.date(), settings.massive_market_lag_days
+    )
     latest_trade_date = session.scalar(select(func.max(DailyPriceBar.trade_date)))
     latest_sec_filing_date = session.scalar(select(func.max(Filing.filed_date)))
     latest_feature_date = session.scalar(select(func.max(SecurityDailyFeature.as_of_date)))
@@ -445,6 +469,7 @@ def get_data_freshness(session: Session) -> dict[str, Any]:
             jobs.append(
                 {
                     "job_name": run.job_name,
+                    "source": run.source,
                     "status": run.status,
                     "started_at_utc": _json_value(run.started_at_utc),
                     "completed_at_utc": _json_value(run.completed_at_utc),
@@ -455,10 +480,33 @@ def get_data_freshness(session: Session) -> dict[str, Any]:
                 }
             )
     checkpoints = session.scalars(select(IngestionCheckpoint).order_by(IngestionCheckpoint.job_name)).all()
+    feature_job = next(
+        (job for job in jobs if job["job_name"] == "derived_features"), None
+    )
+    market_is_current = latest_trade_date == expected_market_date
+    features_are_current = (
+        latest_feature_date == expected_market_date
+        and latest_feature_date == latest_trade_date
+        and feature_job is not None
+        and feature_job["status"] == "succeeded"
+    )
     return {
+        "checked_at_local": local_time.isoformat(),
+        "timezone": settings.timezone,
+        "expected_market_date": expected_market_date.isoformat(),
         "latest_trade_date": _json_value(latest_trade_date),
         "latest_sec_filing_date": _json_value(latest_sec_filing_date),
         "latest_feature_date": _json_value(latest_feature_date),
+        "market_is_current": market_is_current,
+        "features_are_current": features_are_current,
+        "ready_for_screening": market_is_current and features_are_current,
+        "schedules": {
+            "market_sync_cron": settings.market_sync_cron,
+            "feature_sync_cron": settings.feature_sync_cron,
+            "sec_sync_cron": settings.sec_sync_cron,
+            "reference_sync_cron": settings.reference_sync_cron,
+            "market_lag_days": settings.massive_market_lag_days,
+        },
         "checkpoints": [
             {
                 "job_name": checkpoint.job_name,

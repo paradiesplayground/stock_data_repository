@@ -48,7 +48,12 @@ def main() -> None:
             result = sync_reference_data(session, settings)
         elif args.command == "sync-market":
             result = (
-                sync_market_day(session, settings, args.date)
+                sync_market_day(
+                    session,
+                    settings,
+                    args.date,
+                    validate_completeness=True,
+                )
                 if args.date
                 else sync_market_incremental(session, settings)
             )

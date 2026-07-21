@@ -1,7 +1,10 @@
 import logging
-from datetime import date, timedelta
+import time
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -12,6 +15,14 @@ from app.providers.massive import MassiveClient
 from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
+
+
+class MarketDataIncomplete(RuntimeError):
+    pass
+
+
+def local_today(settings: Settings) -> date:
+    return datetime.now(ZoneInfo(settings.timezone)).date()
 
 
 def _clean_cik(value: object) -> str | None:
@@ -98,6 +109,7 @@ def sync_market_day(
     settings: Settings,
     trade_date: date,
     client: MassiveClient | None = None,
+    validate_completeness: bool = False,
 ) -> tuple[int, int]:
     tracker = RunTracker(
         session,
@@ -115,6 +127,11 @@ def sync_market_day(
         results = payload.get("results", [])
         seen = len(results)
         if not results:
+            if validate_completeness:
+                minimum = _minimum_daily_results(session, settings, trade_date)
+                raise MarketDataIncomplete(
+                    f"Massive returned 0 usable rows for {trade_date}; expected at least {minimum}"
+                )
             tracker.succeed(0, 0, {"trade_date": trade_date.isoformat(), "status": payload.get("status")})
             return 0, 0
 
@@ -141,6 +158,13 @@ def sync_market_day(
             if all(key in row for key in ("T", "o", "h", "l", "c", "v"))
         ]
         rows = _dedupe_price_rows(rows)
+        if validate_completeness:
+            minimum = _minimum_daily_results(session, settings, trade_date)
+            if len(rows) < minimum:
+                raise MarketDataIncomplete(
+                    f"Massive returned {len(rows)} usable rows for {trade_date}; "
+                    f"expected at least {minimum}"
+                )
         for start in range(0, len(rows), 1000):
             batch = rows[start : start + 1000]
             statement = insert(DailyPriceBar).values(batch)
@@ -178,7 +202,9 @@ def backfill_market_data(
     # The current trading day's daily summary may be unavailable until the
     # following day, depending on the Massive plan. Default to the latest
     # eligible weekday strictly before today.
-    end = end_date or latest_eligible_market_date()
+    end = end_date or market_target_date(
+        local_today(settings), max(1, settings.massive_market_lag_days)
+    )
     start = start_date or (end - timedelta(days=settings.massive_backfill_days))
     total_seen = total_written = 0
     current = start
@@ -192,16 +218,17 @@ def backfill_market_data(
     return total_seen, total_written
 
 
-def latest_eligible_market_date(as_of: date | None = None) -> date:
-    """Return the latest weekday strictly before ``as_of``.
-
-    Massive end-of-day entitlements may reject same-day grouped bars. Keeping
-    the default one calendar day behind also prevents weekend requests.
-    """
-    candidate = (as_of or date.today()) - timedelta(days=1)
+def market_target_date(as_of: date, lag_days: int) -> date:
+    """Return the configured weekday target on or before ``as_of``."""
+    candidate = as_of - timedelta(days=lag_days)
     while candidate.weekday() >= 5:
         candidate -= timedelta(days=1)
     return candidate
+
+
+def latest_eligible_market_date(as_of: date | None = None) -> date:
+    """Compatibility helper returning the latest weekday before ``as_of``."""
+    return market_target_date(as_of or date.today(), 1)
 
 
 def market_dates_to_sync(latest_stored: date | None, end_date: date) -> list[date]:
@@ -221,7 +248,8 @@ def sync_market_incremental(
     as_of: date | None = None,
 ) -> tuple[int, int]:
     """Catch up every missing weekday through the latest eligible market date."""
-    end = latest_eligible_market_date(as_of)
+    local_date = as_of or local_today(settings)
+    end = market_target_date(local_date, settings.massive_market_lag_days)
     latest_stored = session.scalar(select(func.max(DailyPriceBar.trade_date)))
     dates = market_dates_to_sync(latest_stored, end)
     if not dates:
@@ -231,10 +259,53 @@ def sync_market_incremental(
     total_seen = total_written = 0
     with MassiveClient(settings) as client:
         for trade_date in dates:
-            seen, written = sync_market_day(session, settings, trade_date, client=client)
+            is_same_day_target = (
+                settings.massive_market_lag_days == 0
+                and trade_date == local_date
+                and trade_date.weekday() < 5
+            )
+            attempts = settings.massive_eod_retry_attempts if is_same_day_target else 1
+            for attempt in range(1, attempts + 1):
+                try:
+                    seen, written = sync_market_day(
+                        session,
+                        settings,
+                        trade_date,
+                        client=client,
+                        validate_completeness=is_same_day_target,
+                    )
+                    break
+                except Exception as error:
+                    retryable = isinstance(error, MarketDataIncomplete) or (
+                        isinstance(error, httpx.HTTPStatusError)
+                        and error.response.status_code == 403
+                    )
+                    if not retryable or attempt == attempts:
+                        raise
+                    logger.warning(
+                        "Massive data for %s is not ready; retrying in %ss (%s/%s)",
+                        trade_date,
+                        settings.massive_eod_retry_seconds,
+                        attempt,
+                        attempts,
+                    )
+                    time.sleep(settings.massive_eod_retry_seconds)
             total_seen += seen
             total_written += written
     return total_seen, total_written
+
+
+def _minimum_daily_results(session: Session, settings: Settings, trade_date: date) -> int:
+    previous_date = session.scalar(
+        select(func.max(DailyPriceBar.trade_date)).where(DailyPriceBar.trade_date < trade_date)
+    )
+    if previous_date is None:
+        return settings.massive_min_daily_results
+    previous_count = session.scalar(
+        select(func.count(DailyPriceBar.id)).where(DailyPriceBar.trade_date == previous_date)
+    ) or 0
+    coverage_minimum = int(previous_count * settings.massive_min_daily_coverage_ratio)
+    return max(settings.massive_min_daily_results, coverage_minimum)
 
 
 def _dedupe_price_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
