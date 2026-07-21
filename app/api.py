@@ -6,6 +6,10 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.mcp_queries import (
+    get_security_features as query_security_features_for_ticker,
+    query_security_features as query_feature_rows,
+)
 from app.models import (
     DailyPriceBar,
     Filing,
@@ -13,6 +17,7 @@ from app.models import (
     IngestionCheckpoint,
     IngestionRun,
     Security,
+    SecurityDailyFeature,
 )
 from app.security import require_api_token
 
@@ -54,10 +59,12 @@ def freshness(session: DbSession) -> dict[str, object]:
             )
     latest_trade_date = session.scalar(select(func.max(DailyPriceBar.trade_date)))
     latest_sec_filed = session.scalar(select(func.max(Filing.filed_date)))
+    latest_feature_date = session.scalar(select(func.max(SecurityDailyFeature.as_of_date)))
     checkpoints = session.scalars(select(IngestionCheckpoint).order_by(IngestionCheckpoint.job_name)).all()
     return {
         "latest_trade_date": latest_trade_date,
         "latest_sec_filing_date": latest_sec_filed,
+        "latest_feature_date": latest_feature_date,
         "checkpoints": [
             {
                 "job_name": checkpoint.job_name,
@@ -69,6 +76,56 @@ def freshness(session: DbSession) -> dict[str, object]:
         ],
         "jobs": latest,
     }
+
+
+@router.get("/features")
+def list_features(
+    session: DbSession,
+    as_of: date | None = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
+    min_market_cap: float | None = None,
+    max_market_cap: float | None = None,
+    min_ttm_revenue_growth_pct: float | None = None,
+    min_quarter_revenue_growth_pct: float | None = None,
+    max_price_change_12w_pct: float | None = None,
+    max_drawdown_52w_pct: float | None = None,
+    min_avg_dollar_volume_20d: float | None = None,
+    exclude_healthcare: bool = False,
+    nasdaq_nyse_only: bool = True,
+    sort_by: str = "avg_dollar_volume_20d",
+    descending: bool = True,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict[str, object]:
+    return query_feature_rows(
+        session,
+        as_of.isoformat() if as_of else None,
+        min_price,
+        max_price,
+        min_market_cap,
+        max_market_cap,
+        min_ttm_revenue_growth_pct,
+        min_quarter_revenue_growth_pct,
+        max_price_change_12w_pct,
+        max_drawdown_52w_pct,
+        min_avg_dollar_volume_20d,
+        exclude_healthcare,
+        nasdaq_nyse_only,
+        sort_by,
+        descending,
+        limit,
+    )
+
+
+@router.get("/securities/{ticker}/features")
+def get_features_for_ticker(
+    ticker: str,
+    session: DbSession,
+    as_of: date | None = None,
+) -> dict[str, object]:
+    return query_security_features_for_ticker(
+        session, ticker, as_of.isoformat() if as_of else None
+    )
 
 
 @router.get("/securities")

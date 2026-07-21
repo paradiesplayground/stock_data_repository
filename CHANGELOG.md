@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- Add versioned daily derived fields without adding scores, rankings, or recommendations.
+- Calculate price movement, 52-week drawdown, liquidity, EMA, RSI, and relative-volume fields.
+- Conservatively normalize SEC revenue, gross profit, cash flow, balance-sheet, and share facts.
+- Estimate market capitalization, dilution, free cash flow, current ratio, and cash runway.
+- Preserve calculation versions, source dates, and explicit data-quality flags.
+- Schedule derived-field calculation after market and SEC ingestion.
+- Add neutral feature-query endpoints and two feature tools to the existing MCP app.
+
 ## 0.2.3
 
 - Select the latest eligible weekday strictly before today for default Massive daily-price syncs.

@@ -10,7 +10,9 @@ from app.mcp_queries import (
     get_filings as query_filings,
     get_financial_facts as query_financial_facts,
     get_price_history as query_price_history,
+    get_security_features as query_features,
     lookup_security as query_security,
+    query_security_features as query_features_universe,
     search_securities as query_securities,
 )
 
@@ -19,7 +21,8 @@ mcp = FastMCP(
     "Stock Data Repository",
     instructions=(
         "Read-only access to authoritative Massive market data and SEC EDGAR source facts. "
-        "This server does not screen, score, rank, recommend, size, or trade securities. "
+        "It also exposes versioned deterministic features and neutral user-supplied filtering. "
+        "This server does not score, rank, recommend, size, or trade securities. "
         "Treat missing or stale data as unverified and preserve source provenance."
     ),
     host=settings.mcp_host,
@@ -86,6 +89,53 @@ def get_data_freshness() -> dict[str, Any]:
     """Return latest source dates, job outcomes, errors, and durable ingestion checkpoints."""
     with SessionLocal() as session:
         return query_data_freshness(session)
+
+
+@mcp.tool()
+def get_security_features(ticker: str, as_of_date: str | None = None) -> dict[str, Any]:
+    """Return one ticker's latest deterministic derived fields on or before an optional date."""
+    with SessionLocal() as session:
+        return query_features(session, ticker, as_of_date)
+
+
+@mcp.tool()
+def query_security_features(
+    as_of_date: str | None = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
+    min_market_cap: float | None = None,
+    max_market_cap: float | None = None,
+    min_ttm_revenue_growth_pct: float | None = None,
+    min_quarter_revenue_growth_pct: float | None = None,
+    max_price_change_12w_pct: float | None = None,
+    max_drawdown_52w_pct: float | None = None,
+    min_avg_dollar_volume_20d: float | None = None,
+    exclude_healthcare: bool = False,
+    nasdaq_nyse_only: bool = True,
+    sort_by: str = "avg_dollar_volume_20d",
+    descending: bool = True,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Filter deterministic fields using caller-provided thresholds without scoring or ranking."""
+    with SessionLocal() as session:
+        return query_features_universe(
+            session,
+            as_of_date,
+            min_price,
+            max_price,
+            min_market_cap,
+            max_market_cap,
+            min_ttm_revenue_growth_pct,
+            min_quarter_revenue_growth_pct,
+            max_price_change_12w_pct,
+            max_drawdown_52w_pct,
+            min_avg_dollar_volume_20d,
+            exclude_healthcare,
+            nasdaq_nyse_only,
+            sort_by,
+            descending,
+            limit,
+        )
 
 
 def main() -> None:

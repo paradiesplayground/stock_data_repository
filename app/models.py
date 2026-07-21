@@ -73,6 +73,57 @@ class DailyPriceBar(Base):
     security: Mapped[Security] = relationship(back_populates="price_bars")
 
 
+class SecurityDailyFeature(Base):
+    __tablename__ = "security_daily_features"
+    __table_args__ = (
+        UniqueConstraint("ticker", "as_of_date", name="uq_security_features_ticker_date"),
+        Index("ix_security_features_date", "as_of_date"),
+        Index("ix_security_features_liquidity", "as_of_date", "avg_dollar_volume_20d"),
+        Index("ix_security_features_growth", "as_of_date", "revenue_ttm_yoy_pct"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(ForeignKey("securities.ticker", ondelete="CASCADE"))
+    as_of_date: Mapped[date] = mapped_column(Date)
+    price_date: Mapped[date] = mapped_column(Date)
+    close: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    price_change_12w_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    drawdown_52w_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    avg_volume_20d: Mapped[Decimal | None] = mapped_column(Numeric(24, 4))
+    avg_dollar_volume_20d: Mapped[Decimal | None] = mapped_column(Numeric(28, 4))
+    ema_10: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    ema_20: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    rsi_14: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    relative_volume_20d: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+
+    revenue_ttm: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    revenue_ttm_yoy_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    latest_quarter_revenue: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    latest_quarter_revenue_yoy_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    revenue_concept: Mapped[str | None] = mapped_column(String(255))
+    gross_profit_ttm: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    gross_margin_ttm_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+
+    cash_and_short_term_investments: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    total_debt: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    current_ratio: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    operating_cash_flow_ttm: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    capital_expenditures_ttm: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    free_cash_flow_ttm: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    cash_runway_months: Mapped[Decimal | None] = mapped_column(Numeric(20, 4))
+    shares_outstanding: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    share_count_yoy_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    approximate_market_cap: Mapped[Decimal | None] = mapped_column(Numeric(38, 4))
+
+    latest_financial_period_end: Mapped[date | None] = mapped_column(Date)
+    latest_source_filing_date: Mapped[date | None] = mapped_column(Date)
+    calculation_version: Mapped[str] = mapped_column(String(32))
+    quality_flags: Mapped[list[str] | None] = mapped_column(JSONB)
+    calculated_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class FinancialFact(Base):
     __tablename__ = "financial_facts"
     __table_args__ = (

@@ -4,6 +4,7 @@ from datetime import date
 from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
+from app.services.feature_calculation import calculate_daily_features
 from app.services.massive_ingestion import (
     backfill_market_data,
     sync_market_incremental,
@@ -33,6 +34,8 @@ def main() -> None:
     backfill = subparsers.add_parser("backfill-market")
     backfill.add_argument("--start", type=_date)
     backfill.add_argument("--end", type=_date)
+    features = subparsers.add_parser("sync-features")
+    features.add_argument("--date", type=_date)
     subparsers.add_parser("sync-companyfacts")
     subparsers.add_parser("sync-submissions")
     subparsers.add_parser("sync-sec")
@@ -51,6 +54,8 @@ def main() -> None:
             )
         elif args.command == "backfill-market":
             result = backfill_market_data(session, settings, args.start, args.end)
+        elif args.command == "sync-features":
+            result = calculate_daily_features(session, settings, args.date)
         elif args.command == "sync-companyfacts":
             result = sync_companyfacts(session, settings)
         elif args.command == "sync-submissions":

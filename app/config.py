@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     market_sync_cron: str = "20 2 * * 2-6"
     reference_sync_cron: str = "30 2 * * 1-5"
     sec_sync_cron: str = "30 4 * * 1-6"
+    feature_sync_cron: str = "30 5 * * 2-6"
     log_level: str = "INFO"
 
     @property

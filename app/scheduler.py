@@ -9,6 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
+from app.services.feature_calculation import calculate_daily_features
 from app.services.massive_ingestion import sync_market_incremental, sync_reference_data
 from app.services.sec_ingestion import sync_sec_incremental
 
@@ -32,6 +33,11 @@ def _run_sec() -> None:
         sync_sec_incremental(session, get_settings())
 
 
+def _run_features() -> None:
+    with SessionLocal() as session:
+        calculate_daily_features(session, get_settings())
+
+
 def main() -> None:
     configure_logging()
     settings = get_settings()
@@ -53,6 +59,12 @@ def main() -> None:
         _run_sec,
         CronTrigger.from_crontab(settings.sec_sync_cron, timezone=settings.timezone),
         id="sec_incremental",
+        **common,
+    )
+    scheduler.add_job(
+        _run_features,
+        CronTrigger.from_crontab(settings.feature_sync_cron, timezone=settings.timezone),
+        id="derived_features",
         **common,
     )
     signal.signal(signal.SIGTERM, lambda *_: scheduler.shutdown(wait=False))

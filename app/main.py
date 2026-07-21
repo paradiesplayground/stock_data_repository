@@ -9,8 +9,11 @@ configure_logging()
 
 app = FastAPI(
     title="Stock Data Repository",
-    version="0.1.0",
-    description="Read-only repository of Massive market data and SEC EDGAR facts/filings.",
+    version="0.3.0",
+    description=(
+        "Read-only repository of Massive market data, SEC EDGAR facts/filings, "
+        "and deterministic derived features."
+    ),
 )
 app.include_router(router)
 
@@ -25,4 +28,3 @@ def ready() -> dict[str, str]:
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))
     return {"status": "ready"}
-

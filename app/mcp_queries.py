@@ -12,6 +12,7 @@ from app.models import (
     IngestionCheckpoint,
     IngestionRun,
     Security,
+    SecurityDailyFeature,
 )
 
 
@@ -36,6 +37,175 @@ def _limit(value: int, maximum: int) -> int:
     if value < 1 or value > maximum:
         raise ValueError(f"limit must be between 1 and {maximum}")
     return value
+
+
+def _feature_item(feature: SecurityDailyFeature, security: Security) -> dict[str, Any]:
+    return {
+        "ticker": feature.ticker,
+        "company": security.name,
+        "primary_exchange": security.primary_exchange,
+        "security_type": security.security_type,
+        "sic_code": security.sic_code,
+        "sic_description": security.sic_description,
+        "as_of_date": _json_value(feature.as_of_date),
+        "price_date": _json_value(feature.price_date),
+        "close": _json_value(feature.close),
+        "price_change_12w_pct": _json_value(feature.price_change_12w_pct),
+        "drawdown_52w_pct": _json_value(feature.drawdown_52w_pct),
+        "avg_volume_20d": _json_value(feature.avg_volume_20d),
+        "avg_dollar_volume_20d": _json_value(feature.avg_dollar_volume_20d),
+        "ema_10": _json_value(feature.ema_10),
+        "ema_20": _json_value(feature.ema_20),
+        "rsi_14": _json_value(feature.rsi_14),
+        "relative_volume_20d": _json_value(feature.relative_volume_20d),
+        "revenue_ttm": _json_value(feature.revenue_ttm),
+        "revenue_ttm_yoy_pct": _json_value(feature.revenue_ttm_yoy_pct),
+        "latest_quarter_revenue": _json_value(feature.latest_quarter_revenue),
+        "latest_quarter_revenue_yoy_pct": _json_value(
+            feature.latest_quarter_revenue_yoy_pct
+        ),
+        "revenue_concept": feature.revenue_concept,
+        "gross_profit_ttm": _json_value(feature.gross_profit_ttm),
+        "gross_margin_ttm_pct": _json_value(feature.gross_margin_ttm_pct),
+        "cash_and_short_term_investments": _json_value(
+            feature.cash_and_short_term_investments
+        ),
+        "total_debt": _json_value(feature.total_debt),
+        "current_ratio": _json_value(feature.current_ratio),
+        "operating_cash_flow_ttm": _json_value(feature.operating_cash_flow_ttm),
+        "capital_expenditures_ttm": _json_value(feature.capital_expenditures_ttm),
+        "free_cash_flow_ttm": _json_value(feature.free_cash_flow_ttm),
+        "cash_runway_months": _json_value(feature.cash_runway_months),
+        "shares_outstanding": _json_value(feature.shares_outstanding),
+        "share_count_yoy_pct": _json_value(feature.share_count_yoy_pct),
+        "approximate_market_cap": _json_value(feature.approximate_market_cap),
+        "latest_financial_period_end": _json_value(feature.latest_financial_period_end),
+        "latest_source_filing_date": _json_value(feature.latest_source_filing_date),
+        "calculation_version": feature.calculation_version,
+        "quality_flags": feature.quality_flags or [],
+    }
+
+
+def get_security_features(
+    session: Session,
+    ticker: str,
+    as_of_date: str | None = None,
+) -> dict[str, Any]:
+    ticker = ticker.strip().upper()
+    requested_date = _date_value(as_of_date, "as_of_date")
+    security = session.get(Security, ticker)
+    if security is None:
+        return {"ticker": ticker, "found": False}
+    statement = select(SecurityDailyFeature).where(SecurityDailyFeature.ticker == ticker)
+    if requested_date:
+        statement = statement.where(SecurityDailyFeature.as_of_date <= requested_date)
+    feature = session.scalar(statement.order_by(desc(SecurityDailyFeature.as_of_date)).limit(1))
+    if feature is None:
+        return {"ticker": ticker, "found": True, "features_available": False}
+    return {
+        "ticker": ticker,
+        "found": True,
+        "features_available": True,
+        "interpretation": "deterministic derived fields; no score, rank, or recommendation",
+        "item": _feature_item(feature, security),
+    }
+
+
+def query_security_features(
+    session: Session,
+    as_of_date: str | None = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
+    min_market_cap: float | None = None,
+    max_market_cap: float | None = None,
+    min_ttm_revenue_growth_pct: float | None = None,
+    min_quarter_revenue_growth_pct: float | None = None,
+    max_price_change_12w_pct: float | None = None,
+    max_drawdown_52w_pct: float | None = None,
+    min_avg_dollar_volume_20d: float | None = None,
+    exclude_healthcare: bool = False,
+    nasdaq_nyse_only: bool = True,
+    sort_by: str = "avg_dollar_volume_20d",
+    descending: bool = True,
+    limit: int = 100,
+) -> dict[str, Any]:
+    limit = _limit(limit, 500)
+    requested_date = _date_value(as_of_date, "as_of_date")
+    effective_date = requested_date or session.scalar(select(func.max(SecurityDailyFeature.as_of_date)))
+    if effective_date is None:
+        return {
+            "as_of_date": None,
+            "count": 0,
+            "items": [],
+            "interpretation": "derived features have not been calculated",
+        }
+    statement = (
+        select(SecurityDailyFeature, Security)
+        .join(Security, Security.ticker == SecurityDailyFeature.ticker)
+        .where(
+            SecurityDailyFeature.as_of_date == effective_date,
+            Security.active.is_(True),
+        )
+    )
+    if nasdaq_nyse_only:
+        statement = statement.where(Security.primary_exchange.in_(("XNAS", "XNYS")))
+    if exclude_healthcare:
+        healthcare = (
+            Security.sic_code.like("283%")
+            | Security.sic_code.like("384%")
+            | Security.sic_code.like("385%")
+            | Security.sic_code.like("80%")
+            | Security.sic_code.in_(("5047", "5122", "6324", "7352", "8731"))
+        )
+        statement = statement.where(~healthcare)
+
+    filters = (
+        (min_price, SecurityDailyFeature.close, ">="),
+        (max_price, SecurityDailyFeature.close, "<="),
+        (min_market_cap, SecurityDailyFeature.approximate_market_cap, ">="),
+        (max_market_cap, SecurityDailyFeature.approximate_market_cap, "<="),
+        (min_ttm_revenue_growth_pct, SecurityDailyFeature.revenue_ttm_yoy_pct, ">="),
+        (
+            min_quarter_revenue_growth_pct,
+            SecurityDailyFeature.latest_quarter_revenue_yoy_pct,
+            ">=",
+        ),
+        (max_price_change_12w_pct, SecurityDailyFeature.price_change_12w_pct, "<="),
+        (max_drawdown_52w_pct, SecurityDailyFeature.drawdown_52w_pct, "<="),
+        (
+            min_avg_dollar_volume_20d,
+            SecurityDailyFeature.avg_dollar_volume_20d,
+            ">=",
+        ),
+    )
+    for value, column, operator in filters:
+        if value is not None:
+            statement = statement.where(column >= value if operator == ">=" else column <= value)
+
+    sort_columns = {
+        "ticker": SecurityDailyFeature.ticker,
+        "close": SecurityDailyFeature.close,
+        "market_cap": SecurityDailyFeature.approximate_market_cap,
+        "ttm_revenue_growth": SecurityDailyFeature.revenue_ttm_yoy_pct,
+        "quarter_revenue_growth": SecurityDailyFeature.latest_quarter_revenue_yoy_pct,
+        "price_change_12w": SecurityDailyFeature.price_change_12w_pct,
+        "drawdown_52w": SecurityDailyFeature.drawdown_52w_pct,
+        "avg_dollar_volume_20d": SecurityDailyFeature.avg_dollar_volume_20d,
+        "rsi_14": SecurityDailyFeature.rsi_14,
+    }
+    if sort_by not in sort_columns:
+        raise ValueError(f"sort_by must be one of: {', '.join(sorted(sort_columns))}")
+    sort_column = sort_columns[sort_by]
+    order = sort_column.desc().nullslast() if descending else sort_column.asc().nullslast()
+    rows = session.execute(statement.order_by(order, SecurityDailyFeature.ticker).limit(limit)).all()
+    return {
+        "as_of_date": effective_date.isoformat(),
+        "count": len(rows),
+        "limit": limit,
+        "filters_are_user_supplied": True,
+        "interpretation": "neutral filtering of deterministic fields; no score, rank, or recommendation",
+        "items": [_feature_item(feature, security) for feature, security in rows],
+    }
 
 
 def search_securities(
@@ -261,6 +431,7 @@ def get_filings(
 def get_data_freshness(session: Session) -> dict[str, Any]:
     latest_trade_date = session.scalar(select(func.max(DailyPriceBar.trade_date)))
     latest_sec_filing_date = session.scalar(select(func.max(Filing.filed_date)))
+    latest_feature_date = session.scalar(select(func.max(SecurityDailyFeature.as_of_date)))
     job_names = session.scalars(select(IngestionRun.job_name).distinct()).all()
     jobs: list[dict[str, Any]] = []
     for job_name in sorted(job_names):
@@ -287,6 +458,7 @@ def get_data_freshness(session: Session) -> dict[str, Any]:
     return {
         "latest_trade_date": _json_value(latest_trade_date),
         "latest_sec_filing_date": _json_value(latest_sec_filing_date),
+        "latest_feature_date": _json_value(latest_feature_date),
         "checkpoints": [
             {
                 "job_name": checkpoint.job_name,

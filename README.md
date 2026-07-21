@@ -4,9 +4,13 @@ An authoritative, read-only data repository for U.S. equity research. It ingests
 
 - Massive reference data and adjusted daily OHLCV bars
 - SEC EDGAR bulk company facts and filing metadata
+- Versioned deterministic fields derived from those stored sources
 - Source freshness and ingestion audit records
 
-It deliberately does **not** screen, score, rank, recommend, size, or trade stocks. Those decisions belong to the downstream swing-trading skill. This service provides facts and their provenance; missing facts remain missing instead of being creatively hallucinated into existence.
+It deliberately does **not** score, rank, recommend, size, or trade stocks. Caller-supplied filters
+can be applied to deterministic fields, but interpretation belongs to the downstream swing-trading
+skill. This service provides facts and their provenance; missing facts remain missing instead of
+being creatively hallucinated into existence.
 
 ## Architecture
 
@@ -14,7 +18,7 @@ The Compose project runs one application image in four roles:
 
 - `migrate`: applies database migrations and exits
 - `api`: read-only FastAPI repository on host port `8787`
-- `worker`: scheduled Massive and SEC ingestion
+- `worker`: scheduled Massive and SEC ingestion plus deterministic feature calculation
 - `mcp`: read-only Streamable HTTP MCP service on host port `8788`
 - `tunnel`: outbound-only OpenAI Secure MCP Tunnel client
 
@@ -28,9 +32,12 @@ PostgreSQL stores normalized data. Original SEC ZIP archives are retained under 
 | Daily prices | Massive | Adjusted OHLC, volume, VWAP, transactions, source timestamp |
 | Financial facts | SEC EDGAR | Taxonomy, concept, unit, value, reporting period, form, filing date, accession |
 | Filing metadata | SEC EDGAR | Form, dates, document, items, XBRL flags, canonical SEC URL |
+| Daily derived fields | Massive + SEC | Growth, price movement, liquidity, technical, balance-sheet, cash-flow, share, and market-cap fields |
 | Freshness | Internal audit | Job, status, timestamps, counts, source request details, failures |
 
-SEC financial values are stored as reported source facts. The repository does not resolve competing revenue tags, calculate TTM values, calculate growth, or choose a “best” filing context. That interpretation remains downstream and auditable.
+SEC financial values remain stored unchanged as reported source facts. The derived table separately
+applies conservative, versioned normalization rules and preserves the selected revenue concept,
+latest source dates, and quality flags. Raw facts remain available for audit.
 
 ## Prerequisites
 
@@ -118,6 +125,12 @@ Download and normalize SEC company facts and recent filing history:
 docker compose exec worker python -m app.cli sync-sec
 ```
 
+Calculate the first derived-feature snapshot after the three source loads finish:
+
+```bash
+docker compose exec worker python -m app.cli sync-features
+```
+
 SEC bulk archives are large. The first SEC import and first price backfill can take a while; subsequent scheduled updates are incremental database upserts.
 
 ## Schedule
@@ -129,6 +142,7 @@ Defaults use `America/Chicago`:
 | Massive reference | 2:30 AM weekdays | Refresh ticker and CIK mappings |
 | SEC incremental data | 4:30 AM Tuesday-Saturday | Resume from the last completed SEC index |
 | Massive daily bars | 2:20 AM Tuesday-Saturday | Catches up the prior session without requesting same-day data |
+| Derived daily fields | 5:30 AM Tuesday-Saturday | Runs after both source-ingestion jobs |
 
 Cron expressions are configurable in `.env`. The scheduled market job resumes after missed runs
 and defaults to the latest weekday strictly before the current date, making it compatible with
@@ -150,8 +164,10 @@ Available routes:
 GET /health
 GET /ready
 GET /v1/freshness
+GET /v1/features
 GET /v1/securities
 GET /v1/securities/{ticker}
+GET /v1/securities/{ticker}/features
 GET /v1/securities/{ticker}/prices
 GET /v1/securities/{ticker}/facts
 GET /v1/securities/{ticker}/filings
@@ -176,9 +192,13 @@ get_price_history
 get_financial_facts
 get_filings
 get_data_freshness
+get_security_features
+query_security_features
 ```
 
-The MCP service deliberately contains no screening or write tools. Keep it on a private network;
+`query_security_features` applies caller-provided thresholds and sorting to deterministic fields.
+It does not contain a built-in strategy, score, ranking, position size, or recommendation. The MCP
+service contains no write tools. Keep it on a private network;
 do not port-forward `8788` to the public internet. ChatGPT cannot connect directly to a private
 LAN endpoint, so use OpenAI Secure MCP Tunnel when connecting this on-premises service to a
 supported ChatGPT product.
@@ -210,8 +230,8 @@ from a trusted LAN browser, set `TUNNEL_HEALTH_BIND` to the Unraid LAN IP in `.e
 open `http://UNRAID-IP:8789/ui`. Do not forward port `8789` to the internet.
 
 When the tunnel reports ready, open ChatGPT **Settings -> Plugins**, create a developer-mode app,
-choose **Tunnel** as the connection type, and select this tunnel. Tool discovery should find the
-six read-only tools listed above.
+choose **Tunnel** as the connection type, and select this tunnel. Refresh tool discovery after a
+v0.3.0 deployment so ChatGPT can see the eight read-only tools listed above.
 
 ## Manual jobs
 
@@ -220,6 +240,8 @@ python -m app.cli sync-reference
 python -m app.cli sync-market
 python -m app.cli sync-market --date 2026-07-17
 python -m app.cli backfill-market --start 2025-06-01 --end 2026-07-17
+python -m app.cli sync-features
+python -m app.cli sync-features --date 2026-07-17
 python -m app.cli sync-companyfacts
 python -m app.cli sync-submissions
 python -m app.cli sync-sec
@@ -237,6 +259,35 @@ or successful prior incremental run exists. A manual bulk run can be used occasi
 reconciliation.
 
 Each job writes a row to `ingestion_runs`, including failures. The `/v1/freshness` endpoint exposes the latest state so downstream tools can treat stale or missing data as unverified.
+
+## Derived-field rules and limitations
+
+Each row in `security_daily_features` is keyed by ticker and `as_of_date` and records a
+`calculation_version`. The initial calculation version is `1.0.0`.
+
+- Twelve-week change compares the latest close with the last available close on or before 84
+  calendar days earlier.
+- Fifty-two-week drawdown compares the latest close with the maximum adjusted high during the
+  preceding 365 calendar days.
+- Average dollar volume is the 20-session average share volume multiplied by the latest close.
+- EMA and RSI use adjusted closing prices. Relative volume compares the current session with the
+  preceding 20-session average.
+- TTM flow values use the latest annual value plus current year-to-date value minus comparable
+  prior-year year-to-date value when all three are available.
+- Latest-quarter growth uses comparable 65-to-120-day reported periods approximately one year
+  apart.
+- Approximate market capitalization is latest adjusted close multiplied by the latest SEC-reported
+  common shares outstanding. It is an estimate, not a real-time provider market-cap field; shared
+  CIKs with multiple tickers are explicitly flagged because entity-level shares may not be
+  class-specific.
+- Free cash flow is operating cash flow less reported capital expenditures. Cash runway is produced
+  only when free cash flow is negative and the necessary cash facts are available.
+- A missing value stays null. `quality_flags` explains partial history, annual-only values, stale
+  periods, missing identifiers, and unavailable comparisons.
+
+The derived layer does not currently determine going-concern language, catalysts, earnings dates,
+bid/ask spreads, public float, short interest, or whether growth is organic. Those remain separate
+research steps for candidates returned by caller-supplied filters.
 
 ## Development and tests
 
