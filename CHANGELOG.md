@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.3
+
+- Select the latest eligible weekday strictly before today for default Massive daily-price syncs.
+- Resume scheduled price ingestion from the latest stored trade date after failures or downtime.
+- Make `sync-market` without `--date` use the same safe incremental catch-up behavior.
+- Schedule default market updates Tuesday-Saturday morning so Friday data is collected Saturday.
+
 ## 0.2.2
 
 - Build the Python application image once through the `migrate` service.

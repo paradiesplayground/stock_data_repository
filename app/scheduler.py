@@ -9,7 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
-from app.services.massive_ingestion import sync_market_day, sync_reference_data
+from app.services.massive_ingestion import sync_market_incremental, sync_reference_data
 from app.services.sec_ingestion import sync_sec_incremental
 
 logger = logging.getLogger(__name__)
@@ -22,9 +22,9 @@ def _run_reference() -> None:
 
 def _run_market() -> None:
     settings = get_settings()
-    trade_date = datetime.now(ZoneInfo(settings.timezone)).date()
+    as_of = datetime.now(ZoneInfo(settings.timezone)).date()
     with SessionLocal() as session:
-        sync_market_day(session, settings, trade_date)
+        sync_market_incremental(session, settings, as_of)
 
 
 def _run_sec() -> None:

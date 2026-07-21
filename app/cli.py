@@ -6,6 +6,7 @@ from app.db import SessionLocal
 from app.logging_config import configure_logging
 from app.services.massive_ingestion import (
     backfill_market_data,
+    sync_market_incremental,
     sync_market_day,
     sync_reference_data,
 )
@@ -28,7 +29,7 @@ def main() -> None:
 
     subparsers.add_parser("sync-reference")
     market = subparsers.add_parser("sync-market")
-    market.add_argument("--date", type=_date, default=date.today())
+    market.add_argument("--date", type=_date)
     backfill = subparsers.add_parser("backfill-market")
     backfill.add_argument("--start", type=_date)
     backfill.add_argument("--end", type=_date)
@@ -43,7 +44,11 @@ def main() -> None:
         if args.command == "sync-reference":
             result = sync_reference_data(session, settings)
         elif args.command == "sync-market":
-            result = sync_market_day(session, settings, args.date)
+            result = (
+                sync_market_day(session, settings, args.date)
+                if args.date
+                else sync_market_incremental(session, settings)
+            )
         elif args.command == "backfill-market":
             result = backfill_market_data(session, settings, args.start, args.end)
         elif args.command == "sync-companyfacts":

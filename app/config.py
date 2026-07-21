@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     mcp_port: int = Field(default=8001, ge=1, le=65535)
 
     timezone: str = "America/Chicago"
-    market_sync_cron: str = "20 15 * * 1-5"
+    market_sync_cron: str = "20 2 * * 2-6"
     reference_sync_cron: str = "30 2 * * 1-5"
     sec_sync_cron: str = "30 4 * * 1-6"
     log_level: str = "INFO"

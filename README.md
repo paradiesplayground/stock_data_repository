@@ -128,9 +128,12 @@ Defaults use `America/Chicago`:
 |---|---:|---|
 | Massive reference | 2:30 AM weekdays | Refresh ticker and CIK mappings |
 | SEC incremental data | 4:30 AM Tuesday-Saturday | Resume from the last completed SEC index |
-| Massive daily bars | 3:20 PM weekdays | Allows the 15-minute delayed final market bar to become available |
+| Massive daily bars | 2:20 AM Tuesday-Saturday | Catches up the prior session without requesting same-day data |
 
-Cron expressions are configurable in `.env`. Because Starter is 15 minutes delayed, a downstream daily screen should run after ingestion completes—roughly 3:25 PM Central, not exactly 3:15 PM. Physics and exchange licensing remain stubbornly uninterested in our preferred notification time.
+Cron expressions are configurable in `.env`. The scheduled market job resumes after missed runs
+and defaults to the latest weekday strictly before the current date, making it compatible with
+end-of-day access and preventing weekend requests. A downstream screen should run only after the
+repository reports the expected trade date as fresh.
 
 ## Read-only API
 
@@ -214,6 +217,7 @@ six read-only tools listed above.
 
 ```bash
 python -m app.cli sync-reference
+python -m app.cli sync-market
 python -m app.cli sync-market --date 2026-07-17
 python -m app.cli backfill-market --start 2025-06-01 --end 2026-07-17
 python -m app.cli sync-companyfacts
@@ -221,6 +225,9 @@ python -m app.cli sync-submissions
 python -m app.cli sync-sec
 python -m app.cli sync-sec-incremental
 ```
+
+Without `--date`, `sync-market` safely catches up every missing weekday through the latest eligible
+date. Use `--date` only when deliberately reloading or troubleshooting one session.
 
 `sync-sec` is the initial bulk bootstrap and is not scheduled nightly. The worker uses
 `sync-sec-incremental`, resuming from a durable daily-index checkpoint and refreshing only

@@ -2,6 +2,7 @@ import logging
 from datetime import date, timedelta
 from decimal import Decimal
 
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -174,10 +175,10 @@ def backfill_market_data(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> tuple[int, int]:
-    # The current trading day's daily summary may be unavailable until after
-    # the close (or later, depending on the Massive plan), so backfill only
-    # through yesterday unless an explicit end date is supplied.
-    end = end_date or (date.today() - timedelta(days=1))
+    # The current trading day's daily summary may be unavailable until the
+    # following day, depending on the Massive plan. Default to the latest
+    # eligible weekday strictly before today.
+    end = end_date or latest_eligible_market_date()
     start = start_date or (end - timedelta(days=settings.massive_backfill_days))
     total_seen = total_written = 0
     current = start
@@ -188,6 +189,51 @@ def backfill_market_data(
                 total_seen += seen
                 total_written += written
             current += timedelta(days=1)
+    return total_seen, total_written
+
+
+def latest_eligible_market_date(as_of: date | None = None) -> date:
+    """Return the latest weekday strictly before ``as_of``.
+
+    Massive end-of-day entitlements may reject same-day grouped bars. Keeping
+    the default one calendar day behind also prevents weekend requests.
+    """
+    candidate = (as_of or date.today()) - timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def market_dates_to_sync(latest_stored: date | None, end_date: date) -> list[date]:
+    """Return missing weekdays through ``end_date`` for incremental catch-up."""
+    current = (latest_stored + timedelta(days=1)) if latest_stored else end_date
+    dates: list[date] = []
+    while current <= end_date:
+        if current.weekday() < 5:
+            dates.append(current)
+        current += timedelta(days=1)
+    return dates
+
+
+def sync_market_incremental(
+    session: Session,
+    settings: Settings,
+    as_of: date | None = None,
+) -> tuple[int, int]:
+    """Catch up every missing weekday through the latest eligible market date."""
+    end = latest_eligible_market_date(as_of)
+    latest_stored = session.scalar(select(func.max(DailyPriceBar.trade_date)))
+    dates = market_dates_to_sync(latest_stored, end)
+    if not dates:
+        logger.info("Massive daily prices already current through %s", end)
+        return 0, 0
+
+    total_seen = total_written = 0
+    with MassiveClient(settings) as client:
+        for trade_date in dates:
+            seen, written = sync_market_day(session, settings, trade_date, client=client)
+            total_seen += seen
+            total_written += written
     return total_seen, total_written
 
 

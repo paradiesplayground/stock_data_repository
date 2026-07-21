@@ -5,7 +5,12 @@ import respx
 
 from app.config import Settings
 from app.providers.massive import MassiveClient
-from app.services.massive_ingestion import _dedupe_price_rows, _dedupe_security_rows
+from app.services.massive_ingestion import (
+    _dedupe_price_rows,
+    _dedupe_security_rows,
+    latest_eligible_market_date,
+    market_dates_to_sync,
+)
 
 
 @respx.mock
@@ -52,3 +57,18 @@ def test_duplicate_daily_bars_are_removed_before_upsert() -> None:
 
     assert len(deduplicated) == 2
     assert next(row for row in deduplicated if row["ticker"] == "TEST")["close"] == 11
+
+
+def test_latest_eligible_market_date_skips_weekends() -> None:
+    assert latest_eligible_market_date(date(2026, 7, 20)) == date(2026, 7, 17)
+    assert latest_eligible_market_date(date(2026, 7, 19)) == date(2026, 7, 17)
+    assert latest_eligible_market_date(date(2026, 7, 18)) == date(2026, 7, 17)
+
+
+def test_incremental_market_dates_catch_up_missing_weekdays() -> None:
+    assert market_dates_to_sync(date(2026, 7, 15), date(2026, 7, 20)) == [
+        date(2026, 7, 16),
+        date(2026, 7, 17),
+        date(2026, 7, 20),
+    ]
+    assert market_dates_to_sync(date(2026, 7, 17), date(2026, 7, 17)) == []
