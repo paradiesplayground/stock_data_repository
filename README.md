@@ -220,6 +220,12 @@ query_security_features
 ```
 
 `query_security_features` applies caller-provided thresholds and sorting to deterministic fields.
+Its `exclude_sic_prefixes` argument accepts up to 50 SEC SIC prefixes, allowing a downstream skill
+to exclude any requested industries without changing the stored universe. For example,
+`["283", "384", "385", "80"]` covers broad healthcare groups, while additional four-digit
+codes can refine the policy. The response echoes the applied prefixes. Rows with unknown SIC codes
+are retained and explicitly identified so callers can classify them rather than silently losing
+them. `exclude_healthcare` remains available for older clients as a compatibility shortcut.
 Snapshot-wide queries include only rows whose `price_date` matches the selected feature date;
 ticker-specific lookup still exposes older rows and their quality flags for diagnosis. The tool
 does not contain a built-in strategy, score, ranking, position size, or recommendation. The MCP
@@ -267,6 +273,7 @@ python -m app.cli sync-market --date 2026-07-17
 python -m app.cli backfill-market --start 2025-06-01 --end 2026-07-17
 python -m app.cli sync-features
 python -m app.cli sync-features --date 2026-07-17
+python -m app.cli validate-features --ticker AAPL --ticker NVDA
 python -m app.cli sync-companyfacts
 python -m app.cli sync-submissions
 python -m app.cli sync-sec
@@ -287,16 +294,27 @@ reconciliation.
 
 Each job writes a row to `ingestion_runs`, including failures. The `/v1/freshness` endpoint exposes the latest state so downstream tools can treat stale or missing data as unverified.
 
+`validate-features` is read-only. It selects each ticker's latest stored snapshot on or before the
+optional `--date`, recomputes the deterministic fields from local Massive bars and SEC facts, and
+reports field-level mismatches. This validates storage-to-formula reproducibility; it is not a
+substitute for occasional comparison with independent public sources.
+
+After upgrading from v0.3.1 to v0.3.2, run `sync-companyfacts` once so the newly supported
+marketable-security and short-term-debt concepts are loaded from the SEC bulk archive, then run
+`sync-features`. No database migration is required for this release. Normal nightly SEC processing
+remains incremental afterward.
+
 ## Derived-field rules and limitations
 
 Each row in `security_daily_features` is keyed by ticker and `as_of_date` and records a
-`calculation_version`. The initial calculation version is `1.0.0`.
+`calculation_version`. The current calculation version is `1.1.0`.
 
 - Twelve-week change compares the latest close with the last available close on or before 84
   calendar days earlier.
 - Fifty-two-week drawdown compares the latest close with the maximum adjusted high during the
   preceding 365 calendar days.
-- Average dollar volume is the 20-session average share volume multiplied by the latest close.
+- Average dollar volume is the 20-session mean of each session's adjusted close multiplied by that
+  session's adjusted volume.
 - EMA and RSI use adjusted closing prices. Relative volume compares the current session with the
   preceding 20-session average.
 - TTM flow values use the latest annual value plus current year-to-date value minus comparable
@@ -309,6 +327,10 @@ Each row in `security_daily_features` is keyed by ticker and `as_of_date` and re
   class-specific.
 - Free cash flow is operating cash flow less reported capital expenditures. Cash runway is produced
   only when free cash flow is negative and the necessary cash facts are available.
+- Cash and short-term investments prefer reported current investment aggregates and otherwise sum
+  aligned current marketable debt and equity securities. Total debt includes aligned long-term
+  current/noncurrent portions plus standalone commercial paper when no short-term aggregate already
+  contains it.
 - A missing value stays null. `quality_flags` explains partial history, annual-only values, stale
   periods, missing identifiers, and unavailable comparisons.
 

@@ -15,7 +15,7 @@ from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
 
-CALCULATION_VERSION = "1.0.1"
+CALCULATION_VERSION = "1.1.0"
 HUNDRED = Decimal("100")
 
 REVENUE_CONCEPTS = (
@@ -31,12 +31,21 @@ CASH_CONCEPTS = (
     "CashAndCashEquivalentsAtCarryingValue",
     "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
 )
-SHORT_TERM_INVESTMENT_CONCEPTS = ("ShortTermInvestments",)
+SHORT_TERM_INVESTMENT_CONCEPTS = (
+    "ShortTermInvestments",
+    "MarketableSecuritiesCurrent",
+)
+SHORT_TERM_INVESTMENT_COMPONENT_CONCEPTS = (
+    "MarketableDebtSecuritiesCurrent",
+    "MarketableEquitySecuritiesCurrent",
+)
 CURRENT_ASSET_CONCEPTS = ("AssetsCurrent",)
 CURRENT_LIABILITY_CONCEPTS = ("LiabilitiesCurrent",)
 DEBT_TOTAL_CONCEPTS = ("LongTermDebt",)
 DEBT_CURRENT_CONCEPTS = ("LongTermDebtCurrent",)
 DEBT_NONCURRENT_CONCEPTS = ("LongTermDebtNoncurrent",)
+SHORT_TERM_DEBT_CONCEPTS = ("ShortTermDebtCurrent", "ShortTermBorrowings")
+COMMERCIAL_PAPER_CONCEPTS = ("CommercialPaper",)
 SHARE_CONCEPTS = (
     "EntityCommonStockSharesOutstanding",
     "CommonStockSharesOutstanding",
@@ -49,11 +58,14 @@ FEATURE_FACT_CONCEPTS = set(
     + CAPEX_CONCEPTS
     + CASH_CONCEPTS
     + SHORT_TERM_INVESTMENT_CONCEPTS
+    + SHORT_TERM_INVESTMENT_COMPONENT_CONCEPTS
     + CURRENT_ASSET_CONCEPTS
     + CURRENT_LIABILITY_CONCEPTS
     + DEBT_TOTAL_CONCEPTS
     + DEBT_CURRENT_CONCEPTS
     + DEBT_NONCURRENT_CONCEPTS
+    + SHORT_TERM_DEBT_CONCEPTS
+    + COMMERCIAL_PAPER_CONCEPTS
     + SHARE_CONCEPTS
 )
 
@@ -274,13 +286,59 @@ def _latest_instant(
     concepts: tuple[str, ...],
     as_of_date: date,
 ) -> tuple[Decimal | None, date | None]:
-    for concept in concepts:
+    best: tuple[tuple[date, date, int, str], FinancialFact] | None = None
+    for priority, concept in enumerate(concepts):
         candidates = _eligible_facts(facts_by_concept.get(concept, []), as_of_date, as_of_date)
         instant = [fact for fact in candidates if _duration_days(fact) in (None, 1)]
         if instant:
             latest = max(instant, key=lambda fact: (fact.period_end, fact.filed_date or date.min))
-            return latest.value, latest.period_end
-    return None, None
+            score = (
+                latest.period_end,
+                latest.filed_date or date.min,
+                -priority,
+                latest.accession_number or "",
+            )
+            if best is None or score > best[0]:
+                best = (score, latest)
+    return (best[1].value, best[1].period_end) if best else (None, None)
+
+
+def _aligned_sum(
+    facts_by_concept: dict[str, list[FinancialFact]],
+    concepts: tuple[str, ...],
+    as_of_date: date,
+    maximum_gap_days: int = 120,
+) -> tuple[Decimal | None, date | None]:
+    values = [
+        _latest_instant(facts_by_concept, (concept,), as_of_date)
+        for concept in concepts
+    ]
+    present = [(value, period_end) for value, period_end in values if value is not None and period_end]
+    if not present:
+        return None, None
+    latest_end = max(period_end for _, period_end in present)
+    aligned = [
+        (value, period_end)
+        for value, period_end in present
+        if abs((latest_end - period_end).days) <= maximum_gap_days
+    ]
+    return sum((value for value, _ in aligned), Decimal("0")), latest_end
+
+
+def _short_term_investments(
+    facts_by_concept: dict[str, list[FinancialFact]],
+    as_of_date: date,
+) -> tuple[Decimal | None, date | None]:
+    aggregate, aggregate_end = _latest_instant(
+        facts_by_concept, SHORT_TERM_INVESTMENT_CONCEPTS, as_of_date
+    )
+    if aggregate is not None:
+        return aggregate, aggregate_end
+    return _aligned_sum(
+        facts_by_concept,
+        SHORT_TERM_INVESTMENT_COMPONENT_CONCEPTS,
+        as_of_date,
+    )
 
 
 def _flow_value(
@@ -349,9 +407,7 @@ def _financial_metrics(
         else None
     )
     cash, cash_end = _latest_instant(facts_by_concept, CASH_CONCEPTS, as_of_date)
-    investments, investments_end = _latest_instant(
-        facts_by_concept, SHORT_TERM_INVESTMENT_CONCEPTS, as_of_date
-    )
+    investments, investments_end = _short_term_investments(facts_by_concept, as_of_date)
     if cash is not None and investments is not None and cash_end and investments_end:
         if abs((cash_end - investments_end).days) <= 120:
             cash += investments
@@ -375,12 +431,43 @@ def _financial_metrics(
     debt_total, debt_total_end = _latest_instant(
         facts_by_concept, DEBT_TOTAL_CONCEPTS, as_of_date
     )
+    short_term_debt, short_term_debt_end = _latest_instant(
+        facts_by_concept, SHORT_TERM_DEBT_CONCEPTS, as_of_date
+    )
+    commercial_paper, commercial_paper_end = _latest_instant(
+        facts_by_concept, COMMERCIAL_PAPER_CONCEPTS, as_of_date
+    )
+    current_borrowings = short_term_debt
+    current_borrowings_end = short_term_debt_end
+    if current_borrowings is None:
+        current_borrowings = debt_current
+        current_borrowings_end = debt_current_end
+    # A reported short-term-debt aggregate can already contain commercial
+    # paper. Add the standalone commercial-paper tag only when no aggregate
+    # exists, so the current portion is not double counted.
+    if short_term_debt is None and commercial_paper is not None and commercial_paper_end:
+        if current_borrowings_end is None or abs(
+            (commercial_paper_end - current_borrowings_end).days
+        ) <= 120:
+            current_borrowings = (current_borrowings or Decimal("0")) + commercial_paper
+            current_borrowings_end = max(
+                value
+                for value in (current_borrowings_end, commercial_paper_end)
+                if value is not None
+            )
     if debt_current is not None and debt_noncurrent is not None:
-        total_debt = (debt_current or Decimal("0")) + (debt_noncurrent or Decimal("0"))
+        total_debt = (current_borrowings or Decimal("0")) + debt_noncurrent
+    elif short_term_debt is not None and debt_noncurrent is not None:
+        total_debt = current_borrowings + debt_noncurrent
     elif debt_total is not None:
-        total_debt = debt_total
+        additional_borrowings = Decimal("0")
+        if short_term_debt is not None:
+            additional_borrowings += short_term_debt
+        elif commercial_paper is not None:
+            additional_borrowings += commercial_paper
+        total_debt = debt_total + additional_borrowings
     else:
-        total_debt = debt_current if debt_current is not None else debt_noncurrent
+        total_debt = current_borrowings if current_borrowings is not None else debt_noncurrent
 
     operating_cash_flow, ocf_end, ocf_status = _flow_value(
         facts_by_concept, OPERATING_CASH_FLOW_CONCEPTS, as_of_date
@@ -427,6 +514,8 @@ def _financial_metrics(
         debt_current_end,
         debt_noncurrent_end,
         debt_total_end,
+        short_term_debt_end,
+        commercial_paper_end,
         ocf_end,
         capex_end,
         shares_end,

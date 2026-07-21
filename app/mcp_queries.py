@@ -19,6 +19,9 @@ from app.models import (
 from app.services.massive_ingestion import market_target_date
 
 
+HEALTHCARE_SIC_PREFIXES = ("283", "384", "385", "80", "5047", "5122", "6324", "7352", "8731")
+
+
 def _date_value(value: str | None, field_name: str) -> date | None:
     if value is None:
         return None
@@ -40,6 +43,24 @@ def _limit(value: int, maximum: int) -> int:
     if value < 1 or value > maximum:
         raise ValueError(f"limit must be between 1 and {maximum}")
     return value
+
+
+def _sic_prefixes(
+    values: list[str] | None,
+    include_healthcare: bool = False,
+) -> list[str]:
+    prefixes = list(values or [])
+    if include_healthcare:
+        prefixes.extend(HEALTHCARE_SIC_PREFIXES)
+    normalized: set[str] = set()
+    for value in prefixes:
+        prefix = str(value).strip()
+        if not prefix.isdigit() or not 1 <= len(prefix) <= 4:
+            raise ValueError("SIC prefixes must contain 1 to 4 digits")
+        normalized.add(prefix)
+    if len(normalized) > 50:
+        raise ValueError("at most 50 SIC prefixes may be excluded")
+    return sorted(normalized, key=lambda prefix: (len(prefix), prefix))
 
 
 def _feature_item(feature: SecurityDailyFeature, security: Security) -> dict[str, Any]:
@@ -131,8 +152,10 @@ def query_security_features(
     sort_by: str = "avg_dollar_volume_20d",
     descending: bool = True,
     limit: int = 100,
+    exclude_sic_prefixes: list[str] | None = None,
 ) -> dict[str, Any]:
     limit = _limit(limit, 500)
+    excluded_prefixes = _sic_prefixes(exclude_sic_prefixes, exclude_healthcare)
     requested_date = _date_value(as_of_date, "as_of_date")
     date_statement = select(func.max(SecurityDailyFeature.as_of_date))
     if requested_date:
@@ -145,6 +168,8 @@ def query_security_features(
             "as_of_date": None,
             "count": 0,
             "items": [],
+            "excluded_sic_prefixes": excluded_prefixes,
+            "unknown_sic_codes_retained": True,
             "interpretation": "derived features have not been calculated",
         }
     statement = (
@@ -158,15 +183,13 @@ def query_security_features(
     )
     if nasdaq_nyse_only:
         statement = statement.where(Security.primary_exchange.in_(("XNAS", "XNYS")))
-    if exclude_healthcare:
-        healthcare = (
-            Security.sic_code.like("283%")
-            | Security.sic_code.like("384%")
-            | Security.sic_code.like("385%")
-            | Security.sic_code.like("80%")
-            | Security.sic_code.in_(("5047", "5122", "6324", "7352", "8731"))
+    if excluded_prefixes:
+        excluded_industries = or_(
+            *(Security.sic_code.like(f"{prefix}%") for prefix in excluded_prefixes)
         )
-        statement = statement.where(or_(Security.sic_code.is_(None), ~healthcare))
+        statement = statement.where(
+            or_(Security.sic_code.is_(None), ~excluded_industries)
+        )
 
     filters = (
         (min_price, SecurityDailyFeature.close, ">="),
@@ -212,6 +235,8 @@ def query_security_features(
         "count": len(rows),
         "limit": limit,
         "filters_are_user_supplied": True,
+        "excluded_sic_prefixes": excluded_prefixes,
+        "unknown_sic_codes_retained": True,
         "interpretation": "neutral filtering of deterministic fields; no score, rank, or recommendation",
         "items": [_feature_item(feature, security) for feature, security in rows],
     }

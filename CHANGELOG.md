@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.2
+
+- Add caller-supplied SEC SIC-prefix exclusions to neutral feature queries while preserving the
+  healthcare compatibility flag and retaining securities with unknown SIC codes.
+- Keep the stored feature universe industry-inclusive so downstream skills own strategy policy.
+- Include current marketable securities in cash-and-short-term-investment calculations.
+- Include standalone commercial paper and short-term borrowing aggregates in total debt without
+  double counting reported aggregates.
+- Select the freshest instant fact across equivalent SEC concepts instead of allowing a stale
+  preferred alias to win.
+- Bump the derived calculation version to `1.1.0` and add a read-only feature validation command.
+
 ## 0.3.1
 
 - Make the scheduled market target configurable for same-day EOD or prior-session workflows.

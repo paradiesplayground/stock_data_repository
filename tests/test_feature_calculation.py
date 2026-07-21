@@ -3,6 +3,8 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from app.services.feature_calculation import (
+    _financial_metrics,
+    _latest_instant,
     _latest_quarter_pair,
     _latest_by_period,
     _percent_change,
@@ -175,3 +177,80 @@ def test_average_dollar_volume_uses_each_days_price() -> None:
 
 def test_rsi_handles_flat_series_without_division_by_zero() -> None:
     assert _rsi([Decimal("10")] * 20) == Decimal("50")
+
+
+def test_latest_instant_uses_freshest_period_across_aliases() -> None:
+    facts = {
+        "CashAndCashEquivalentsAtCarryingValue": [
+            _fact("10", None, date(2025, 12, 31), date(2026, 2, 1), 2025, "FY")
+        ],
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents": [
+            _fact("12", None, date(2026, 3, 31), date(2026, 5, 1), 2026, "Q1")
+        ],
+    }
+
+    value, period_end = _latest_instant(
+        facts,
+        (
+            "CashAndCashEquivalentsAtCarryingValue",
+            "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+        ),
+        date(2026, 7, 17),
+    )
+
+    assert value == Decimal("12")
+    assert period_end == date(2026, 3, 31)
+
+
+def test_financial_metrics_include_marketable_securities_and_commercial_paper() -> None:
+    period_end = date(2026, 3, 28)
+    filed = date(2026, 5, 1)
+    facts = {
+        "CashAndCashEquivalentsAtCarryingValue": [
+            _fact("45.572", None, period_end, filed, 2026, "Q2")
+        ],
+        "MarketableSecuritiesCurrent": [
+            _fact("22.935", None, period_end, filed, 2026, "Q2")
+        ],
+        "LongTermDebtCurrent": [
+            _fact("8.310", None, period_end, filed, 2026, "Q2")
+        ],
+        "LongTermDebtNoncurrent": [
+            _fact("74.404", None, period_end, filed, 2026, "Q2")
+        ],
+        "CommercialPaper": [
+            _fact("1.997", None, period_end, filed, 2026, "Q2")
+        ],
+    }
+
+    metrics, _ = _financial_metrics(facts, date(2026, 7, 17), Decimal("333.74"))
+
+    assert metrics["cash_and_short_term_investments"] == Decimal("68.507")
+    assert metrics["total_debt"] == Decimal("84.711")
+
+
+def test_financial_metrics_sum_current_marketable_security_components() -> None:
+    period_end = date(2026, 4, 26)
+    filed = date(2026, 5, 20)
+    facts = {
+        "CashAndCashEquivalentsAtCarryingValue": [
+            _fact("13.237", None, period_end, filed, 2027, "Q1")
+        ],
+        "MarketableDebtSecuritiesCurrent": [
+            _fact("37.098", None, period_end, filed, 2027, "Q1")
+        ],
+        "MarketableEquitySecuritiesCurrent": [
+            _fact("30.237", None, period_end, filed, 2027, "Q1")
+        ],
+        "LongTermDebtCurrent": [
+            _fact("1.000", None, period_end, filed, 2027, "Q1")
+        ],
+        "LongTermDebtNoncurrent": [
+            _fact("7.470", None, period_end, filed, 2027, "Q1")
+        ],
+    }
+
+    metrics, _ = _financial_metrics(facts, date(2026, 7, 17), Decimal("202.81"))
+
+    assert metrics["cash_and_short_term_investments"] == Decimal("80.572")
+    assert metrics["total_debt"] == Decimal("8.470")

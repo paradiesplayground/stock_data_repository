@@ -57,6 +57,7 @@ def test_feature_query_builds_neutral_filtered_statement() -> None:
         max_price_change_12w_pct=-20,
         min_avg_dollar_volume_20d=30_000_000,
         exclude_healthcare=True,
+        exclude_sic_prefixes=["13", "602"],
     )
 
     assert result["as_of_date"] == "2026-07-17"
@@ -67,6 +68,25 @@ def test_feature_query_builds_neutral_filtered_statement() -> None:
     assert "security_daily_features.revenue_ttm_yoy_pct" in sql
     assert "securities.sic_code" in sql
     assert "securities.sic_code IS NULL" in sql
+    assert result["excluded_sic_prefixes"] == [
+        "13",
+        "80",
+        "283",
+        "384",
+        "385",
+        "602",
+        "5047",
+        "5122",
+        "6324",
+        "7352",
+        "8731",
+    ]
+    assert result["unknown_sic_codes_retained"] is True
+
+
+def test_feature_query_rejects_invalid_sic_prefixes() -> None:
+    with pytest.raises(ValueError, match="1 to 4 digits"):
+        query_security_features(object(), exclude_sic_prefixes=["healthcare"])
 
 
 def test_feature_query_uses_latest_snapshot_on_or_before_requested_date() -> None:
