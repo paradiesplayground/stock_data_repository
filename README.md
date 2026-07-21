@@ -187,6 +187,7 @@ Available routes:
 GET /health
 GET /ready
 GET /v1/freshness
+GET /v1/industry-hierarchy
 GET /v1/features
 GET /v1/securities
 GET /v1/securities/{ticker}
@@ -215,11 +216,18 @@ get_price_history
 get_financial_facts
 get_filings
 get_data_freshness
+get_industry_hierarchy
 get_security_features
 query_security_features
 ```
 
 `query_security_features` applies caller-provided thresholds and sorting to deterministic fields.
+Its preferred `exclude_industry_groups` argument accepts readable labels or stable keys returned by
+`get_industry_hierarchy`, such as `Healthcare`, `Manufacturing`, or `Oil and Gas Extraction`.
+The hierarchy includes all 10 SIC divisions and all 83 SIC major groups, plus curated
+cross-division healthcare choices. See [INDUSTRY_HIERARCHY.md](INDUSTRY_HIERARCHY.md) for the
+complete list. Responses echo the resolved labels and underlying SIC prefixes.
+
 Its `exclude_sic_prefixes` argument accepts up to 50 SEC SIC prefixes, allowing a downstream skill
 to exclude any requested industries without changing the stored universe. For example,
 `["283", "384", "385", "80"]` covers broad healthcare groups, while additional four-digit
@@ -260,9 +268,9 @@ The tunnel's local health/admin UI is bound to `127.0.0.1:8789` on Unraid by def
 from a trusted LAN browser, set `TUNNEL_HEALTH_BIND` to the Unraid LAN IP in `.env`, redeploy, and
 open `http://UNRAID-IP:8789/ui`. Do not forward port `8789` to the internet.
 
-When the tunnel reports ready, open ChatGPT **Settings -> Plugins**, create a developer-mode app,
+When the tunnel reports ready, open ChatGPT **Settings -> Apps**, create a developer-mode app,
 choose **Tunnel** as the connection type, and select this tunnel. Refresh tool discovery after a
-v0.3.x deployment so ChatGPT can see the eight read-only tools listed above.
+v0.3.x deployment so ChatGPT can see the nine read-only tools listed above.
 
 ## Manual jobs
 
@@ -303,6 +311,9 @@ After upgrading from v0.3.1 to v0.3.2, run `sync-companyfacts` once so the newly
 marketable-security and short-term-debt concepts are loaded from the SEC bulk archive, then run
 `sync-features`. No database migration is required for this release. Normal nightly SEC processing
 remains incremental afterward.
+
+Upgrading from v0.3.2 to v0.3.3 requires no migration or source-data reload. Rebuild the stack and
+refresh the ChatGPT app's tool discovery to expose the hierarchy tool and readable exclusion input.
 
 ## Derived-field rules and limitations
 

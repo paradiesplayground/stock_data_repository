@@ -103,7 +103,9 @@ def _rsi(values: list[Decimal], period: int = 14) -> Decimal | None:
     return HUNDRED - (HUNDRED / (Decimal("1") + relative_strength))
 
 
-def _price_metrics(rows: list[DailyPriceBar], as_of_date: date) -> tuple[dict[str, Any], list[str]]:
+def _price_metrics(
+    rows: list[DailyPriceBar], as_of_date: date
+) -> tuple[dict[str, Any], list[str]]:
     eligible = [row for row in rows if row.trade_date <= as_of_date]
     if not eligible:
         raise ValueError("price history is empty")
@@ -114,12 +116,16 @@ def _price_metrics(rows: list[DailyPriceBar], as_of_date: date) -> tuple[dict[st
         flags.append("stale_price")
 
     target_12w = as_of_date - timedelta(weeks=12)
-    prior_12w = next((row for row in reversed(eligible) if row.trade_date <= target_12w), None)
+    prior_12w = next(
+        (row for row in reversed(eligible) if row.trade_date <= target_12w), None
+    )
     change_12w = _percent_change(latest.close, prior_12w.close if prior_12w else None)
     if change_12w is None:
         flags.append("insufficient_12w_history")
 
-    year_rows = [row for row in eligible if row.trade_date >= as_of_date - timedelta(days=365)]
+    year_rows = [
+        row for row in eligible if row.trade_date >= as_of_date - timedelta(days=365)
+    ]
     high_52w = max((row.high for row in year_rows), default=None)
     drawdown_52w = _percent_change(latest.close, high_52w)
     if len(year_rows) < 200:
@@ -139,12 +145,15 @@ def _price_metrics(rows: list[DailyPriceBar], as_of_date: date) -> tuple[dict[st
     )
     previous_20 = eligible[-21:-1]
     prior_avg_volume = (
-        sum((row.volume for row in previous_20), Decimal("0")) / Decimal(len(previous_20))
+        sum((row.volume for row in previous_20), Decimal("0"))
+        / Decimal(len(previous_20))
         if previous_20
         else None
     )
     relative_volume = (
-        latest.volume / prior_avg_volume if prior_avg_volume not in (None, Decimal("0")) else None
+        latest.volume / prior_avg_volume
+        if prior_avg_volume not in (None, Decimal("0"))
+        else None
     )
     closes = [row.close for row in eligible]
     return (
@@ -190,7 +199,9 @@ def _latest_by_period(facts: Iterable[FinancialFact]) -> list[FinancialFact]:
         # filing's fiscal-year metadata. Period dates are the stable identity.
         key = (fact.period_start, fact.period_end)
         existing = selected.get(key)
-        existing_filed = existing.filed_date if existing and existing.filed_date else date.min
+        existing_filed = (
+            existing.filed_date if existing and existing.filed_date else date.min
+        )
         fact_filed = fact.filed_date or date.min
         if existing is None or (fact_filed, fact.accession_number or "") >= (
             existing_filed,
@@ -207,10 +218,14 @@ def _ttm_value(
 ) -> tuple[Decimal | None, date | None, str]:
     filing_cutoff = filing_cutoff or period_cutoff
     eligible = _latest_by_period(_eligible_facts(facts, period_cutoff, filing_cutoff))
-    annual = [fact for fact in eligible if (_duration_days(fact) or 0) in range(300, 401)]
+    annual = [
+        fact for fact in eligible if (_duration_days(fact) or 0) in range(300, 401)
+    ]
     if not annual:
         return None, None, "missing_annual"
-    latest_annual = max(annual, key=lambda fact: (fact.period_end, fact.filed_date or date.min))
+    latest_annual = max(
+        annual, key=lambda fact: (fact.period_end, fact.filed_date or date.min)
+    )
     current_interims = [
         fact
         for fact in eligible
@@ -219,7 +234,9 @@ def _ttm_value(
     ]
     if not current_interims:
         return latest_annual.value, latest_annual.period_end, "annual_only"
-    current = max(current_interims, key=lambda fact: (fact.period_end, _duration_days(fact) or 0))
+    current = max(
+        current_interims, key=lambda fact: (fact.period_end, _duration_days(fact) or 0)
+    )
     current_duration = _duration_days(current) or 0
     prior_target = current.period_end - timedelta(days=365)
     prior_interims = [
@@ -238,17 +255,25 @@ def _ttm_value(
             abs((_duration_days(fact) or 0) - current_duration),
         ),
     )
-    return latest_annual.value + current.value - prior.value, current.period_end, "annual_plus_ytd"
+    return (
+        latest_annual.value + current.value - prior.value,
+        current.period_end,
+        "annual_plus_ytd",
+    )
 
 
 def _latest_quarter_pair(
     facts: Iterable[FinancialFact], as_of_date: date
 ) -> tuple[Decimal | None, Decimal | None, date | None]:
     eligible = _latest_by_period(_eligible_facts(facts, as_of_date, as_of_date))
-    quarters = [fact for fact in eligible if (_duration_days(fact) or 0) in range(65, 121)]
+    quarters = [
+        fact for fact in eligible if (_duration_days(fact) or 0) in range(65, 121)
+    ]
     if not quarters:
         return None, None, None
-    current = max(quarters, key=lambda fact: (fact.period_end, fact.filed_date or date.min))
+    current = max(
+        quarters, key=lambda fact: (fact.period_end, fact.filed_date or date.min)
+    )
     target = current.period_end - timedelta(days=365)
     comparable = [
         fact
@@ -288,10 +313,14 @@ def _latest_instant(
 ) -> tuple[Decimal | None, date | None]:
     best: tuple[tuple[date, date, int, str], FinancialFact] | None = None
     for priority, concept in enumerate(concepts):
-        candidates = _eligible_facts(facts_by_concept.get(concept, []), as_of_date, as_of_date)
+        candidates = _eligible_facts(
+            facts_by_concept.get(concept, []), as_of_date, as_of_date
+        )
         instant = [fact for fact in candidates if _duration_days(fact) in (None, 1)]
         if instant:
-            latest = max(instant, key=lambda fact: (fact.period_end, fact.filed_date or date.min))
+            latest = max(
+                instant, key=lambda fact: (fact.period_end, fact.filed_date or date.min)
+            )
             score = (
                 latest.period_end,
                 latest.filed_date or date.min,
@@ -313,7 +342,11 @@ def _aligned_sum(
         _latest_instant(facts_by_concept, (concept,), as_of_date)
         for concept in concepts
     ]
-    present = [(value, period_end) for value, period_end in values if value is not None and period_end]
+    present = [
+        (value, period_end)
+        for value, period_end in values
+        if value is not None and period_end
+    ]
     if not present:
         return None, None
     latest_end = max(period_end for _, period_end in present)
@@ -347,7 +380,9 @@ def _flow_value(
     as_of_date: date,
 ) -> tuple[Decimal | None, date | None, str]:
     for concept in concepts:
-        value, period_end, status = _ttm_value(facts_by_concept.get(concept, []), as_of_date)
+        value, period_end, status = _ttm_value(
+            facts_by_concept.get(concept, []), as_of_date
+        )
         if value is not None:
             return value, period_end, status
     return None, None, "unavailable"
@@ -357,19 +392,32 @@ def _shares_metrics(
     facts_by_concept: dict[str, list[FinancialFact]], as_of_date: date
 ) -> tuple[Decimal | None, Decimal | None, date | None]:
     for concept in SHARE_CONCEPTS:
-        candidates = _eligible_facts(facts_by_concept.get(concept, []), as_of_date, as_of_date)
+        candidates = _eligible_facts(
+            facts_by_concept.get(concept, []), as_of_date, as_of_date
+        )
         candidates = [fact for fact in candidates if "share" in fact.unit.lower()]
         if not candidates:
             continue
-        latest = max(candidates, key=lambda fact: (fact.period_end, fact.filed_date or date.min))
+        latest = max(
+            candidates, key=lambda fact: (fact.period_end, fact.filed_date or date.min)
+        )
         target = latest.period_end - timedelta(days=365)
         priors = [
             fact
             for fact in candidates
-            if abs((fact.period_end - target).days) <= 90 and fact.period_end < latest.period_end
+            if abs((fact.period_end - target).days) <= 90
+            and fact.period_end < latest.period_end
         ]
-        prior = min(priors, key=lambda fact: abs((fact.period_end - target).days)) if priors else None
-        return latest.value, _percent_change(latest.value, prior.value if prior else None), latest.period_end
+        prior = (
+            min(priors, key=lambda fact: abs((fact.period_end - target).days))
+            if priors
+            else None
+        )
+        return (
+            latest.value,
+            _percent_change(latest.value, prior.value if prior else None),
+            latest.period_end,
+        )
     return None, None, None
 
 
@@ -419,7 +467,8 @@ def _financial_metrics(
     )
     current_ratio = (
         current_assets / current_liabilities
-        if current_assets is not None and current_liabilities not in (None, Decimal("0"))
+        if current_assets is not None
+        and current_liabilities not in (None, Decimal("0"))
         else None
     )
     debt_current, debt_current_end = _latest_instant(
@@ -445,10 +494,15 @@ def _financial_metrics(
     # A reported short-term-debt aggregate can already contain commercial
     # paper. Add the standalone commercial-paper tag only when no aggregate
     # exists, so the current portion is not double counted.
-    if short_term_debt is None and commercial_paper is not None and commercial_paper_end:
-        if current_borrowings_end is None or abs(
-            (commercial_paper_end - current_borrowings_end).days
-        ) <= 120:
+    if (
+        short_term_debt is None
+        and commercial_paper is not None
+        and commercial_paper_end
+    ):
+        if (
+            current_borrowings_end is None
+            or abs((commercial_paper_end - current_borrowings_end).days) <= 120
+        ):
             current_borrowings = (current_borrowings or Decimal("0")) + commercial_paper
             current_borrowings_end = max(
                 value
@@ -467,12 +521,16 @@ def _financial_metrics(
             additional_borrowings += commercial_paper
         total_debt = debt_total + additional_borrowings
     else:
-        total_debt = current_borrowings if current_borrowings is not None else debt_noncurrent
+        total_debt = (
+            current_borrowings if current_borrowings is not None else debt_noncurrent
+        )
 
     operating_cash_flow, ocf_end, ocf_status = _flow_value(
         facts_by_concept, OPERATING_CASH_FLOW_CONCEPTS, as_of_date
     )
-    capex, capex_end, capex_status = _flow_value(facts_by_concept, CAPEX_CONCEPTS, as_of_date)
+    capex, capex_end, capex_status = _flow_value(
+        facts_by_concept, CAPEX_CONCEPTS, as_of_date
+    )
     free_cash_flow = (
         operating_cash_flow - capex
         if operating_cash_flow is not None and capex is not None
@@ -520,7 +578,9 @@ def _financial_metrics(
         capex_end,
         shares_end,
     ]
-    latest_period = max((value for value in period_candidates if value is not None), default=None)
+    latest_period = max(
+        (value for value in period_candidates if value is not None), default=None
+    )
     if latest_period and latest_period < as_of_date - timedelta(days=190):
         flags.append("stale_financial_period")
 
@@ -571,11 +631,14 @@ def calculate_daily_features(
             raise RuntimeError(
                 f"Market data is stale: latest={latest_trade_date}, expected={expected_date}"
             )
-        source_rows = session.scalar(
-            select(func.count(DailyPriceBar.id)).where(
-                DailyPriceBar.trade_date == effective_date
+        source_rows = (
+            session.scalar(
+                select(func.count(DailyPriceBar.id)).where(
+                    DailyPriceBar.trade_date == effective_date
+                )
             )
-        ) or 0
+            or 0
+        )
         if source_rows < settings.massive_min_daily_results:
             raise RuntimeError(
                 f"Market data is incomplete for {effective_date}: {source_rows} rows; "
@@ -659,7 +722,11 @@ def calculate_daily_features(
                 }
             )
             if position % 1000 == 0:
-                logger.info("Calculated features for %s/%s securities", position, len(securities))
+                logger.info(
+                    "Calculated features for %s/%s securities",
+                    position,
+                    len(securities),
+                )
 
         for start in range(0, len(output_rows), 500):
             batch = output_rows[start : start + 500]
@@ -668,7 +735,8 @@ def calculate_daily_features(
             update_values = {
                 column.name: getattr(excluded, column.name)
                 for column in SecurityDailyFeature.__table__.columns
-                if column.name not in {"id", "ticker", "as_of_date", "calculated_at_utc"}
+                if column.name
+                not in {"id", "ticker", "as_of_date", "calculated_at_utc"}
             }
             update_values["calculated_at_utc"] = func.now()
             statement = statement.on_conflict_do_update(

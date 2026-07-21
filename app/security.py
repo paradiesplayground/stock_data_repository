@@ -12,6 +12,11 @@ def require_api_token(
     expected = get_settings().api_bearer_token
     if not expected:
         return
-    if credentials is None or credentials.scheme.lower() != "bearer" or credentials.credentials != expected:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid bearer token")
-
+    if (
+        credentials is None
+        or credentials.scheme.lower() != "bearer"
+        or credentials.credentials != expected
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid bearer token"
+        )

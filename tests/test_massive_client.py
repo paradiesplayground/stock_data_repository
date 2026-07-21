@@ -44,7 +44,10 @@ def test_duplicate_tickers_are_removed_before_upsert() -> None:
     deduplicated = _dedupe_security_rows(rows)
 
     assert len(deduplicated) == 2
-    assert next(row for row in deduplicated if row["ticker"] == "TEST")["name"] == "Current name"
+    assert (
+        next(row for row in deduplicated if row["ticker"] == "TEST")["name"]
+        == "Current name"
+    )
 
 
 def test_duplicate_daily_bars_are_removed_before_upsert() -> None:

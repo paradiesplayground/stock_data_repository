@@ -58,6 +58,7 @@ def test_feature_query_builds_neutral_filtered_statement() -> None:
         min_avg_dollar_volume_20d=30_000_000,
         exclude_healthcare=True,
         exclude_sic_prefixes=["13", "602"],
+        exclude_industry_groups=["Healthcare"],
     )
 
     assert result["as_of_date"] == "2026-07-17"
@@ -82,6 +83,8 @@ def test_feature_query_builds_neutral_filtered_statement() -> None:
         "8731",
     ]
     assert result["unknown_sic_codes_retained"] is True
+    assert result["excluded_industry_groups"][0]["key"] == "curated:healthcare"
+    assert "lpad" in sql.lower()
 
 
 def test_feature_query_rejects_invalid_sic_prefixes() -> None:

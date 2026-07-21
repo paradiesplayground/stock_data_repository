@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.3
+
+- Add a versioned readable taxonomy containing all 10 SIC divisions and all 83 SIC major groups.
+- Add curated cross-division healthcare and healthcare-subgroup choices.
+- Accept readable labels or stable hierarchy keys through `exclude_industry_groups`.
+- Echo resolved labels, hierarchy levels, and underlying SIC prefixes in query responses.
+- Add readable industry classification metadata to security and feature results.
+- Add a read-only industry-hierarchy HTTP endpoint and MCP discovery tool.
+- Preserve `exclude_sic_prefixes` and `exclude_healthcare` as compatibility inputs.
+
 ## 0.3.2
 
 - Add caller-supplied SEC SIC-prefix exclusions to neutral feature queries while preserving the

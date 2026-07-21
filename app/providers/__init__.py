@@ -1,2 +1,1 @@
 """External authoritative source clients."""
-

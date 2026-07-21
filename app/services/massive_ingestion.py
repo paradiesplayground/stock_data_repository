@@ -48,7 +48,8 @@ def sync_reference_data(session: Session, settings: Settings) -> tuple[int, int]
                         "name": item.get("name"),
                         "market": item.get("market"),
                         "locale": item.get("locale"),
-                        "currency": item.get("currency_name") or item.get("currency_symbol"),
+                        "currency": item.get("currency_name")
+                        or item.get("currency_symbol"),
                         "primary_exchange": item.get("primary_exchange"),
                         "security_type": item.get("type"),
                         "active": bool(item.get("active", True)),
@@ -132,12 +133,22 @@ def sync_market_day(
                 raise MarketDataIncomplete(
                     f"Massive returned 0 usable rows for {trade_date}; expected at least {minimum}"
                 )
-            tracker.succeed(0, 0, {"trade_date": trade_date.isoformat(), "status": payload.get("status")})
+            tracker.succeed(
+                0,
+                0,
+                {"trade_date": trade_date.isoformat(), "status": payload.get("status")},
+            )
             return 0, 0
 
         tickers = [str(row["T"]).upper() for row in results if row.get("T")]
-        placeholder_rows = [{"ticker": ticker, "active": True, "market": "stocks"} for ticker in tickers]
-        session.execute(insert(Security).values(placeholder_rows).on_conflict_do_nothing(index_elements=[Security.ticker]))
+        placeholder_rows = [
+            {"ticker": ticker, "active": True, "market": "stocks"} for ticker in tickers
+        ]
+        session.execute(
+            insert(Security)
+            .values(placeholder_rows)
+            .on_conflict_do_nothing(index_elements=[Security.ticker])
+        )
 
         rows = [
             {
@@ -186,7 +197,14 @@ def sync_market_day(
             session.execute(statement)
             session.commit()
             written += len(batch)
-        tracker.succeed(seen, written, {"trade_date": trade_date.isoformat(), "request_id": payload.get("request_id")})
+        tracker.succeed(
+            seen,
+            written,
+            {
+                "trade_date": trade_date.isoformat(),
+                "request_id": payload.get("request_id"),
+            },
+        )
         return seen, written
     except Exception as error:
         tracker.fail(error, seen, written)
@@ -211,7 +229,9 @@ def backfill_market_data(
     with MassiveClient(settings) as client:
         while current <= end:
             if current.weekday() < 5:
-                seen, written = sync_market_day(session, settings, current, client=client)
+                seen, written = sync_market_day(
+                    session, settings, current, client=client
+                )
                 total_seen += seen
                 total_written += written
             current += timedelta(days=1)
@@ -295,15 +315,24 @@ def sync_market_incremental(
     return total_seen, total_written
 
 
-def _minimum_daily_results(session: Session, settings: Settings, trade_date: date) -> int:
+def _minimum_daily_results(
+    session: Session, settings: Settings, trade_date: date
+) -> int:
     previous_date = session.scalar(
-        select(func.max(DailyPriceBar.trade_date)).where(DailyPriceBar.trade_date < trade_date)
+        select(func.max(DailyPriceBar.trade_date)).where(
+            DailyPriceBar.trade_date < trade_date
+        )
     )
     if previous_date is None:
         return settings.massive_min_daily_results
-    previous_count = session.scalar(
-        select(func.count(DailyPriceBar.id)).where(DailyPriceBar.trade_date == previous_date)
-    ) or 0
+    previous_count = (
+        session.scalar(
+            select(func.count(DailyPriceBar.id)).where(
+                DailyPriceBar.trade_date == previous_date
+            )
+        )
+        or 0
+    )
     coverage_minimum = int(previous_count * settings.massive_min_daily_coverage_ratio)
     return max(settings.massive_min_daily_results, coverage_minimum)
 

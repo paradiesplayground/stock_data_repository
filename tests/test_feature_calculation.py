@@ -212,15 +212,11 @@ def test_financial_metrics_include_marketable_securities_and_commercial_paper() 
         "MarketableSecuritiesCurrent": [
             _fact("22.935", None, period_end, filed, 2026, "Q2")
         ],
-        "LongTermDebtCurrent": [
-            _fact("8.310", None, period_end, filed, 2026, "Q2")
-        ],
+        "LongTermDebtCurrent": [_fact("8.310", None, period_end, filed, 2026, "Q2")],
         "LongTermDebtNoncurrent": [
             _fact("74.404", None, period_end, filed, 2026, "Q2")
         ],
-        "CommercialPaper": [
-            _fact("1.997", None, period_end, filed, 2026, "Q2")
-        ],
+        "CommercialPaper": [_fact("1.997", None, period_end, filed, 2026, "Q2")],
     }
 
     metrics, _ = _financial_metrics(facts, date(2026, 7, 17), Decimal("333.74"))
@@ -242,12 +238,8 @@ def test_financial_metrics_sum_current_marketable_security_components() -> None:
         "MarketableEquitySecuritiesCurrent": [
             _fact("30.237", None, period_end, filed, 2027, "Q1")
         ],
-        "LongTermDebtCurrent": [
-            _fact("1.000", None, period_end, filed, 2027, "Q1")
-        ],
-        "LongTermDebtNoncurrent": [
-            _fact("7.470", None, period_end, filed, 2027, "Q1")
-        ],
+        "LongTermDebtCurrent": [_fact("1.000", None, period_end, filed, 2027, "Q1")],
+        "LongTermDebtNoncurrent": [_fact("7.470", None, period_end, filed, 2027, "Q1")],
     }
 
     metrics, _ = _financial_metrics(facts, date(2026, 7, 17), Decimal("202.81"))

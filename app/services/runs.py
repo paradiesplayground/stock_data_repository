@@ -7,15 +7,25 @@ from app.models import IngestionRun
 
 
 class RunTracker:
-    def __init__(self, session: Session, job_name: str, source: str, details: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        session: Session,
+        job_name: str,
+        source: str,
+        details: dict[str, Any] | None = None,
+    ):
         self.session = session
-        self.run = IngestionRun(job_name=job_name, source=source, status="running", details=details)
+        self.run = IngestionRun(
+            job_name=job_name, source=source, status="running", details=details
+        )
         session.add(self.run)
         session.commit()
         session.refresh(self.run)
         self.run_id = self.run.id
 
-    def succeed(self, seen: int, written: int, details: dict[str, Any] | None = None) -> None:
+    def succeed(
+        self, seen: int, written: int, details: dict[str, Any] | None = None
+    ) -> None:
         self.run.status = "succeeded"
         self.run.records_seen = seen
         self.run.records_written = written

@@ -56,7 +56,9 @@ class DailyPriceBar(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    ticker: Mapped[str] = mapped_column(ForeignKey("securities.ticker", ondelete="CASCADE"))
+    ticker: Mapped[str] = mapped_column(
+        ForeignKey("securities.ticker", ondelete="CASCADE")
+    )
     trade_date: Mapped[date] = mapped_column(Date)
     open: Mapped[Decimal] = mapped_column(Numeric(20, 8))
     high: Mapped[Decimal] = mapped_column(Numeric(20, 8))
@@ -68,7 +70,9 @@ class DailyPriceBar(Base):
     adjusted: Mapped[bool] = mapped_column(Boolean, default=True)
     source: Mapped[str] = mapped_column(String(32), default="massive")
     source_timestamp_ms: Mapped[int | None] = mapped_column(BigInteger)
-    ingested_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ingested_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
     security: Mapped[Security] = relationship(back_populates="price_bars")
 
@@ -76,14 +80,18 @@ class DailyPriceBar(Base):
 class SecurityDailyFeature(Base):
     __tablename__ = "security_daily_features"
     __table_args__ = (
-        UniqueConstraint("ticker", "as_of_date", name="uq_security_features_ticker_date"),
+        UniqueConstraint(
+            "ticker", "as_of_date", name="uq_security_features_ticker_date"
+        ),
         Index("ix_security_features_date", "as_of_date"),
         Index("ix_security_features_liquidity", "as_of_date", "avg_dollar_volume_20d"),
         Index("ix_security_features_growth", "as_of_date", "revenue_ttm_yoy_pct"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    ticker: Mapped[str] = mapped_column(ForeignKey("securities.ticker", ondelete="CASCADE"))
+    ticker: Mapped[str] = mapped_column(
+        ForeignKey("securities.ticker", ondelete="CASCADE")
+    )
     as_of_date: Mapped[date] = mapped_column(Date)
     price_date: Mapped[date] = mapped_column(Date)
     close: Mapped[Decimal] = mapped_column(Numeric(20, 8))
@@ -99,12 +107,16 @@ class SecurityDailyFeature(Base):
     revenue_ttm: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
     revenue_ttm_yoy_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
     latest_quarter_revenue: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
-    latest_quarter_revenue_yoy_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    latest_quarter_revenue_yoy_pct: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 8)
+    )
     revenue_concept: Mapped[str | None] = mapped_column(String(255))
     gross_profit_ttm: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
     gross_margin_ttm_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
 
-    cash_and_short_term_investments: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    cash_and_short_term_investments: Mapped[Decimal | None] = mapped_column(
+        Numeric(38, 8)
+    )
     total_debt: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
     current_ratio: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
     operating_cash_flow_ttm: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
@@ -148,7 +160,9 @@ class FinancialFact(Base):
     frame: Mapped[str | None] = mapped_column(String(32))
     accession_number: Mapped[str | None] = mapped_column(String(32))
     source: Mapped[str] = mapped_column(String(32), default="sec-edgar")
-    ingested_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ingested_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class Filing(Base):
@@ -170,7 +184,9 @@ class Filing(Base):
     is_xbrl: Mapped[bool | None] = mapped_column(Boolean)
     is_inline_xbrl: Mapped[bool | None] = mapped_column(Boolean)
     source_url: Mapped[str | None] = mapped_column(Text)
-    ingested_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ingested_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class IngestionRun(Base):
@@ -181,7 +197,9 @@ class IngestionRun(Base):
     job_name: Mapped[str] = mapped_column(String(128), index=True)
     source: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32), index=True)
-    started_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     completed_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     records_seen: Mapped[int] = mapped_column(BigInteger, default=0)
     records_written: Mapped[int] = mapped_column(BigInteger, default=0)

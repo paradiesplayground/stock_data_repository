@@ -21,7 +21,9 @@ def _parse_daily_master_dates(payload: dict[str, Any]) -> set[date]:
         if not match:
             continue
         try:
-            dates.add(date.fromisoformat(f"{match[1][:4]}-{match[1][4:6]}-{match[1][6:]}"))
+            dates.add(
+                date.fromisoformat(f"{match[1][:4]}-{match[1][4:6]}-{match[1][6:]}")
+            )
         except ValueError:
             continue
     return dates
@@ -33,7 +35,9 @@ class SecClient:
 
     def __init__(self, settings: Settings):
         if not settings.sec_user_agent or "@" not in settings.sec_user_agent:
-            raise ValueError("SEC_USER_AGENT must identify the application and include a contact email")
+            raise ValueError(
+                "SEC_USER_AGENT must identify the application and include a contact email"
+            )
         self.settings = settings
         self.min_interval = 1.0 / settings.sec_requests_per_second
         self._last_request = 0.0
@@ -71,7 +75,9 @@ class SecClient:
                 with self.client.stream("GET", url) as response:
                     self._last_request = time.monotonic()
                     if response.status_code in {429, 503}:
-                        retry_after = float(response.headers.get("Retry-After", min(60, 2**attempt)))
+                        retry_after = float(
+                            response.headers.get("Retry-After", min(60, 2**attempt))
+                        )
                         time.sleep(retry_after)
                         continue
                     response.raise_for_status()
@@ -105,7 +111,9 @@ class SecClient:
             if response.status_code in missing_statuses:
                 return None
             if response.status_code in {429, 503}:
-                retry_after = float(response.headers.get("Retry-After", min(60, 2**attempt)))
+                retry_after = float(
+                    response.headers.get("Retry-After", min(60, 2**attempt))
+                )
                 logger.warning("SEC request throttled; retrying in %.1fs", retry_after)
                 time.sleep(retry_after)
                 continue

@@ -6,8 +6,10 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.industry_taxonomy import classify_sic
 from app.mcp_queries import (
     get_data_freshness as query_data_freshness,
+    get_industry_hierarchy as query_industry_hierarchy,
     get_security_features as query_security_features_for_ticker,
     query_security_features as query_feature_rows,
 )
@@ -35,6 +37,11 @@ def freshness(session: DbSession) -> dict[str, object]:
     return query_data_freshness(session)
 
 
+@router.get("/industry-hierarchy")
+def industry_hierarchy() -> dict[str, object]:
+    return query_industry_hierarchy()
+
+
 @router.get("/features")
 def list_features(
     session: DbSession,
@@ -50,6 +57,7 @@ def list_features(
     min_avg_dollar_volume_20d: float | None = None,
     exclude_healthcare: bool = False,
     exclude_sic_prefixes: Annotated[list[str] | None, Query()] = None,
+    exclude_industry_groups: Annotated[list[str] | None, Query()] = None,
     nasdaq_nyse_only: bool = True,
     sort_by: str = "avg_dollar_volume_20d",
     descending: bool = True,
@@ -69,6 +77,7 @@ def list_features(
         min_avg_dollar_volume_20d=min_avg_dollar_volume_20d,
         exclude_healthcare=exclude_healthcare,
         exclude_sic_prefixes=exclude_sic_prefixes,
+        exclude_industry_groups=exclude_industry_groups,
         nasdaq_nyse_only=nasdaq_nyse_only,
         sort_by=sort_by,
         descending=descending,
@@ -119,6 +128,7 @@ def list_securities(
                 "cik": row.cik,
                 "sic_code": row.sic_code,
                 "sic_description": row.sic_description,
+                "industry_classification": classify_sic(row.sic_code),
             }
             for row in rows
         ],
@@ -131,7 +141,9 @@ def list_securities(
 def get_security(ticker: str, session: DbSession) -> dict[str, object]:
     row = _security_or_404(session, ticker)
     latest_trade_date = session.scalar(
-        select(func.max(DailyPriceBar.trade_date)).where(DailyPriceBar.ticker == row.ticker)
+        select(func.max(DailyPriceBar.trade_date)).where(
+            DailyPriceBar.ticker == row.ticker
+        )
     )
     return {
         "ticker": row.ticker,
@@ -168,7 +180,9 @@ def get_prices(
         statement = statement.where(DailyPriceBar.trade_date >= start)
     if end:
         statement = statement.where(DailyPriceBar.trade_date <= end)
-    rows = session.scalars(statement.order_by(desc(DailyPriceBar.trade_date)).limit(limit)).all()
+    rows = session.scalars(
+        statement.order_by(desc(DailyPriceBar.trade_date)).limit(limit)
+    ).all()
     return {
         "ticker": security.ticker,
         "source": "massive",
@@ -201,7 +215,12 @@ def get_facts(
 ) -> dict[str, object]:
     security = _security_or_404(session, ticker)
     if not security.cik:
-        return {"ticker": security.ticker, "cik": None, "source": "sec-edgar", "items": []}
+        return {
+            "ticker": security.ticker,
+            "cik": None,
+            "source": "sec-edgar",
+            "items": [],
+        }
     statement = select(FinancialFact).where(FinancialFact.cik == security.cik)
     if concept:
         statement = statement.where(FinancialFact.concept == concept)
@@ -210,7 +229,9 @@ def get_facts(
     if filed_after:
         statement = statement.where(FinancialFact.filed_date >= filed_after)
     rows = session.scalars(
-        statement.order_by(desc(FinancialFact.period_end), desc(FinancialFact.filed_date)).limit(limit)
+        statement.order_by(
+            desc(FinancialFact.period_end), desc(FinancialFact.filed_date)
+        ).limit(limit)
     ).all()
     return {
         "ticker": security.ticker,
@@ -247,13 +268,20 @@ def get_filings(
 ) -> dict[str, object]:
     security = _security_or_404(session, ticker)
     if not security.cik:
-        return {"ticker": security.ticker, "cik": None, "source": "sec-edgar", "items": []}
+        return {
+            "ticker": security.ticker,
+            "cik": None,
+            "source": "sec-edgar",
+            "items": [],
+        }
     statement = select(Filing).where(Filing.cik == security.cik)
     if form:
         statement = statement.where(Filing.form == form)
     if filed_after:
         statement = statement.where(Filing.filed_date >= filed_after)
-    rows = session.scalars(statement.order_by(desc(Filing.filed_date)).limit(limit)).all()
+    rows = session.scalars(
+        statement.order_by(desc(Filing.filed_date)).limit(limit)
+    ).all()
     return {
         "ticker": security.ticker,
         "cik": security.cik,

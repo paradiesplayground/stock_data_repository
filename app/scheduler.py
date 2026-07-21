@@ -45,7 +45,9 @@ def main() -> None:
     common = {"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600}
     scheduler.add_job(
         _run_reference,
-        CronTrigger.from_crontab(settings.reference_sync_cron, timezone=settings.timezone),
+        CronTrigger.from_crontab(
+            settings.reference_sync_cron, timezone=settings.timezone
+        ),
         id="massive_reference",
         **common,
     )
@@ -63,7 +65,9 @@ def main() -> None:
     )
     scheduler.add_job(
         _run_features,
-        CronTrigger.from_crontab(settings.feature_sync_cron, timezone=settings.timezone),
+        CronTrigger.from_crontab(
+            settings.feature_sync_cron, timezone=settings.timezone
+        ),
         id="derived_features",
         **common,
     )

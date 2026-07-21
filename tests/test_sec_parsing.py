@@ -167,4 +167,7 @@ def test_checkpoint_selects_new_indexes_and_two_completed_indexes() -> None:
 
 
 def test_quarter_discovery_crosses_year_boundary() -> None:
-    assert _quarters_between(date(2025, 12, 20), date(2026, 1, 5)) == [(2025, 4), (2026, 1)]
+    assert _quarters_between(date(2025, 12, 20), date(2026, 1, 5)) == [
+        (2025, 4),
+        (2026, 1),
+    ]

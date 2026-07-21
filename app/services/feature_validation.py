@@ -67,7 +67,9 @@ def validate_feature_calculations(
     tickers: list[str],
     as_of_date: date | None = None,
 ) -> dict[str, Any]:
-    normalized_tickers = list(dict.fromkeys(ticker.strip().upper() for ticker in tickers if ticker.strip()))
+    normalized_tickers = list(
+        dict.fromkeys(ticker.strip().upper() for ticker in tickers if ticker.strip())
+    )
     if not normalized_tickers:
         raise ValueError("at least one ticker is required")
     if len(normalized_tickers) > 25:
@@ -140,7 +142,9 @@ def validate_feature_calculations(
             }
             for field in VALIDATED_FIELDS
         }
-        mismatches = [field for field, result in comparisons.items() if not result["matches"]]
+        mismatches = [
+            field for field, result in comparisons.items() if not result["matches"]
+        ]
         results.append(
             {
                 "ticker": ticker,
@@ -148,7 +152,10 @@ def validate_feature_calculations(
                 "as_of_date": effective_date.isoformat(),
                 "stored_calculation_version": feature.calculation_version,
                 "current_calculation_version": CALCULATION_VERSION,
-                "source_rows": {"prices": len(price_rows), "financial_facts": len(fact_rows)},
+                "source_rows": {
+                    "prices": len(price_rows),
+                    "financial_facts": len(fact_rows),
+                },
                 "mismatched_fields": mismatches,
                 "comparisons": comparisons,
             }
@@ -158,6 +165,7 @@ def validate_feature_calculations(
         "validation": "stored derived fields recomputed from local Massive and SEC source rows",
         "external_source_comparison": False,
         "count": len(results),
-        "all_match": bool(results) and all(item.get("status") == "matches" for item in results),
+        "all_match": bool(results)
+        and all(item.get("status") == "matches" for item in results),
         "items": results,
     }

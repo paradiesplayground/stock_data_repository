@@ -14,7 +14,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import Filing, FinancialFact, IngestionCheckpoint, IngestionRun, Security
+from app.models import (
+    Filing,
+    FinancialFact,
+    IngestionCheckpoint,
+    IngestionRun,
+    Security,
+)
 from app.providers.sec import SecClient
 from app.services.runs import RunTracker
 
@@ -79,7 +85,9 @@ def _parse_datetime(value: Any) -> datetime | None:
         return None
 
 
-def _fact_id(cik: str, taxonomy: str, concept: str, unit: str, fact: dict[str, Any]) -> str:
+def _fact_id(
+    cik: str, taxonomy: str, concept: str, unit: str, fact: dict[str, Any]
+) -> str:
     identity = "|".join(
         str(value or "")
         for value in (
@@ -98,7 +106,12 @@ def _fact_id(cik: str, taxonomy: str, concept: str, unit: str, fact: dict[str, A
 
 
 def _known_ciks(session: Session) -> set[str]:
-    return {row[0] for row in session.execute(select(Security.cik).where(Security.cik.is_not(None))).all()}
+    return {
+        row[0]
+        for row in session.execute(
+            select(Security.cik).where(Security.cik.is_not(None))
+        ).all()
+    }
 
 
 def _iter_company_fact_rows(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
@@ -201,6 +214,7 @@ def _recent_filing_rows(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
     recent = payload.get("filings", {}).get("recent", {})
     accessions = recent.get("accessionNumber", [])
     for index, accession in enumerate(accessions):
+
         def value(key: str) -> Any:
             values = recent.get(key, [])
             return values[index] if index < len(values) else None
@@ -231,12 +245,16 @@ def _recent_filing_rows(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
             "items": value("items"),
             "size_bytes": value("size"),
             "is_xbrl": bool(value("isXBRL")) if value("isXBRL") is not None else None,
-            "is_inline_xbrl": bool(value("isInlineXBRL")) if value("isInlineXBRL") is not None else None,
+            "is_inline_xbrl": bool(value("isInlineXBRL"))
+            if value("isInlineXBRL") is not None
+            else None,
             "source_url": source_url,
         }
 
 
-def _update_security_metadata(session: Session, cik: str, payload: dict[str, Any]) -> None:
+def _update_security_metadata(
+    session: Session, cik: str, payload: dict[str, Any]
+) -> None:
     session.execute(
         update(Security)
         .where(Security.cik == cik)
@@ -350,9 +368,13 @@ def _select_index_dates(
     end_date: date,
     overlap_indexes: int,
 ) -> list[date]:
-    eligible = sorted(index_date for index_date in available_dates if index_date <= end_date)
+    eligible = sorted(
+        index_date for index_date in available_dates if index_date <= end_date
+    )
     if checkpoint_date is None:
-        return [index_date for index_date in eligible if index_date >= bootstrap_start_date]
+        return [
+            index_date for index_date in eligible if index_date >= bootstrap_start_date
+        ]
 
     completed = [index_date for index_date in eligible if index_date <= checkpoint_date]
     overlap = completed[-overlap_indexes:] if overlap_indexes else []
@@ -363,7 +385,10 @@ def _select_index_dates(
 def _legacy_sec_checkpoint(session: Session) -> date | None:
     latest_run = session.scalar(
         select(IngestionRun)
-        .where(IngestionRun.job_name == "sec_incremental", IngestionRun.status == "succeeded")
+        .where(
+            IngestionRun.job_name == "sec_incremental",
+            IngestionRun.status == "succeeded",
+        )
         .order_by(IngestionRun.started_at_utc.desc())
         .limit(1)
     )
@@ -377,11 +402,16 @@ def sync_sec_incremental(session: Session, settings: Settings) -> tuple[int, int
     tracker = RunTracker(session, "sec_incremental", "sec-edgar")
     seen = written = 0
     end_date = datetime.now(ZoneInfo(settings.timezone)).date() - timedelta(days=1)
-    bootstrap_start_date = end_date - timedelta(days=settings.sec_incremental_lookback_days - 1)
+    bootstrap_start_date = end_date - timedelta(
+        days=settings.sec_incremental_lookback_days - 1
+    )
     checkpoint = session.get(IngestionCheckpoint, SEC_CHECKPOINT_JOB)
-    checkpoint_date = checkpoint.checkpoint_date if checkpoint else _legacy_sec_checkpoint(session)
+    checkpoint_date = (
+        checkpoint.checkpoint_date if checkpoint else _legacy_sec_checkpoint(session)
+    )
     discovery_start_date = (
-        checkpoint_date - timedelta(days=max(14, settings.sec_incremental_overlap_indexes * 4))
+        checkpoint_date
+        - timedelta(days=max(14, settings.sec_incremental_overlap_indexes * 4))
         if checkpoint_date
         else bootstrap_start_date
     )
@@ -393,7 +423,9 @@ def sync_sec_incremental(session: Session, settings: Settings) -> tuple[int, int
             for year, quarter in _quarters_between(discovery_start_date, end_date):
                 quarter_dates = client.get_daily_master_index_dates(year, quarter)
                 if quarter_dates is None:
-                    raise RuntimeError(f"SEC daily-index directory unavailable for {year} QTR{quarter}")
+                    raise RuntimeError(
+                        f"SEC daily-index directory unavailable for {year} QTR{quarter}"
+                    )
                 available_dates.update(quarter_dates)
 
             index_dates = _select_index_dates(
@@ -406,7 +438,9 @@ def sync_sec_incremental(session: Session, settings: Settings) -> tuple[int, int
             for index_date in index_dates:
                 index_text = client.get_daily_master_index(index_date)
                 if index_text is None:
-                    raise RuntimeError(f"Listed SEC daily master index is unavailable: {index_date}")
+                    raise RuntimeError(
+                        f"Listed SEC daily master index is unavailable: {index_date}"
+                    )
                 for cik, forms in _parse_master_index(index_text).items():
                     if cik in allowed_ciks:
                         changed.setdefault(cik, set()).update(forms)
@@ -427,12 +461,18 @@ def sync_sec_incremental(session: Session, settings: Settings) -> tuple[int, int
                         written += _upsert_fact_rows(session, fact_rows)
 
                 if position % 100 == 0:
-                    logger.info("SEC incremental processed %s/%s changed CIKs", position, len(changed))
+                    logger.info(
+                        "SEC incremental processed %s/%s changed CIKs",
+                        position,
+                        len(changed),
+                    )
 
         new_checkpoint_date = max(index_dates, default=checkpoint_date)
         if new_checkpoint_date is not None:
             checkpoint_details = {
-                "processed_index_dates": [index_date.isoformat() for index_date in index_dates],
+                "processed_index_dates": [
+                    index_date.isoformat() for index_date in index_dates
+                ],
                 "overlap_indexes": settings.sec_incremental_overlap_indexes,
             }
             if checkpoint is None:
@@ -450,10 +490,16 @@ def sync_sec_incremental(session: Session, settings: Settings) -> tuple[int, int
             seen,
             written,
             {
-                "checkpoint_before": checkpoint_date.isoformat() if checkpoint_date else None,
-                "checkpoint_after": new_checkpoint_date.isoformat() if new_checkpoint_date else None,
+                "checkpoint_before": checkpoint_date.isoformat()
+                if checkpoint_date
+                else None,
+                "checkpoint_after": new_checkpoint_date.isoformat()
+                if new_checkpoint_date
+                else None,
                 "end_date": end_date.isoformat(),
-                "processed_index_dates": [index_date.isoformat() for index_date in index_dates],
+                "processed_index_dates": [
+                    index_date.isoformat() for index_date in index_dates
+                ],
                 "changed_ciks": len(changed),
             },
         )

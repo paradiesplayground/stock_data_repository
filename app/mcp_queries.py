@@ -7,6 +7,12 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
+from app.industry_taxonomy import (
+    TAXONOMY_VERSION,
+    classify_sic,
+    industry_hierarchy,
+    resolve_industry_groups,
+)
 from app.models import (
     DailyPriceBar,
     Filing,
@@ -17,9 +23,6 @@ from app.models import (
     SecurityDailyFeature,
 )
 from app.services.massive_ingestion import market_target_date
-
-
-HEALTHCARE_SIC_PREFIXES = ("283", "384", "385", "80", "5047", "5122", "6324", "7352", "8731")
 
 
 def _date_value(value: str | None, field_name: str) -> date | None:
@@ -47,11 +50,8 @@ def _limit(value: int, maximum: int) -> int:
 
 def _sic_prefixes(
     values: list[str] | None,
-    include_healthcare: bool = False,
 ) -> list[str]:
     prefixes = list(values or [])
-    if include_healthcare:
-        prefixes.extend(HEALTHCARE_SIC_PREFIXES)
     normalized: set[str] = set()
     for value in prefixes:
         prefix = str(value).strip()
@@ -71,6 +71,7 @@ def _feature_item(feature: SecurityDailyFeature, security: Security) -> dict[str
         "security_type": security.security_type,
         "sic_code": security.sic_code,
         "sic_description": security.sic_description,
+        "industry_classification": classify_sic(security.sic_code),
         "as_of_date": _json_value(feature.as_of_date),
         "price_date": _json_value(feature.price_date),
         "close": _json_value(feature.close),
@@ -120,10 +121,14 @@ def get_security_features(
     security = session.get(Security, ticker)
     if security is None:
         return {"ticker": ticker, "found": False}
-    statement = select(SecurityDailyFeature).where(SecurityDailyFeature.ticker == ticker)
+    statement = select(SecurityDailyFeature).where(
+        SecurityDailyFeature.ticker == ticker
+    )
     if requested_date:
         statement = statement.where(SecurityDailyFeature.as_of_date <= requested_date)
-    feature = session.scalar(statement.order_by(desc(SecurityDailyFeature.as_of_date)).limit(1))
+    feature = session.scalar(
+        statement.order_by(desc(SecurityDailyFeature.as_of_date)).limit(1)
+    )
     if feature is None:
         return {"ticker": ticker, "found": True, "features_available": False}
     return {
@@ -153,9 +158,23 @@ def query_security_features(
     descending: bool = True,
     limit: int = 100,
     exclude_sic_prefixes: list[str] | None = None,
+    exclude_industry_groups: list[str] | None = None,
 ) -> dict[str, Any]:
     limit = _limit(limit, 500)
-    excluded_prefixes = _sic_prefixes(exclude_sic_prefixes, exclude_healthcare)
+    requested_groups = list(exclude_industry_groups or [])
+    if exclude_healthcare:
+        requested_groups.append("curated:healthcare")
+    resolved_groups, group_prefixes = resolve_industry_groups(requested_groups)
+    excluded_prefixes = _sic_prefixes(list(exclude_sic_prefixes or []) + group_prefixes)
+    resolved_exclusions = [
+        {
+            "key": group["key"],
+            "label": group["label"],
+            "level": group["level"],
+            "sic_prefixes": list(group["sic_prefixes"]),
+        }
+        for group in resolved_groups
+    ]
     requested_date = _date_value(as_of_date, "as_of_date")
     date_statement = select(func.max(SecurityDailyFeature.as_of_date))
     if requested_date:
@@ -169,6 +188,8 @@ def query_security_features(
             "count": 0,
             "items": [],
             "excluded_sic_prefixes": excluded_prefixes,
+            "excluded_industry_groups": resolved_exclusions,
+            "industry_taxonomy_version": TAXONOMY_VERSION,
             "unknown_sic_codes_retained": True,
             "interpretation": "derived features have not been calculated",
         }
@@ -184,8 +205,9 @@ def query_security_features(
     if nasdaq_nyse_only:
         statement = statement.where(Security.primary_exchange.in_(("XNAS", "XNYS")))
     if excluded_prefixes:
+        normalized_sic = func.lpad(Security.sic_code, 4, "0")
         excluded_industries = or_(
-            *(Security.sic_code.like(f"{prefix}%") for prefix in excluded_prefixes)
+            *(normalized_sic.like(f"{prefix}%") for prefix in excluded_prefixes)
         )
         statement = statement.where(
             or_(Security.sic_code.is_(None), ~excluded_industries)
@@ -212,7 +234,9 @@ def query_security_features(
     )
     for value, column, operator in filters:
         if value is not None:
-            statement = statement.where(column >= value if operator == ">=" else column <= value)
+            statement = statement.where(
+                column >= value if operator == ">=" else column <= value
+            )
 
     sort_columns = {
         "ticker": SecurityDailyFeature.ticker,
@@ -228,14 +252,20 @@ def query_security_features(
     if sort_by not in sort_columns:
         raise ValueError(f"sort_by must be one of: {', '.join(sorted(sort_columns))}")
     sort_column = sort_columns[sort_by]
-    order = sort_column.desc().nullslast() if descending else sort_column.asc().nullslast()
-    rows = session.execute(statement.order_by(order, SecurityDailyFeature.ticker).limit(limit)).all()
+    order = (
+        sort_column.desc().nullslast() if descending else sort_column.asc().nullslast()
+    )
+    rows = session.execute(
+        statement.order_by(order, SecurityDailyFeature.ticker).limit(limit)
+    ).all()
     return {
         "as_of_date": effective_date.isoformat(),
         "count": len(rows),
         "limit": limit,
         "filters_are_user_supplied": True,
         "excluded_sic_prefixes": excluded_prefixes,
+        "excluded_industry_groups": resolved_exclusions,
+        "industry_taxonomy_version": TAXONOMY_VERSION,
         "unknown_sic_codes_retained": True,
         "interpretation": "neutral filtering of deterministic fields; no score, rank, or recommendation",
         "items": [_feature_item(feature, security) for feature, security in rows],
@@ -269,6 +299,9 @@ def search_securities(
                 "security_type": row.security_type,
                 "active": row.active,
                 "cik": row.cik,
+                "sic_code": row.sic_code,
+                "sic_description": row.sic_description,
+                "industry_classification": classify_sic(row.sic_code),
             }
             for row in rows
         ],
@@ -303,12 +336,18 @@ def lookup_security(session: Session, ticker: str) -> dict[str, Any]:
         "share_class_figi": row.share_class_figi,
         "sic_code": row.sic_code,
         "sic_description": row.sic_description,
+        "industry_classification": classify_sic(row.sic_code),
         "fiscal_year_end": row.fiscal_year_end,
         "state_of_incorporation": row.state_of_incorporation,
         "latest_trade_date": _json_value(latest_trade_date),
         "latest_filing_date": _json_value(latest_filing_date),
         "sources": ["massive", "sec-edgar"],
     }
+
+
+def get_industry_hierarchy() -> dict[str, Any]:
+    """Return the complete readable SIC hierarchy and curated cross-division groups."""
+    return industry_hierarchy()
 
 
 def get_price_history(
@@ -331,7 +370,9 @@ def get_price_history(
         statement = statement.where(DailyPriceBar.trade_date >= start)
     if end:
         statement = statement.where(DailyPriceBar.trade_date <= end)
-    rows = session.scalars(statement.order_by(desc(DailyPriceBar.trade_date)).limit(limit)).all()
+    rows = session.scalars(
+        statement.order_by(desc(DailyPriceBar.trade_date)).limit(limit)
+    ).all()
     rows.reverse()
     return {
         "ticker": ticker,
@@ -380,11 +421,15 @@ def get_financial_facts(
     if concepts:
         statement = statement.where(FinancialFact.concept.in_(concepts))
     if forms:
-        statement = statement.where(FinancialFact.form.in_([form.upper() for form in forms]))
+        statement = statement.where(
+            FinancialFact.form.in_([form.upper() for form in forms])
+        )
     if filed_after_date:
         statement = statement.where(FinancialFact.filed_date >= filed_after_date)
     rows = session.scalars(
-        statement.order_by(desc(FinancialFact.period_end), desc(FinancialFact.filed_date)).limit(limit)
+        statement.order_by(
+            desc(FinancialFact.period_end), desc(FinancialFact.filed_date)
+        ).limit(limit)
     ).all()
     return {
         "ticker": ticker,
@@ -437,7 +482,9 @@ def get_filings(
         statement = statement.where(Filing.form.in_([form.upper() for form in forms]))
     if filed_after_date:
         statement = statement.where(Filing.filed_date >= filed_after_date)
-    rows = session.scalars(statement.order_by(desc(Filing.filed_date)).limit(limit)).all()
+    rows = session.scalars(
+        statement.order_by(desc(Filing.filed_date)).limit(limit)
+    ).all()
     return {
         "ticker": ticker,
         "found": True,
@@ -480,7 +527,9 @@ def get_data_freshness(
     )
     latest_trade_date = session.scalar(select(func.max(DailyPriceBar.trade_date)))
     latest_sec_filing_date = session.scalar(select(func.max(Filing.filed_date)))
-    latest_feature_date = session.scalar(select(func.max(SecurityDailyFeature.as_of_date)))
+    latest_feature_date = session.scalar(
+        select(func.max(SecurityDailyFeature.as_of_date))
+    )
     job_names = session.scalars(select(IngestionRun.job_name).distinct()).all()
     jobs: list[dict[str, Any]] = []
     for job_name in sorted(job_names):
@@ -504,7 +553,9 @@ def get_data_freshness(
                     "error_message": run.error_message,
                 }
             )
-    checkpoints = session.scalars(select(IngestionCheckpoint).order_by(IngestionCheckpoint.job_name)).all()
+    checkpoints = session.scalars(
+        select(IngestionCheckpoint).order_by(IngestionCheckpoint.job_name)
+    ).all()
     feature_job = next(
         (job for job in jobs if job["job_name"] == "derived_features"), None
     )

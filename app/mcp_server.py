@@ -9,6 +9,7 @@ from app.mcp_queries import (
     get_data_freshness as query_data_freshness,
     get_filings as query_filings,
     get_financial_facts as query_financial_facts,
+    get_industry_hierarchy as query_industry_hierarchy,
     get_price_history as query_price_history,
     get_security_features as query_features,
     lookup_security as query_security,
@@ -34,7 +35,9 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-def search_securities(query: str, active_only: bool = True, limit: int = 20) -> dict[str, Any]:
+def search_securities(
+    query: str, active_only: bool = True, limit: int = 20
+) -> dict[str, Any]:
     """Find securities by ticker or company name. This is lookup, not screening or ranking."""
     with SessionLocal() as session:
         return query_securities(session, query, active_only, limit)
@@ -69,7 +72,9 @@ def get_financial_facts(
 ) -> dict[str, Any]:
     """Return SEC-reported source facts without TTM calculations or competing-tag normalization."""
     with SessionLocal() as session:
-        return query_financial_facts(session, ticker, concepts, forms, filed_after, limit)
+        return query_financial_facts(
+            session, ticker, concepts, forms, filed_after, limit
+        )
 
 
 @mcp.tool()
@@ -89,6 +94,12 @@ def get_data_freshness() -> dict[str, Any]:
     """Return latest source dates, job outcomes, errors, and durable ingestion checkpoints."""
     with SessionLocal() as session:
         return query_data_freshness(session)
+
+
+@mcp.tool()
+def get_industry_hierarchy() -> dict[str, Any]:
+    """List every readable SIC division, major group, and curated exclusion group."""
+    return query_industry_hierarchy()
 
 
 @mcp.tool()
@@ -112,12 +123,13 @@ def query_security_features(
     min_avg_dollar_volume_20d: float | None = None,
     exclude_healthcare: bool = False,
     exclude_sic_prefixes: list[str] | None = None,
+    exclude_industry_groups: list[str] | None = None,
     nasdaq_nyse_only: bool = True,
     sort_by: str = "avg_dollar_volume_20d",
     descending: bool = True,
     limit: int = 100,
 ) -> dict[str, Any]:
-    """Filter deterministic fields and optional SIC industries without scoring or ranking."""
+    """Filter deterministic fields and readable SIC-backed industries without scoring or ranking."""
     with SessionLocal() as session:
         return query_features_universe(
             session=session,
@@ -133,6 +145,7 @@ def query_security_features(
             min_avg_dollar_volume_20d=min_avg_dollar_volume_20d,
             exclude_healthcare=exclude_healthcare,
             exclude_sic_prefixes=exclude_sic_prefixes,
+            exclude_industry_groups=exclude_industry_groups,
             nasdaq_nyse_only=nasdaq_nyse_only,
             sort_by=sort_by,
             descending=descending,

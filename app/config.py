@@ -8,7 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+psycopg://stockdata:stockdata@postgres:5432/stockdata"
+    database_url: str = (
+        "postgresql+psycopg://stockdata:stockdata@postgres:5432/stockdata"
+    )
 
     massive_api_key: str = ""
     massive_base_url: str = "https://api.massive.com"

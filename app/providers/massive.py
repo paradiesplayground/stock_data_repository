@@ -43,8 +43,12 @@ class MassiveClient:
             response = self.client.get(url, params=params)
             self._last_request = time.monotonic()
             if response.status_code == 429:
-                retry_after = float(response.headers.get("Retry-After", min(60, 2**attempt)))
-                logger.warning("Massive rate limit reached; retrying in %.1fs", retry_after)
+                retry_after = float(
+                    response.headers.get("Retry-After", min(60, 2**attempt))
+                )
+                logger.warning(
+                    "Massive rate limit reached; retrying in %.1fs", retry_after
+                )
                 time.sleep(retry_after)
                 continue
             if response.status_code >= 500 and attempt < 6:
