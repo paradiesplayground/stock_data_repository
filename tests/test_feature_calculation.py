@@ -1,17 +1,43 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+import app.services.feature_calculation as feature_calculation
+from app.config import Settings
 from app.services.feature_calculation import (
+    _feature_universe_statement,
     _financial_metrics,
     _latest_instant,
     _latest_quarter_pair,
     _latest_by_period,
     _percent_change,
     _price_metrics,
+    _resolve_feature_securities,
     _rsi,
     _ttm_value,
 )
+
+
+def _security(**overrides):
+    values = {
+        "ticker": "CASI",
+        "name": "CASI Pharmaceuticals, Inc.",
+        "market": "stocks",
+        "locale": "us",
+        "currency": "usd",
+        "primary_exchange": "XNAS",
+        "security_type": "CS",
+        "active": False,
+        "cik": "0000896156",
+        "composite_figi": "BBG000TEST01",
+        "share_class_figi": "BBG001TEST01",
+        "sic_code": "2834",
+        "sic_description": "Pharmaceutical Preparations",
+        "fiscal_year_end": "1231",
+        "state_of_incorporation": "KY",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 def _fact(
@@ -39,6 +65,87 @@ def test_percent_change_uses_percentage_points() -> None:
     assert _percent_change(Decimal("120"), Decimal("100")) == Decimal("20.0")
     assert _percent_change(Decimal("80"), Decimal("100")) == Decimal("-20.0")
     assert _percent_change(Decimal("1"), Decimal("0")) is None
+
+
+def test_historical_universe_is_driven_by_exact_date_price_bar() -> None:
+    sql = str(_feature_universe_statement(date(2026, 1, 21)))
+
+    assert "JOIN daily_price_bars" in sql
+    assert "daily_price_bars.trade_date" in sql
+    assert "WHERE securities.active" not in sql
+
+
+def test_currently_inactive_security_remains_in_historical_universe() -> None:
+    resolved = _resolve_feature_securities([_security()], [])
+
+    assert len(resolved) == 1
+    assert resolved[0].ticker == "CASI"
+    assert resolved[0].active is True
+    assert resolved[0].current_active is False
+    assert resolved[0].reference_metadata_imputed is True
+
+
+def test_reference_snapshot_overrides_later_current_metadata() -> None:
+    historical_values = {
+        key: value
+        for key, value in vars(_security(active=True)).items()
+        if key != "ticker"
+    }
+    history = SimpleNamespace(
+        ticker="CASI",
+        snapshot={"ticker": "CASI", **historical_values},
+        observed_at_utc=datetime(2026, 1, 20, tzinfo=timezone.utc),
+    )
+    current = _security(name="Later company name", primary_exchange="OTCM")
+
+    resolved = _resolve_feature_securities([current], [history])
+
+    assert resolved[0].name == "CASI Pharmaceuticals, Inc."
+    assert resolved[0].primary_exchange == "XNAS"
+    assert resolved[0].reference_metadata_imputed is False
+    assert resolved[0].reference_observed_at_utc == history.observed_at_utc
+
+
+def test_non_common_stock_is_excluded_from_feature_universe() -> None:
+    assert _resolve_feature_securities([_security(security_type="ETF")], []) == []
+
+
+def test_resumable_backfill_skips_only_complete_dates(monkeypatch) -> None:
+    first = date(2026, 1, 20)
+    second = date(2026, 1, 21)
+
+    class ScalarRows:
+        def all(self):
+            return [first, second]
+
+    class Session:
+        def scalars(self, _statement):
+            return ScalarRows()
+
+    calculated = []
+    monkeypatch.setattr(
+        feature_calculation,
+        "_feature_date_is_complete",
+        lambda _session, market_date: market_date == first,
+    )
+
+    def calculate(_session, _settings, market_date):
+        calculated.append(market_date)
+        return 1, 1
+
+    monkeypatch.setattr(feature_calculation, "calculate_daily_features", calculate)
+
+    result = feature_calculation.backfill_daily_features(
+        Session(),
+        Settings(),
+        first,
+        second,
+        resume=True,
+    )
+
+    assert calculated == [second]
+    assert result["completed_dates"] == [second.isoformat()]
+    assert result["skipped_dates"] == [first.isoformat()]
 
 
 def test_ttm_uses_annual_plus_current_ytd_minus_prior_ytd() -> None:

@@ -32,39 +32,65 @@ def _clean_cik(value: object) -> str | None:
     return str(value).removeprefix("CIK").zfill(10)
 
 
-def sync_reference_data(session: Session, settings: Settings) -> tuple[int, int]:
-    tracker = RunTracker(session, "massive_reference", "massive")
+def sync_reference_data(
+    session: Session,
+    settings: Settings,
+    include_inactive: bool = False,
+) -> tuple[int, int]:
+    tracker = RunTracker(
+        session,
+        "massive_reference",
+        "massive",
+        details={"include_inactive": include_inactive},
+    )
     seen = written = 0
     try:
         with MassiveClient(settings) as client:
             batch: list[dict[str, object]] = []
-            for item in client.iter_active_stock_tickers():
-                seen += 1
-                ticker = str(item.get("ticker", "")).upper().strip()
-                if not ticker:
-                    continue
-                batch.append(
-                    {
-                        "ticker": ticker,
-                        "name": item.get("name"),
-                        "market": item.get("market"),
-                        "locale": item.get("locale"),
-                        "currency": item.get("currency_name")
-                        or item.get("currency_symbol"),
-                        "primary_exchange": item.get("primary_exchange"),
-                        "security_type": item.get("type"),
-                        "active": bool(item.get("active", True)),
-                        "cik": _clean_cik(item.get("cik")),
-                        "composite_figi": item.get("composite_figi"),
-                        "share_class_figi": item.get("share_class_figi"),
-                    }
-                )
-                if len(batch) >= 1000:
-                    written += _upsert_securities(session, batch)
-                    batch.clear()
+            active_states = (True, False) if include_inactive else (True,)
+            for requested_active in active_states:
+                for item in client.iter_stock_tickers(active=requested_active):
+                    seen += 1
+                    ticker = str(item.get("ticker", "")).upper().strip()
+                    if not ticker:
+                        continue
+                    active_value = item.get("active")
+                    batch.append(
+                        {
+                            "ticker": ticker,
+                            "name": item.get("name"),
+                            "market": item.get("market"),
+                            "locale": item.get("locale"),
+                            "currency": item.get("currency_name")
+                            or item.get("currency_symbol"),
+                            "primary_exchange": item.get("primary_exchange"),
+                            "security_type": item.get("type"),
+                            "active": (
+                                requested_active
+                                if active_value is None
+                                else bool(active_value)
+                            ),
+                            "cik": _clean_cik(item.get("cik")),
+                            "composite_figi": item.get("composite_figi"),
+                            "share_class_figi": item.get("share_class_figi"),
+                            "sic_code": (
+                                str(item.get("sic_code"))
+                                if item.get("sic_code")
+                                else None
+                            ),
+                            "sic_description": item.get("sic_description"),
+                        }
+                    )
+                    if len(batch) >= 1000:
+                        written += _upsert_securities(session, batch)
+                        batch.clear()
             if batch:
                 written += _upsert_securities(session, batch)
-        tracker.succeed(seen, written)
+        tracker.succeed(
+            seen,
+            written,
+            {"include_inactive": include_inactive},
+        )
         return seen, written
     except Exception as error:
         tracker.fail(error, seen, written)
@@ -81,16 +107,33 @@ def _upsert_securities(session: Session, rows: list[dict[str, object]]) -> int:
     statement = statement.on_conflict_do_update(
         index_elements=[Security.ticker],
         set_={
-            "name": excluded.name,
-            "market": excluded.market,
-            "locale": excluded.locale,
-            "currency": excluded.currency,
-            "primary_exchange": excluded.primary_exchange,
-            "security_type": excluded.security_type,
+            "name": func.coalesce(excluded.name, Security.name),
+            "market": func.coalesce(excluded.market, Security.market),
+            "locale": func.coalesce(excluded.locale, Security.locale),
+            "currency": func.coalesce(excluded.currency, Security.currency),
+            "primary_exchange": func.coalesce(
+                excluded.primary_exchange,
+                Security.primary_exchange,
+            ),
+            "security_type": func.coalesce(
+                excluded.security_type,
+                Security.security_type,
+            ),
             "active": excluded.active,
-            "cik": excluded.cik,
-            "composite_figi": excluded.composite_figi,
-            "share_class_figi": excluded.share_class_figi,
+            "cik": func.coalesce(excluded.cik, Security.cik),
+            "composite_figi": func.coalesce(
+                excluded.composite_figi,
+                Security.composite_figi,
+            ),
+            "share_class_figi": func.coalesce(
+                excluded.share_class_figi,
+                Security.share_class_figi,
+            ),
+            "sic_code": func.coalesce(excluded.sic_code, Security.sic_code),
+            "sic_description": func.coalesce(
+                excluded.sic_description,
+                Security.sic_description,
+            ),
         },
     )
     session.execute(statement)

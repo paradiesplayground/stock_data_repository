@@ -312,11 +312,13 @@ v0.4.x deployment so ChatGPT can see the tools listed above.
 
 ```bash
 python -m app.cli sync-reference
+python -m app.cli sync-reference --include-inactive
 python -m app.cli sync-market
 python -m app.cli sync-market --date 2026-07-17
 python -m app.cli backfill-market --start 2025-06-01 --end 2026-07-17
 python -m app.cli sync-features
 python -m app.cli sync-features --date 2026-07-17
+python -m app.cli backfill-features --start 2026-01-20 --end 2026-07-20 --resume
 python -m app.cli validate-features --ticker AAPL --ticker NVDA
 python -m app.cli sync-companyfacts
 python -m app.cli sync-submissions
@@ -358,10 +360,16 @@ the new `1.2.0` fields. Price revisions accumulate on future refreshes; existing
 the historical baseline and do not need to be re-downloaded. Enable strategy writes only after the
 migration succeeds.
 
+Upgrading from v0.4.0 to v0.4.1 requires no migration. Run `sync-reference --include-inactive`
+once to enrich currently inactive symbols, then run `sync-submissions` so newly linked CIKs receive
+their retained SEC metadata. Historical feature calculation version `1.3.0` uses exact-session
+price bars as universe membership and no longer excludes a historical symbol because it is inactive
+today. Use `backfill-features --start ... --end ... --resume` for an idempotent range backfill.
+
 ## Derived-field rules and limitations
 
 Each row in `security_daily_features` is keyed by ticker, `as_of_date`, and
-`calculation_version`. The current calculation version is `1.2.0`, so old feature snapshots remain
+`calculation_version`. The current calculation version is `1.3.0`, so old feature snapshots remain
 available if formulas change.
 
 - Twelve-week change compares the latest close with the last available close on or before 84
@@ -402,8 +410,12 @@ available if formulas change.
   preventing a replay from using a fact before it was public.
 - Derived rows store the calculation version, source cutoff, source manifest, and the listing/SIC
   metadata used at calculation time. Historical feature filters therefore do not depend on today's
-  active status or classification. A replay should request the same calculation version when exact
-  comparability matters. Metadata copied into pre-v0.4.0 feature rows represents upgrade-time state.
+  active status or classification. Version `1.3.0` requires an exact-date price bar for universe
+  membership and resolves reference snapshots observed by that date when available. If the
+  repository did not yet exist on the historical date, later best-known static metadata is used and
+  `reference_metadata_imputed` is recorded. A replay should request the same calculation version
+  when exact comparability matters. Metadata copied into pre-v0.4.0 feature rows represents
+  upgrade-time state.
 - Strategy definitions are immutable by key/version. Use a new strategy version whenever filters,
   formulas, interpretation, or the skill changes materially.
 - `as_run` records what the alert actually emitted. `replay` and `backtest` are separate run types;

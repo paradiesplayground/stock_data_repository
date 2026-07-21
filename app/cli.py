@@ -5,7 +5,10 @@ from datetime import date
 from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
-from app.services.feature_calculation import calculate_daily_features
+from app.services.feature_calculation import (
+    backfill_daily_features,
+    calculate_daily_features,
+)
 from app.services.feature_validation import validate_feature_calculations
 from app.services.massive_ingestion import (
     backfill_market_data,
@@ -30,7 +33,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Stock data ingestion jobs")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("sync-reference")
+    reference = subparsers.add_parser("sync-reference")
+    reference.add_argument("--include-inactive", action="store_true")
     market = subparsers.add_parser("sync-market")
     market.add_argument("--date", type=_date)
     backfill = subparsers.add_parser("backfill-market")
@@ -38,6 +42,10 @@ def main() -> None:
     backfill.add_argument("--end", type=_date)
     features = subparsers.add_parser("sync-features")
     features.add_argument("--date", type=_date)
+    feature_backfill = subparsers.add_parser("backfill-features")
+    feature_backfill.add_argument("--start", type=_date, required=True)
+    feature_backfill.add_argument("--end", type=_date, required=True)
+    feature_backfill.add_argument("--resume", action="store_true")
     validation = subparsers.add_parser("validate-features")
     validation.add_argument("--ticker", action="append", required=True)
     validation.add_argument("--date", type=_date)
@@ -50,7 +58,11 @@ def main() -> None:
     settings = get_settings()
     with SessionLocal() as session:
         if args.command == "sync-reference":
-            result = sync_reference_data(session, settings)
+            result = sync_reference_data(
+                session,
+                settings,
+                include_inactive=args.include_inactive,
+            )
         elif args.command == "sync-market":
             result = (
                 sync_market_day(
@@ -66,6 +78,14 @@ def main() -> None:
             result = backfill_market_data(session, settings, args.start, args.end)
         elif args.command == "sync-features":
             result = calculate_daily_features(session, settings, args.date)
+        elif args.command == "backfill-features":
+            result = backfill_daily_features(
+                session,
+                settings,
+                args.start,
+                args.end,
+                resume=args.resume,
+            )
         elif args.command == "validate-features":
             result = validate_feature_calculations(session, args.ticker, args.date)
         elif args.command == "sync-companyfacts":

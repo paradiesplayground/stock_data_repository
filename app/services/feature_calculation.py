@@ -1,6 +1,7 @@
 import logging
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Iterable
 
@@ -9,14 +10,59 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import DailyPriceBar, FinancialFact, Security, SecurityDailyFeature
+from app.models import (
+    DailyPriceBar,
+    FinancialFact,
+    Security,
+    SecurityDailyFeature,
+    SecurityReferenceHistory,
+)
 from app.services.massive_ingestion import local_today, market_target_date
 from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
 
-CALCULATION_VERSION = "1.2.0"
+CALCULATION_VERSION = "1.3.0"
 HUNDRED = Decimal("100")
+
+REFERENCE_FIELDS = (
+    "name",
+    "market",
+    "locale",
+    "currency",
+    "primary_exchange",
+    "security_type",
+    "active",
+    "cik",
+    "composite_figi",
+    "share_class_figi",
+    "sic_code",
+    "sic_description",
+    "fiscal_year_end",
+    "state_of_incorporation",
+)
+
+
+@dataclass(frozen=True)
+class FeatureSecurity:
+    ticker: str
+    name: str | None
+    market: str | None
+    locale: str | None
+    currency: str | None
+    primary_exchange: str | None
+    security_type: str | None
+    active: bool
+    current_active: bool
+    cik: str | None
+    composite_figi: str | None
+    share_class_figi: str | None
+    sic_code: str | None
+    sic_description: str | None
+    fiscal_year_end: str | None
+    state_of_incorporation: str | None
+    reference_metadata_imputed: bool
+    reference_observed_at_utc: datetime | None
 
 REVENUE_CONCEPTS = (
     "RevenueFromContractWithCustomerExcludingAssessedTax",
@@ -674,6 +720,175 @@ def _financial_metrics(
     )
 
 
+def _feature_universe_statement(as_of_date: date):
+    """Select every security that actually traded on the requested session."""
+    return (
+        select(Security)
+        .join(DailyPriceBar, DailyPriceBar.ticker == Security.ticker)
+        .where(DailyPriceBar.trade_date == as_of_date)
+        .order_by(Security.ticker)
+    )
+
+
+def _reference_history_statement(as_of_date: date):
+    cutoff = datetime.combine(as_of_date, time.max, tzinfo=timezone.utc)
+    return (
+        select(SecurityReferenceHistory)
+        .join(
+            DailyPriceBar,
+            DailyPriceBar.ticker == SecurityReferenceHistory.ticker,
+        )
+        .where(
+            DailyPriceBar.trade_date == as_of_date,
+            SecurityReferenceHistory.observed_at_utc <= cutoff,
+        )
+        .order_by(
+            SecurityReferenceHistory.ticker,
+            SecurityReferenceHistory.observed_at_utc,
+            SecurityReferenceHistory.id,
+        )
+    )
+
+
+def _security_reference_values(security: Security) -> dict[str, Any]:
+    return {field: getattr(security, field, None) for field in REFERENCE_FIELDS}
+
+
+def _resolve_feature_securities(
+    securities: Iterable[Security],
+    history_rows: Iterable[SecurityReferenceHistory],
+) -> list[FeatureSecurity]:
+    """Resolve reference metadata without using today's active flag as eligibility."""
+    history_by_ticker: dict[str, list[SecurityReferenceHistory]] = defaultdict(list)
+    for row in history_rows:
+        history_by_ticker[row.ticker].append(row)
+
+    resolved: list[FeatureSecurity] = []
+    for security in securities:
+        current = _security_reference_values(security)
+        historical: dict[str, Any] = {}
+        observed_at: datetime | None = None
+        for row in history_by_ticker.get(security.ticker, []):
+            snapshot = row.snapshot or {}
+            for field in REFERENCE_FIELDS:
+                value = snapshot.get(field)
+                if value is not None:
+                    historical[field] = value
+            observed_at = row.observed_at_utc
+
+        missing_from_history = {
+            field
+            for field in REFERENCE_FIELDS
+            if historical.get(field) is None and current.get(field) is not None
+        }
+        values = {**current, **historical}
+
+        # A session price bar is the durable evidence that the symbol was
+        # tradable on this date. Current inactive status must not remove it
+        # from a historical feature universe.
+        values["active"] = True
+        imputed = not historical or bool(missing_from_history)
+
+        if (
+            values.get("market") != "stocks"
+            or values.get("locale") != "us"
+            or values.get("security_type") != "CS"
+        ):
+            continue
+
+        resolved.append(
+            FeatureSecurity(
+                ticker=security.ticker,
+                name=values.get("name"),
+                market=values.get("market"),
+                locale=values.get("locale"),
+                currency=values.get("currency"),
+                primary_exchange=values.get("primary_exchange"),
+                security_type=values.get("security_type"),
+                active=True,
+                current_active=bool(current.get("active")),
+                cik=values.get("cik"),
+                composite_figi=values.get("composite_figi"),
+                share_class_figi=values.get("share_class_figi"),
+                sic_code=values.get("sic_code"),
+                sic_description=values.get("sic_description"),
+                fiscal_year_end=values.get("fiscal_year_end"),
+                state_of_incorporation=values.get("state_of_incorporation"),
+                reference_metadata_imputed=imputed,
+                reference_observed_at_utc=observed_at,
+            )
+        )
+    return resolved
+
+
+def _feature_universe(session: Session, as_of_date: date) -> list[FeatureSecurity]:
+    securities = session.scalars(_feature_universe_statement(as_of_date)).all()
+    history_rows = session.scalars(_reference_history_statement(as_of_date)).all()
+    return _resolve_feature_securities(securities, history_rows)
+
+
+def _feature_date_is_complete(session: Session, as_of_date: date) -> bool:
+    expected = len(_feature_universe(session, as_of_date))
+    if expected == 0:
+        return False
+    actual = session.scalar(
+        select(func.count(SecurityDailyFeature.id)).where(
+            SecurityDailyFeature.as_of_date == as_of_date,
+            SecurityDailyFeature.calculation_version == CALCULATION_VERSION,
+        )
+    )
+    return int(actual or 0) == expected
+
+
+def backfill_daily_features(
+    session: Session,
+    settings: Settings,
+    start_date: date,
+    end_date: date,
+    resume: bool = False,
+) -> dict[str, Any]:
+    if start_date > end_date:
+        raise ValueError("Feature backfill start date must be on or before end date")
+
+    sessions = session.scalars(
+        select(DailyPriceBar.trade_date)
+        .where(
+            DailyPriceBar.ticker == "QQQ",
+            DailyPriceBar.trade_date.between(start_date, end_date),
+        )
+        .distinct()
+        .order_by(DailyPriceBar.trade_date)
+    ).all()
+    if not sessions:
+        raise RuntimeError(
+            f"No stored QQQ market sessions between {start_date} and {end_date}"
+        )
+
+    completed: list[str] = []
+    skipped: list[str] = []
+    rows_written = 0
+    for market_date in sessions:
+        if resume and _feature_date_is_complete(session, market_date):
+            skipped.append(market_date.isoformat())
+            logger.info("Skipping complete feature date %s", market_date)
+            continue
+        _, written = calculate_daily_features(session, settings, market_date)
+        completed.append(market_date.isoformat())
+        rows_written += written
+
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "calculation_version": CALCULATION_VERSION,
+        "market_sessions": len(sessions),
+        "completed_sessions": len(completed),
+        "skipped_sessions": len(skipped),
+        "rows_written": rows_written,
+        "completed_dates": completed,
+        "skipped_dates": skipped,
+    }
+
+
 def calculate_daily_features(
     session: Session,
     settings: Settings,
@@ -707,14 +922,7 @@ def calculate_daily_features(
                 f"expected at least {settings.massive_min_daily_results}"
             )
 
-        securities = session.scalars(
-            select(Security).where(
-                Security.active.is_(True),
-                Security.market == "stocks",
-                Security.locale == "us",
-                Security.security_type == "CS",
-            )
-        ).all()
+        securities = _feature_universe(session, effective_date)
         seen = len(securities)
         tickers = {security.ticker for security in securities}
         ciks = {security.cik for security in securities if security.cik}
@@ -781,6 +989,10 @@ def calculate_daily_features(
                 metadata_flags.append("missing_sic")
             if security.cik and cik_ticker_counts[security.cik] > 1:
                 metadata_flags.append("shared_cik_multiple_tickers")
+            if security.reference_metadata_imputed:
+                metadata_flags.append("reference_metadata_imputed")
+            if not security.current_active:
+                metadata_flags.append("historical_active_inferred_from_price_bar")
             flags = sorted(set(price_flags + financial_flags + metadata_flags))
             output_rows.append(
                 {
@@ -803,13 +1015,21 @@ def calculate_daily_features(
                         "financial_source": "sec-edgar",
                         "financial_filing_cutoff_date": effective_date.isoformat(),
                         "benchmark": "QQQ",
+                        "feature_universe": "exact-session-price-bar-v2",
                         "security_reference": {
                             "name": security.name,
                             "primary_exchange": security.primary_exchange,
                             "security_type": security.security_type,
                             "active": security.active,
+                            "current_active": security.current_active,
                             "sic_code": security.sic_code,
                             "sic_description": security.sic_description,
+                            "metadata_imputed": security.reference_metadata_imputed,
+                            "observed_at_utc": (
+                                security.reference_observed_at_utc.isoformat()
+                                if security.reference_observed_at_utc
+                                else None
+                            ),
                         },
                     },
                 }
@@ -853,6 +1073,8 @@ def calculate_daily_features(
                 "as_of_date": effective_date.isoformat(),
                 "expected_market_date": expected_date.isoformat(),
                 "source_market_rows": source_rows,
+                "feature_universe_rows": seen,
+                "feature_universe": "exact-session-price-bar-v2",
                 "calculation_version": CALCULATION_VERSION,
                 "price_rows_read": len(price_rows),
                 "financial_facts_read": len(fact_rows),
