@@ -17,8 +17,20 @@ from app.services.feature_calculation import (
 VALIDATED_FIELDS = (
     "price_date",
     "close",
+    "price_change_20d_pct",
     "price_change_12w_pct",
+    "drawdown_12w_high_pct",
     "drawdown_52w_pct",
+    "high_20d",
+    "low_20d",
+    "high_60d",
+    "low_60d",
+    "distance_to_20d_high_pct",
+    "distance_to_60d_high_pct",
+    "atr_14",
+    "atr_14_pct",
+    "overnight_gap_pct",
+    "relative_return_20d_vs_qqq_pct",
     "avg_volume_20d",
     "avg_dollar_volume_20d",
     "ema_10",
@@ -89,7 +101,10 @@ def validate_feature_calculations(
                 SecurityDailyFeature.as_of_date <= as_of_date
             )
         feature = session.scalar(
-            feature_statement.order_by(desc(SecurityDailyFeature.as_of_date)).limit(1)
+            feature_statement.order_by(
+                desc(SecurityDailyFeature.as_of_date),
+                desc(SecurityDailyFeature.calculated_at_utc),
+            ).limit(1)
         )
         if feature is None:
             results.append({"ticker": ticker, "status": "feature_snapshot_not_found"})
@@ -129,7 +144,21 @@ def validate_feature_calculations(
         for fact in fact_rows:
             facts_by_concept[fact.concept].append(fact)
 
-        price_metrics, _ = _price_metrics(price_rows, effective_date)
+        qqq_rows = session.scalars(
+            select(DailyPriceBar)
+            .where(
+                DailyPriceBar.ticker == "QQQ",
+                DailyPriceBar.trade_date.between(
+                    effective_date - timedelta(days=60), effective_date
+                ),
+            )
+            .order_by(DailyPriceBar.trade_date)
+        ).all()
+        benchmark_return = None
+        if qqq_rows:
+            benchmark_metrics, _ = _price_metrics(qqq_rows, effective_date)
+            benchmark_return = benchmark_metrics["price_change_20d_pct"]
+        price_metrics, _ = _price_metrics(price_rows, effective_date, benchmark_return)
         financial_metrics, _ = _financial_metrics(
             facts_by_concept, effective_date, price_metrics["close"]
         )

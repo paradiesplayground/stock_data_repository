@@ -97,10 +97,10 @@ def test_daily_master_index_collects_changed_ciks_and_forms() -> None:
 
 def test_filing_upsert_treats_items_as_a_column() -> None:
     class RecordingSession:
-        statement = None
+        statements = []
 
         def execute(self, statement):
-            self.statement = statement
+            self.statements.append(statement)
 
         def commit(self):
             pass
@@ -119,8 +119,7 @@ def test_filing_upsert_treats_items_as_a_column() -> None:
         ],
     )
 
-    sql = str(session.statement)
-    assert "items = excluded.items" in sql
+    assert any("items = excluded.items" in str(statement) for statement in session.statements)
 
 
 def test_daily_index_directory_parser_ignores_non_master_files() -> None:

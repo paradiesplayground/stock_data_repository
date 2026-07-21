@@ -67,8 +67,8 @@ def test_feature_query_builds_neutral_filtered_statement() -> None:
     assert "security_daily_features.close" in sql
     assert "security_daily_features.price_date" in sql
     assert "security_daily_features.revenue_ttm_yoy_pct" in sql
-    assert "securities.sic_code" in sql
-    assert "securities.sic_code IS NULL" in sql
+    assert "security_daily_features.reference_sic_code" in sql
+    assert "security_daily_features.reference_sic_code IS NULL" in sql
     assert result["excluded_sic_prefixes"] == [
         "13",
         "80",
@@ -98,20 +98,32 @@ def test_feature_query_uses_latest_snapshot_on_or_before_requested_date() -> Non
             return []
 
     class RecordingSession:
-        date_statement = None
+        scalar_statements = []
 
         def scalar(self, statement):
-            self.date_statement = statement
+            self.scalar_statements.append(statement)
             return date(2026, 7, 16)
 
         def execute(self, statement):
             return EmptyResult()
 
     session = RecordingSession()
-    result = query_security_features(session, as_of_date="2026-07-17")
+    result = query_security_features(
+        session,
+        as_of_date="2026-07-17",
+        calculation_version="1.1.0",
+    )
 
     assert result["as_of_date"] == "2026-07-16"
-    assert "security_daily_features.as_of_date <=" in str(session.date_statement)
+    assert any(
+        "security_daily_features.as_of_date <=" in str(statement)
+        for statement in session.scalar_statements
+    )
+    assert any(
+        "security_daily_features.calculation_version" in str(statement)
+        for statement in session.scalar_statements
+    )
+    assert result["calculation_version"] == "1.1.0"
 
 
 def test_freshness_reports_expected_session_and_screening_readiness() -> None:

@@ -1,4 +1,4 @@
-name: stock-data-repository
+name: ${COMPOSE_PROJECT_NAME:-stock_data_repo}
 
 services:
   postgres:

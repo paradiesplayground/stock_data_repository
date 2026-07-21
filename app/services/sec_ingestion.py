@@ -22,6 +22,7 @@ from app.models import (
     Security,
 )
 from app.providers.sec import SecClient
+from app.services.history import record_security_snapshots
 from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
@@ -177,7 +178,29 @@ def _upsert_fact_rows(session: Session, rows: list[dict[str, Any]]) -> int:
         session.execute(statement)
         session.commit()
         written += len(batch)
+    _refresh_fact_availability(
+        session,
+        {str(row["accession_number"]) for row in rows if row.get("accession_number")},
+    )
     return written
+
+
+def _refresh_fact_availability(session: Session, accession_numbers: set[str]) -> None:
+    values = sorted(accession_numbers)
+    for start in range(0, len(values), 1000):
+        batch = values[start : start + 1000]
+        accepted_at = (
+            select(Filing.accepted_at)
+            .where(Filing.accession_number == FinancialFact.accession_number)
+            .scalar_subquery()
+        )
+        session.execute(
+            update(FinancialFact)
+            .where(FinancialFact.accession_number.in_(batch))
+            .values(available_at_utc=accepted_at)
+        )
+    if values:
+        session.commit()
 
 
 def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
@@ -255,16 +278,24 @@ def _recent_filing_rows(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
 def _update_security_metadata(
     session: Session, cik: str, payload: dict[str, Any]
 ) -> None:
+    metadata = {
+        "name": payload.get("name"),
+        "cik": cik,
+        "sic_code": str(payload.get("sic")) if payload.get("sic") else None,
+        "sic_description": payload.get("sicDescription"),
+        "fiscal_year_end": payload.get("fiscalYearEnd"),
+        "state_of_incorporation": payload.get("stateOfIncorporation"),
+    }
+    tickers = session.scalars(select(Security.ticker).where(Security.cik == cik)).all()
+    record_security_snapshots(
+        session,
+        [{"ticker": ticker, **metadata} for ticker in tickers],
+        "sec-edgar",
+    )
     session.execute(
         update(Security)
         .where(Security.cik == cik)
-        .values(
-            name=payload.get("name"),
-            sic_code=str(payload.get("sic")) if payload.get("sic") else None,
-            sic_description=payload.get("sicDescription"),
-            fiscal_year_end=payload.get("fiscalYearEnd"),
-            state_of_incorporation=payload.get("stateOfIncorporation"),
-        )
+        .values(**{key: value for key, value in metadata.items() if key != "cik"})
     )
 
 
@@ -295,6 +326,7 @@ def _upsert_filing_rows(session: Session, rows: list[dict[str, Any]]) -> int:
         session.execute(statement)
         session.commit()
         written += len(batch)
+    _refresh_fact_availability(session, {str(row["accession_number"]) for row in rows})
     return written
 
 

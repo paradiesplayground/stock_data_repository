@@ -11,19 +11,28 @@ from app.mcp_queries import (
     get_financial_facts as query_financial_facts,
     get_industry_hierarchy as query_industry_hierarchy,
     get_price_history as query_price_history,
+    get_price_revisions as query_price_revisions,
+    get_security_history as query_security_history,
     get_security_features as query_features,
     lookup_security as query_security,
     query_security_features as query_features_universe,
     search_securities as query_securities,
+)
+from app.services.strategy_tracking import (
+    get_strategy_run as query_strategy_run,
+    list_strategy_runs as query_strategy_runs,
+    record_strategy_outcomes as save_strategy_outcomes,
+    record_strategy_run as save_strategy_run,
 )
 
 settings = get_settings()
 mcp = FastMCP(
     "Stock Data Repository",
     instructions=(
-        "Read-only access to authoritative Massive market data and SEC EDGAR source facts. "
+        "Authoritative Massive market data and SEC EDGAR source facts remain read-only. "
         "It also exposes versioned deterministic features and neutral user-supplied filtering. "
-        "This server does not score, rank, recommend, size, or trade securities. "
+        "Optional append-oriented tools may store versioned downstream strategy observations, "
+        "but this server does not create scores, ranks, recommendations, sizes, or trades. "
         "Treat missing or stale data as unverified and preserve source provenance."
     ),
     host=settings.mcp_host,
@@ -60,6 +69,18 @@ def get_price_history(
     """Return chronological provider-adjusted daily OHLCV bars for a ticker and optional date range."""
     with SessionLocal() as session:
         return query_price_history(session, ticker, start_date, end_date, limit)
+
+
+@mcp.tool()
+def get_price_revisions(
+    ticker: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Return retained provider revisions for historical daily bars."""
+    with SessionLocal() as session:
+        return query_price_revisions(session, ticker, start_date, end_date, limit)
 
 
 @mcp.tool()
@@ -103,10 +124,21 @@ def get_industry_hierarchy() -> dict[str, Any]:
 
 
 @mcp.tool()
-def get_security_features(ticker: str, as_of_date: str | None = None) -> dict[str, Any]:
+def get_security_history(ticker: str, limit: int = 100) -> dict[str, Any]:
+    """Return distinct point-in-time reference and SEC metadata snapshots for a ticker."""
+    with SessionLocal() as session:
+        return query_security_history(session, ticker, limit)
+
+
+@mcp.tool()
+def get_security_features(
+    ticker: str,
+    as_of_date: str | None = None,
+    calculation_version: str | None = None,
+) -> dict[str, Any]:
     """Return one ticker's latest deterministic derived fields on or before an optional date."""
     with SessionLocal() as session:
-        return query_features(session, ticker, as_of_date)
+        return query_features(session, ticker, as_of_date, calculation_version)
 
 
 @mcp.tool()
@@ -119,6 +151,7 @@ def query_security_features(
     min_ttm_revenue_growth_pct: float | None = None,
     min_quarter_revenue_growth_pct: float | None = None,
     max_price_change_12w_pct: float | None = None,
+    max_drawdown_12w_high_pct: float | None = None,
     max_drawdown_52w_pct: float | None = None,
     min_avg_dollar_volume_20d: float | None = None,
     exclude_healthcare: bool = False,
@@ -128,6 +161,7 @@ def query_security_features(
     sort_by: str = "avg_dollar_volume_20d",
     descending: bool = True,
     limit: int = 100,
+    calculation_version: str | None = None,
 ) -> dict[str, Any]:
     """Filter deterministic fields and readable SIC-backed industries without scoring or ranking."""
     with SessionLocal() as session:
@@ -141,6 +175,7 @@ def query_security_features(
             min_ttm_revenue_growth_pct=min_ttm_revenue_growth_pct,
             min_quarter_revenue_growth_pct=min_quarter_revenue_growth_pct,
             max_price_change_12w_pct=max_price_change_12w_pct,
+            max_drawdown_12w_high_pct=max_drawdown_12w_high_pct,
             max_drawdown_52w_pct=max_drawdown_52w_pct,
             min_avg_dollar_volume_20d=min_avg_dollar_volume_20d,
             exclude_healthcare=exclude_healthcare,
@@ -150,7 +185,88 @@ def query_security_features(
             sort_by=sort_by,
             descending=descending,
             limit=limit,
+            calculation_version=calculation_version,
         )
+
+
+@mcp.tool()
+def list_strategy_runs(
+    strategy_key: str | None = None,
+    strategy_version: str | None = None,
+    run_type: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """List versioned as-run, replay, or backtest strategy observations."""
+    with SessionLocal() as session:
+        return query_strategy_runs(
+            session,
+            strategy_key,
+            strategy_version,
+            run_type,
+            start_date,
+            end_date,
+            limit,
+        )
+
+
+@mcp.tool()
+def get_strategy_run(run_id: str) -> dict[str, Any]:
+    """Return one strategy run with candidates, evidence, and outcome observations."""
+    with SessionLocal() as session:
+        return query_strategy_run(session, run_id)
+
+
+if settings.mcp_enable_strategy_writes:
+
+    @mcp.tool()
+    def record_strategy_run(
+        strategy_key: str,
+        strategy_version: str,
+        as_of_date: str,
+        run_type: str,
+        idempotency_key: str,
+        configuration: dict[str, Any],
+        filters: dict[str, Any],
+        candidates: list[dict[str, Any]],
+        summary: dict[str, Any] | None = None,
+        evidence: list[dict[str, Any]] | None = None,
+        strategy_name: str | None = None,
+        skill_fingerprint: str | None = None,
+        feature_calculation_version: str | None = None,
+        data_cutoff_at_utc: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        """Append one complete, versioned strategy alert or historical replay."""
+        with SessionLocal() as session:
+            return save_strategy_run(
+                session,
+                strategy_key=strategy_key,
+                strategy_version=strategy_version,
+                as_of_date=as_of_date,
+                run_type=run_type,
+                idempotency_key=idempotency_key,
+                configuration=configuration,
+                filters=filters,
+                candidates=candidates,
+                summary=summary,
+                evidence=evidence,
+                strategy_name=strategy_name,
+                skill_fingerprint=skill_fingerprint,
+                feature_calculation_version=feature_calculation_version,
+                data_cutoff_at_utc=data_cutoff_at_utc,
+                notes=notes,
+            )
+
+    @mcp.tool()
+    def record_strategy_outcomes(
+        run_id: str,
+        observations: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Append idempotent outcome observations for candidates in a stored run."""
+        with SessionLocal() as session:
+            return save_strategy_outcomes(session, run_id, observations)
 
 
 def main() -> None:

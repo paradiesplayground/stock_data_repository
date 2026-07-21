@@ -9,10 +9,10 @@ configure_logging()
 
 app = FastAPI(
     title="Stock Data Repository",
-    version="0.3.3",
+    version="0.4.0",
     description=(
-        "Read-only repository of Massive market data, SEC EDGAR facts/filings, "
-        "and deterministic derived features."
+        "Repository of Massive market data, SEC EDGAR facts/filings, deterministic "
+        "derived features, and isolated versioned strategy observations."
     ),
 )
 app.include_router(router)

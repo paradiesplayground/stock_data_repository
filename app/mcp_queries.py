@@ -15,12 +15,14 @@ from app.industry_taxonomy import (
 )
 from app.models import (
     DailyPriceBar,
+    DailyPriceBarRevision,
     Filing,
     FinancialFact,
     IngestionCheckpoint,
     IngestionRun,
     Security,
     SecurityDailyFeature,
+    SecurityReferenceHistory,
 )
 from app.services.massive_ingestion import market_target_date
 
@@ -64,19 +66,39 @@ def _sic_prefixes(
 
 
 def _feature_item(feature: SecurityDailyFeature, security: Security) -> dict[str, Any]:
+    reference_name = feature.reference_name or security.name
+    reference_exchange = feature.reference_primary_exchange
+    reference_type = feature.reference_security_type
+    reference_sic = feature.reference_sic_code
+    reference_sic_description = feature.reference_sic_description
     return {
         "ticker": feature.ticker,
-        "company": security.name,
-        "primary_exchange": security.primary_exchange,
-        "security_type": security.security_type,
-        "sic_code": security.sic_code,
-        "sic_description": security.sic_description,
-        "industry_classification": classify_sic(security.sic_code),
+        "company": reference_name,
+        "primary_exchange": reference_exchange,
+        "security_type": reference_type,
+        "active": feature.reference_active,
+        "sic_code": reference_sic,
+        "sic_description": reference_sic_description,
+        "industry_classification": classify_sic(reference_sic),
         "as_of_date": _json_value(feature.as_of_date),
         "price_date": _json_value(feature.price_date),
         "close": _json_value(feature.close),
+        "price_change_20d_pct": _json_value(feature.price_change_20d_pct),
         "price_change_12w_pct": _json_value(feature.price_change_12w_pct),
+        "drawdown_12w_high_pct": _json_value(feature.drawdown_12w_high_pct),
         "drawdown_52w_pct": _json_value(feature.drawdown_52w_pct),
+        "high_20d": _json_value(feature.high_20d),
+        "low_20d": _json_value(feature.low_20d),
+        "high_60d": _json_value(feature.high_60d),
+        "low_60d": _json_value(feature.low_60d),
+        "distance_to_20d_high_pct": _json_value(feature.distance_to_20d_high_pct),
+        "distance_to_60d_high_pct": _json_value(feature.distance_to_60d_high_pct),
+        "atr_14": _json_value(feature.atr_14),
+        "atr_14_pct": _json_value(feature.atr_14_pct),
+        "overnight_gap_pct": _json_value(feature.overnight_gap_pct),
+        "relative_return_20d_vs_qqq_pct": _json_value(
+            feature.relative_return_20d_vs_qqq_pct
+        ),
         "avg_volume_20d": _json_value(feature.avg_volume_20d),
         "avg_dollar_volume_20d": _json_value(feature.avg_dollar_volume_20d),
         "ema_10": _json_value(feature.ema_10),
@@ -108,6 +130,8 @@ def _feature_item(feature: SecurityDailyFeature, security: Security) -> dict[str
         "latest_source_filing_date": _json_value(feature.latest_source_filing_date),
         "calculation_version": feature.calculation_version,
         "quality_flags": feature.quality_flags or [],
+        "source_data_cutoff_utc": _json_value(feature.source_data_cutoff_utc),
+        "source_manifest": feature.source_manifest,
     }
 
 
@@ -115,6 +139,7 @@ def get_security_features(
     session: Session,
     ticker: str,
     as_of_date: str | None = None,
+    calculation_version: str | None = None,
 ) -> dict[str, Any]:
     ticker = ticker.strip().upper()
     requested_date = _date_value(as_of_date, "as_of_date")
@@ -126,8 +151,15 @@ def get_security_features(
     )
     if requested_date:
         statement = statement.where(SecurityDailyFeature.as_of_date <= requested_date)
+    if calculation_version:
+        statement = statement.where(
+            SecurityDailyFeature.calculation_version == calculation_version
+        )
     feature = session.scalar(
-        statement.order_by(desc(SecurityDailyFeature.as_of_date)).limit(1)
+        statement.order_by(
+            desc(SecurityDailyFeature.as_of_date),
+            desc(SecurityDailyFeature.calculated_at_utc),
+        ).limit(1)
     )
     if feature is None:
         return {"ticker": ticker, "found": True, "features_available": False}
@@ -150,6 +182,7 @@ def query_security_features(
     min_ttm_revenue_growth_pct: float | None = None,
     min_quarter_revenue_growth_pct: float | None = None,
     max_price_change_12w_pct: float | None = None,
+    max_drawdown_12w_high_pct: float | None = None,
     max_drawdown_52w_pct: float | None = None,
     min_avg_dollar_volume_20d: float | None = None,
     exclude_healthcare: bool = False,
@@ -159,6 +192,7 @@ def query_security_features(
     limit: int = 100,
     exclude_sic_prefixes: list[str] | None = None,
     exclude_industry_groups: list[str] | None = None,
+    calculation_version: str | None = None,
 ) -> dict[str, Any]:
     limit = _limit(limit, 500)
     requested_groups = list(exclude_industry_groups or [])
@@ -181,10 +215,15 @@ def query_security_features(
         date_statement = date_statement.where(
             SecurityDailyFeature.as_of_date <= requested_date
         )
+    if calculation_version:
+        date_statement = date_statement.where(
+            SecurityDailyFeature.calculation_version == calculation_version
+        )
     effective_date = session.scalar(date_statement)
     if effective_date is None:
         return {
             "as_of_date": None,
+            "calculation_version": calculation_version,
             "count": 0,
             "items": [],
             "excluded_sic_prefixes": excluded_prefixes,
@@ -193,24 +232,36 @@ def query_security_features(
             "unknown_sic_codes_retained": True,
             "interpretation": "derived features have not been calculated",
         }
+    effective_version = calculation_version or session.scalar(
+        select(SecurityDailyFeature.calculation_version)
+        .where(SecurityDailyFeature.as_of_date == effective_date)
+        .order_by(desc(SecurityDailyFeature.calculated_at_utc))
+        .limit(1)
+    )
     statement = (
         select(SecurityDailyFeature, Security)
         .join(Security, Security.ticker == SecurityDailyFeature.ticker)
         .where(
             SecurityDailyFeature.as_of_date == effective_date,
+            SecurityDailyFeature.calculation_version == effective_version,
             SecurityDailyFeature.price_date == effective_date,
-            Security.active.is_(True),
+            SecurityDailyFeature.reference_active.is_(True),
         )
     )
     if nasdaq_nyse_only:
-        statement = statement.where(Security.primary_exchange.in_(("XNAS", "XNYS")))
+        statement = statement.where(
+            SecurityDailyFeature.reference_primary_exchange.in_(("XNAS", "XNYS"))
+        )
     if excluded_prefixes:
-        normalized_sic = func.lpad(Security.sic_code, 4, "0")
+        normalized_sic = func.lpad(SecurityDailyFeature.reference_sic_code, 4, "0")
         excluded_industries = or_(
             *(normalized_sic.like(f"{prefix}%") for prefix in excluded_prefixes)
         )
         statement = statement.where(
-            or_(Security.sic_code.is_(None), ~excluded_industries)
+            or_(
+                SecurityDailyFeature.reference_sic_code.is_(None),
+                ~excluded_industries,
+            )
         )
 
     filters = (
@@ -225,6 +276,11 @@ def query_security_features(
             ">=",
         ),
         (max_price_change_12w_pct, SecurityDailyFeature.price_change_12w_pct, "<="),
+        (
+            max_drawdown_12w_high_pct,
+            SecurityDailyFeature.drawdown_12w_high_pct,
+            "<=",
+        ),
         (max_drawdown_52w_pct, SecurityDailyFeature.drawdown_52w_pct, "<="),
         (
             min_avg_dollar_volume_20d,
@@ -245,9 +301,12 @@ def query_security_features(
         "ttm_revenue_growth": SecurityDailyFeature.revenue_ttm_yoy_pct,
         "quarter_revenue_growth": SecurityDailyFeature.latest_quarter_revenue_yoy_pct,
         "price_change_12w": SecurityDailyFeature.price_change_12w_pct,
+        "drawdown_12w_high": SecurityDailyFeature.drawdown_12w_high_pct,
         "drawdown_52w": SecurityDailyFeature.drawdown_52w_pct,
         "avg_dollar_volume_20d": SecurityDailyFeature.avg_dollar_volume_20d,
         "rsi_14": SecurityDailyFeature.rsi_14,
+        "atr_14_pct": SecurityDailyFeature.atr_14_pct,
+        "relative_return_20d_vs_qqq": SecurityDailyFeature.relative_return_20d_vs_qqq_pct,
     }
     if sort_by not in sort_columns:
         raise ValueError(f"sort_by must be one of: {', '.join(sorted(sort_columns))}")
@@ -260,6 +319,7 @@ def query_security_features(
     ).all()
     return {
         "as_of_date": effective_date.isoformat(),
+        "calculation_version": effective_version,
         "count": len(rows),
         "limit": limit,
         "filters_are_user_supplied": True,
@@ -269,6 +329,82 @@ def query_security_features(
         "unknown_sic_codes_retained": True,
         "interpretation": "neutral filtering of deterministic fields; no score, rank, or recommendation",
         "items": [_feature_item(feature, security) for feature, security in rows],
+    }
+
+
+def get_security_history(
+    session: Session,
+    ticker: str,
+    limit: int = 100,
+) -> dict[str, Any]:
+    ticker = ticker.strip().upper()
+    limit = _limit(limit, 500)
+    rows = session.scalars(
+        select(SecurityReferenceHistory)
+        .where(SecurityReferenceHistory.ticker == ticker)
+        .order_by(desc(SecurityReferenceHistory.observed_at_utc))
+        .limit(limit)
+    ).all()
+    return {
+        "ticker": ticker,
+        "count": len(rows),
+        "items": [
+            {
+                "source": row.source,
+                "record_hash": row.record_hash,
+                "observed_at_utc": row.observed_at_utc.isoformat(),
+                "snapshot": row.snapshot,
+            }
+            for row in rows
+        ],
+    }
+
+
+def get_price_revisions(
+    session: Session,
+    ticker: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    ticker = ticker.strip().upper()
+    limit = _limit(limit, 2000)
+    start = _date_value(start_date, "start_date")
+    end = _date_value(end_date, "end_date")
+    statement = select(DailyPriceBarRevision).where(
+        DailyPriceBarRevision.ticker == ticker
+    )
+    if start:
+        statement = statement.where(DailyPriceBarRevision.trade_date >= start)
+    if end:
+        statement = statement.where(DailyPriceBarRevision.trade_date <= end)
+    rows = session.scalars(
+        statement.order_by(
+            desc(DailyPriceBarRevision.trade_date),
+            desc(DailyPriceBarRevision.observed_at_utc),
+        ).limit(limit)
+    ).all()
+    return {
+        "ticker": ticker,
+        "count": len(rows),
+        "items": [
+            {
+                "trade_date": row.trade_date.isoformat(),
+                "open": _json_value(row.open),
+                "high": _json_value(row.high),
+                "low": _json_value(row.low),
+                "close": _json_value(row.close),
+                "volume": _json_value(row.volume),
+                "vwap": _json_value(row.vwap),
+                "transactions": row.transactions,
+                "adjusted": row.adjusted,
+                "source": row.source,
+                "source_timestamp_ms": row.source_timestamp_ms,
+                "record_hash": row.record_hash,
+                "observed_at_utc": row.observed_at_utc.isoformat(),
+            }
+            for row in rows
+        ],
     }
 
 
@@ -447,6 +583,7 @@ def get_financial_facts(
                 "period_start": _json_value(row.period_start),
                 "period_end": _json_value(row.period_end),
                 "filed_date": _json_value(row.filed_date),
+                "available_at_utc": _json_value(row.available_at_utc),
                 "form": row.form,
                 "fiscal_year": row.fiscal_year,
                 "fiscal_period": row.fiscal_period,

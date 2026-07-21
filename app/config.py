@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     mcp_host: str = "0.0.0.0"
     mcp_port: int = Field(default=8001, ge=1, le=65535)
+    mcp_enable_strategy_writes: bool = False
 
     timezone: str = "America/Chicago"
     market_sync_cron: str = "30 16 * * 1-5"

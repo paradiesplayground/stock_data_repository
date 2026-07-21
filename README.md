@@ -1,25 +1,27 @@
 # Stock Data Repository
 
-An authoritative, read-only data repository for U.S. equity research. It ingests:
+An authoritative data repository for U.S. equity research. It ingests:
 
 - Massive reference data and adjusted daily OHLCV bars
 - SEC EDGAR bulk company facts and filing metadata
 - Versioned deterministic fields derived from those stored sources
 - Source freshness and ingestion audit records
+- Optional append-only observations produced by downstream strategy skills
 
 It deliberately does **not** score, rank, recommend, size, or trade stocks. Caller-supplied filters
 can be applied to deterministic fields, but interpretation belongs to the downstream swing-trading
 skill. This service provides facts and their provenance; missing facts remain missing instead of
-being creatively hallucinated into existence.
+being creatively hallucinated into existence. Massive and SEC source records remain read-only to
+clients. Strategy observations use separate, explicitly enabled append operations.
 
 ## Architecture
 
 The Compose project runs one application image in four roles:
 
 - `migrate`: applies database migrations and exits
-- `api`: read-only FastAPI repository on host port `8787`
+- `api`: FastAPI repository on host port `8787`; source reads plus authenticated strategy writes
 - `worker`: scheduled Massive and SEC ingestion plus deterministic feature calculation
-- `mcp`: read-only Streamable HTTP MCP service on host port `8788`
+- `mcp`: Streamable HTTP MCP service on host port `8788`; source reads plus optional strategy writes
 - `tunnel`: outbound-only OpenAI Secure MCP Tunnel client
 
 PostgreSQL stores normalized data. Original SEC ZIP archives are retained under `/data/raw/sec` by default.
@@ -32,7 +34,10 @@ PostgreSQL stores normalized data. Original SEC ZIP archives are retained under 
 | Daily prices | Massive | Adjusted OHLC, volume, VWAP, transactions, source timestamp |
 | Financial facts | SEC EDGAR | Taxonomy, concept, unit, value, reporting period, form, filing date, accession |
 | Filing metadata | SEC EDGAR | Form, dates, document, items, XBRL flags, canonical SEC URL |
-| Daily derived fields | Massive + SEC | Growth, price movement, liquidity, technical, balance-sheet, cash-flow, share, and market-cap fields |
+| Reference history | Massive + SEC | Distinct observed ticker, listing, identifier, and SIC metadata snapshots |
+| Price revisions | Massive | Distinct values observed when an existing ticker/date bar is refreshed |
+| Daily derived fields | Massive + SEC | Versioned growth, price movement, liquidity, technical, balance-sheet, cash-flow, share, and market-cap fields |
+| Strategy tracking | Downstream callers | Versioned strategy definitions, as-run/replay candidates, evidence, and outcome observations |
 | Freshness | Internal audit | Job, status, timestamps, counts, source request details, failures |
 
 SEC financial values remain stored unchanged as reported source facts. The derived table separately
@@ -70,6 +75,7 @@ cp .env.example .env
 Edit `.env` and set at minimum:
 
 ```dotenv
+COMPOSE_PROJECT_NAME=stock_data_repo
 POSTGRES_PASSWORD=a-long-random-password
 DATABASE_URL=postgresql+psycopg://stockdata:THE_SAME_PASSWORD@postgres:5432/stockdata
 MASSIVE_API_KEY=your-key-from-massive
@@ -77,6 +83,7 @@ SEC_USER_AGENT=StockDataRepository your-real-email@example.com
 API_BEARER_TOKEN=another-long-random-token
 OPENAI_TUNNEL_ID=tunnel_your_id
 OPENAI_TUNNEL_API_KEY=your-runtime-api-key
+MCP_ENABLE_STRATEGY_WRITES=true
 ```
 
 Do not paste API keys into chat, commit them, or bake them into the image.
@@ -86,6 +93,10 @@ Start the project:
 ```bash
 docker compose up -d --build
 ```
+
+Keep `COMPOSE_PROJECT_NAME=stock_data_repo` unchanged on upgrades. It matches the existing stack
+and prevents fixed container names such as `stock-data-postgres` from colliding with a second
+Compose project.
 
 The `migrate` service owns the single application-image build. The `api`, `worker`, and `mcp`
 services reuse `stock-data-repository:local` and never try to pull it from a registry. Do not add
@@ -172,7 +183,7 @@ FEATURE_SYNC_CRON=30 5 * * 2-6
 For a plan with reliable 15-minute delayed data, you can move the same-day jobs earlier (for
 example, 3:25 PM and 3:50 PM Central) while keeping downstream screening after the feature job.
 
-## Read-only API
+## API
 
 Health endpoints are public. If `API_BEARER_TOKEN` is configured, all `/v1` routes require it:
 
@@ -192,14 +203,23 @@ GET /v1/features
 GET /v1/securities
 GET /v1/securities/{ticker}
 GET /v1/securities/{ticker}/features
+GET /v1/securities/{ticker}/history
 GET /v1/securities/{ticker}/prices
+GET /v1/securities/{ticker}/price-revisions
 GET /v1/securities/{ticker}/facts
 GET /v1/securities/{ticker}/filings
+GET /v1/strategy-runs
+GET /v1/strategy-runs/{run_id}
+POST /v1/strategy-runs
+POST /v1/strategy-runs/{run_id}/outcomes
 ```
+
+The two POST routes require a configured `API_BEARER_TOKEN`. They append downstream observations
+only; no API route can modify Massive or SEC source data.
 
 Interactive OpenAPI documentation is available at `http://UNRAID-IP:8787/docs`.
 
-## Read-only MCP service
+## MCP service
 
 The MCP endpoint is:
 
@@ -217,9 +237,25 @@ get_financial_facts
 get_filings
 get_data_freshness
 get_industry_hierarchy
+get_security_history
+get_price_revisions
 get_security_features
 query_security_features
+list_strategy_runs
+get_strategy_run
 ```
+
+Set `MCP_ENABLE_STRATEGY_WRITES=true` to additionally expose:
+
+```text
+record_strategy_run
+record_strategy_outcomes
+```
+
+The write tools are disabled by default. They can append complete, versioned strategy runs and
+later outcome observations to the isolated `strategy_tracking` schema. They cannot update source
+facts, prices, filings, reference data, or derived fields. After changing this setting, recreate
+the MCP container and refresh the ChatGPT app's tool discovery.
 
 `query_security_features` applies caller-provided thresholds and sorting to deterministic fields.
 Its preferred `exclude_industry_groups` argument accepts readable labels or stable keys returned by
@@ -236,8 +272,8 @@ are retained and explicitly identified so callers can classify them rather than 
 them. `exclude_healthcare` remains available for older clients as a compatibility shortcut.
 Snapshot-wide queries include only rows whose `price_date` matches the selected feature date;
 ticker-specific lookup still exposes older rows and their quality flags for diagnosis. The tool
-does not contain a built-in strategy, score, ranking, position size, or recommendation. The MCP
-service contains no write tools. Keep it on a private network;
+does not contain a built-in strategy, score, ranking, position size, or recommendation. Keep it on
+a private network;
 do not port-forward `8788` to the public internet. ChatGPT cannot connect directly to a private
 LAN endpoint, so use OpenAI Secure MCP Tunnel when connecting this on-premises service to a
 supported ChatGPT product.
@@ -270,7 +306,7 @@ open `http://UNRAID-IP:8789/ui`. Do not forward port `8789` to the internet.
 
 When the tunnel reports ready, open ChatGPT **Settings -> Apps**, create a developer-mode app,
 choose **Tunnel** as the connection type, and select this tunnel. Refresh tool discovery after a
-v0.3.x deployment so ChatGPT can see the nine read-only tools listed above.
+v0.4.x deployment so ChatGPT can see the tools listed above.
 
 ## Manual jobs
 
@@ -315,10 +351,18 @@ remains incremental afterward.
 Upgrading from v0.3.2 to v0.3.3 requires no migration or source-data reload. Rebuild the stack and
 refresh the ChatGPT app's tool discovery to expose the hierarchy tool and readable exclusion input.
 
+Upgrading from v0.3.3 to v0.4.0 applies migration `0004_history_strategy`. The migration preserves
+existing rows, seeds one reference-history snapshot per current security, and makes derived rows
+unique by ticker, date, and calculation version. Re-run `sync-features` after deployment to publish
+the new `1.2.0` fields. Price revisions accumulate on future refreshes; existing price bars remain
+the historical baseline and do not need to be re-downloaded. Enable strategy writes only after the
+migration succeeds.
+
 ## Derived-field rules and limitations
 
-Each row in `security_daily_features` is keyed by ticker and `as_of_date` and records a
-`calculation_version`. The current calculation version is `1.1.0`.
+Each row in `security_daily_features` is keyed by ticker, `as_of_date`, and
+`calculation_version`. The current calculation version is `1.2.0`, so old feature snapshots remain
+available if formulas change.
 
 - Twelve-week change compares the latest close with the last available close on or before 84
   calendar days earlier.
@@ -328,6 +372,8 @@ Each row in `security_daily_features` is keyed by ticker and `as_of_date` and re
   session's adjusted volume.
 - EMA and RSI use adjusted closing prices. Relative volume compares the current session with the
   preceding 20-session average.
+- The 20-day return, 12-week-high drawdown, 20/60-session ranges, ATR(14), overnight gap, and
+  20-session relative return versus QQQ are calculated solely from stored adjusted daily bars.
 - TTM flow values use the latest annual value plus current year-to-date value minus comparable
   prior-year year-to-date value when all three are available.
 - Latest-quarter growth uses comparable 65-to-120-day reported periods approximately one year
@@ -344,6 +390,25 @@ Each row in `security_daily_features` is keyed by ticker and `as_of_date` and re
   contains it.
 - A missing value stays null. `quality_flags` explains partial history, annual-only values, stale
   periods, missing identifiers, and unavailable comparisons.
+
+## Point-in-time and replay contract
+
+- `security_reference_history` retains distinct metadata states as they are observed. Its
+  migration-bootstrap row represents the state known at upgrade time, not the original historical
+  publication time.
+- `daily_price_bar_revisions` retains distinct old and new values seen during a refresh. The main
+  price table remains the current canonical value.
+- SEC facts expose `available_at_utc` from the associated filing acceptance timestamp when known,
+  preventing a replay from using a fact before it was public.
+- Derived rows store the calculation version, source cutoff, source manifest, and the listing/SIC
+  metadata used at calculation time. Historical feature filters therefore do not depend on today's
+  active status or classification. A replay should request the same calculation version when exact
+  comparability matters. Metadata copied into pre-v0.4.0 feature rows represents upgrade-time state.
+- Strategy definitions are immutable by key/version. Use a new strategy version whenever filters,
+  formulas, interpretation, or the skill changes materially.
+- `as_run` records what the alert actually emitted. `replay` and `backtest` are separate run types;
+  they never overwrite an original run. Candidates may include pass/watch/drop stages, reasons,
+  metrics, trade-plan JSON, and linked evidence. Outcome observations are appended later.
 
 The derived layer does not currently determine going-concern language, catalysts, earnings dates,
 bid/ask spreads, public float, short interest, or whether growth is organic. Those remain separate

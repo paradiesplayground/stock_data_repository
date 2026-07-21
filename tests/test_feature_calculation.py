@@ -135,8 +135,10 @@ def test_price_metrics_calculate_liquidity_and_drawdowns() -> None:
         rows.append(
             SimpleNamespace(
                 trade_date=trade_date,
+                open=close,
                 close=close,
                 high=close,
+                low=close - Decimal("1"),
                 volume=Decimal("1000000") + Decimal(offset),
             )
         )
@@ -149,7 +151,11 @@ def test_price_metrics_calculate_liquidity_and_drawdowns() -> None:
     assert metrics["ema_10"] is not None
     assert metrics["ema_20"] is not None
     assert metrics["rsi_14"] is not None
+    assert metrics["drawdown_12w_high_pct"] <= 0
     assert metrics["drawdown_52w_pct"] < 0
+    assert metrics["atr_14"] is not None
+    assert metrics["high_20d"] is not None
+    assert metrics["low_60d"] is not None
     assert "stale_price" not in flags
 
 
@@ -158,14 +164,18 @@ def test_average_dollar_volume_uses_each_days_price() -> None:
     rows = [
         SimpleNamespace(
             trade_date=as_of - timedelta(days=1),
+            open=Decimal("10"),
             close=Decimal("10"),
             high=Decimal("10"),
+            low=Decimal("10"),
             volume=Decimal("100"),
         ),
         SimpleNamespace(
             trade_date=as_of,
+            open=Decimal("20"),
             close=Decimal("20"),
             high=Decimal("20"),
+            low=Decimal("20"),
             volume=Decimal("200"),
         ),
     ]

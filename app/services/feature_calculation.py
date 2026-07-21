@@ -1,6 +1,6 @@
 import logging
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Iterable
 
@@ -15,7 +15,7 @@ from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
 
-CALCULATION_VERSION = "1.1.0"
+CALCULATION_VERSION = "1.2.0"
 HUNDRED = Decimal("100")
 
 REVENUE_CONCEPTS = (
@@ -103,8 +103,27 @@ def _rsi(values: list[Decimal], period: int = 14) -> Decimal | None:
     return HUNDRED - (HUNDRED / (Decimal("1") + relative_strength))
 
 
+def _atr(rows: list[DailyPriceBar], period: int = 14) -> Decimal | None:
+    if len(rows) <= period:
+        return None
+    ranges: list[Decimal] = []
+    for previous, current in zip(rows, rows[1:]):
+        current_low = getattr(current, "low", current.close)
+        current_high = getattr(current, "high", current.close)
+        ranges.append(
+            max(
+                current_high - current_low,
+                abs(current_high - previous.close),
+                abs(current_low - previous.close),
+            )
+        )
+    return sum(ranges[-period:], Decimal("0")) / Decimal(period)
+
+
 def _price_metrics(
-    rows: list[DailyPriceBar], as_of_date: date
+    rows: list[DailyPriceBar],
+    as_of_date: date,
+    benchmark_20d_return: Decimal | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     eligible = [row for row in rows if row.trade_date <= as_of_date]
     if not eligible:
@@ -123,6 +142,10 @@ def _price_metrics(
     if change_12w is None:
         flags.append("insufficient_12w_history")
 
+    twelve_week_rows = [row for row in eligible if row.trade_date >= target_12w]
+    high_12w = max((row.high for row in twelve_week_rows), default=None)
+    drawdown_12w_high = _percent_change(latest.close, high_12w)
+
     year_rows = [
         row for row in eligible if row.trade_date >= as_of_date - timedelta(days=365)
     ]
@@ -132,6 +155,17 @@ def _price_metrics(
         flags.append("partial_52w_history")
 
     last_20 = eligible[-20:]
+    last_60 = eligible[-60:]
+    prior_20_session = eligible[-21] if len(eligible) >= 21 else None
+    change_20d = _percent_change(
+        latest.close, prior_20_session.close if prior_20_session else None
+    )
+    if change_20d is None:
+        flags.append("insufficient_20d_history")
+    high_20d = max((row.high for row in last_20), default=None)
+    low_20d = min((getattr(row, "low", row.close) for row in last_20), default=None)
+    high_60d = max((row.high for row in last_60), default=None)
+    low_60d = min((getattr(row, "low", row.close) for row in last_60), default=None)
     avg_volume = (
         sum((row.volume for row in last_20), Decimal("0")) / Decimal(len(last_20))
         if last_20
@@ -155,13 +189,38 @@ def _price_metrics(
         if prior_avg_volume not in (None, Decimal("0"))
         else None
     )
+    atr_14 = _atr(eligible, 14)
+    if atr_14 is None:
+        flags.append("insufficient_atr_history")
+    previous_close = eligible[-2].close if len(eligible) >= 2 else None
+    latest_open = getattr(latest, "open", None)
     closes = [row.close for row in eligible]
     return (
         {
             "price_date": latest.trade_date,
             "close": latest.close,
+            "price_change_20d_pct": change_20d,
             "price_change_12w_pct": change_12w,
+            "drawdown_12w_high_pct": drawdown_12w_high,
             "drawdown_52w_pct": drawdown_52w,
+            "high_20d": high_20d,
+            "low_20d": low_20d,
+            "high_60d": high_60d,
+            "low_60d": low_60d,
+            "distance_to_20d_high_pct": _percent_change(latest.close, high_20d),
+            "distance_to_60d_high_pct": _percent_change(latest.close, high_60d),
+            "atr_14": atr_14,
+            "atr_14_pct": (
+                (atr_14 / latest.close) * HUNDRED
+                if atr_14 is not None and latest.close != 0
+                else None
+            ),
+            "overnight_gap_pct": _percent_change(latest_open, previous_close),
+            "relative_return_20d_vs_qqq_pct": (
+                change_20d - benchmark_20d_return
+                if change_20d is not None and benchmark_20d_return is not None
+                else None
+            ),
             "avg_volume_20d": avg_volume,
             "avg_dollar_volume_20d": avg_dollar_volume,
             "ema_10": _ema(closes, 10),
@@ -184,12 +243,15 @@ def _eligible_facts(
     period_cutoff: date,
     filing_cutoff: date,
 ) -> list[FinancialFact]:
-    return [
-        fact
-        for fact in facts
-        if fact.period_end <= period_cutoff
-        and (fact.filed_date is None or fact.filed_date <= filing_cutoff)
-    ]
+    eligible: list[FinancialFact] = []
+    for fact in facts:
+        available_at = getattr(fact, "available_at_utc", None)
+        available_date = available_at.date() if available_at else fact.filed_date
+        if fact.period_end <= period_cutoff and (
+            available_date is None or available_date <= filing_cutoff
+        ):
+            eligible.append(fact)
+    return eligible
 
 
 def _latest_by_period(facts: Iterable[FinancialFact]) -> list[FinancialFact]:
@@ -662,10 +724,11 @@ def calculate_daily_features(
                 cik_ticker_counts[security.cik] += 1
         history_start = effective_date - timedelta(days=400)
 
+        price_query_tickers = tickers | {"QQQ"}
         price_rows = session.scalars(
             select(DailyPriceBar)
             .where(
-                DailyPriceBar.ticker.in_(tickers),
+                DailyPriceBar.ticker.in_(price_query_tickers),
                 DailyPriceBar.trade_date.between(history_start, effective_date),
             )
             .order_by(DailyPriceBar.ticker, DailyPriceBar.trade_date)
@@ -673,6 +736,11 @@ def calculate_daily_features(
         prices_by_ticker: dict[str, list[DailyPriceBar]] = defaultdict(list)
         for row in price_rows:
             prices_by_ticker[row.ticker].append(row)
+        qqq_history = prices_by_ticker.get("QQQ", [])
+        benchmark_20d_return = None
+        if qqq_history:
+            benchmark_metrics, _ = _price_metrics(qqq_history, effective_date)
+            benchmark_20d_return = benchmark_metrics["price_change_20d_pct"]
 
         fact_rows = session.scalars(
             select(FinancialFact).where(
@@ -693,11 +761,14 @@ def calculate_daily_features(
             facts_by_cik[fact.cik][fact.concept].append(fact)
 
         output_rows: list[dict[str, Any]] = []
+        source_cutoff = datetime.now(timezone.utc)
         for position, security in enumerate(securities, start=1):
             price_history = prices_by_ticker.get(security.ticker, [])
             if not price_history:
                 continue
-            price_metrics, price_flags = _price_metrics(price_history, effective_date)
+            price_metrics, price_flags = _price_metrics(
+                price_history, effective_date, benchmark_20d_return
+            )
             financial_metrics, financial_flags = _financial_metrics(
                 facts_by_cik.get(security.cik or "", {}),
                 effective_date,
@@ -715,10 +786,32 @@ def calculate_daily_features(
                 {
                     "ticker": security.ticker,
                     "as_of_date": effective_date,
+                    "reference_name": security.name,
+                    "reference_primary_exchange": security.primary_exchange,
+                    "reference_security_type": security.security_type,
+                    "reference_active": security.active,
+                    "reference_sic_code": security.sic_code,
+                    "reference_sic_description": security.sic_description,
                     **price_metrics,
                     **financial_metrics,
                     "calculation_version": CALCULATION_VERSION,
                     "quality_flags": flags,
+                    "source_data_cutoff_utc": source_cutoff,
+                    "source_manifest": {
+                        "market_source": "massive",
+                        "market_date": price_metrics["price_date"].isoformat(),
+                        "financial_source": "sec-edgar",
+                        "financial_filing_cutoff_date": effective_date.isoformat(),
+                        "benchmark": "QQQ",
+                        "security_reference": {
+                            "name": security.name,
+                            "primary_exchange": security.primary_exchange,
+                            "security_type": security.security_type,
+                            "active": security.active,
+                            "sic_code": security.sic_code,
+                            "sic_description": security.sic_description,
+                        },
+                    },
                 }
             )
             if position % 1000 == 0:
@@ -736,11 +829,17 @@ def calculate_daily_features(
                 column.name: getattr(excluded, column.name)
                 for column in SecurityDailyFeature.__table__.columns
                 if column.name
-                not in {"id", "ticker", "as_of_date", "calculated_at_utc"}
+                not in {
+                    "id",
+                    "ticker",
+                    "as_of_date",
+                    "calculation_version",
+                    "calculated_at_utc",
+                }
             }
             update_values["calculated_at_utc"] = func.now()
             statement = statement.on_conflict_do_update(
-                constraint="uq_security_features_ticker_date",
+                constraint="uq_security_features_ticker_date_version",
                 set_=update_values,
             )
             session.execute(statement)

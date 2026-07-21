@@ -48,6 +48,25 @@ class Security(Base):
     price_bars: Mapped[list["DailyPriceBar"]] = relationship(back_populates="security")
 
 
+class SecurityReferenceHistory(Base):
+    __tablename__ = "security_reference_history"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker", "source", "record_hash", name="uq_security_history_record"
+        ),
+        Index("ix_security_history_ticker_observed", "ticker", "observed_at_utc"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String(32))
+    source: Mapped[str] = mapped_column(String(32))
+    record_hash: Mapped[str] = mapped_column(String(64))
+    snapshot: Mapped[dict] = mapped_column(JSONB)
+    observed_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class DailyPriceBar(Base):
     __tablename__ = "daily_price_bars"
     __table_args__ = (
@@ -77,11 +96,46 @@ class DailyPriceBar(Base):
     security: Mapped[Security] = relationship(back_populates="price_bars")
 
 
+class DailyPriceBarRevision(Base):
+    __tablename__ = "daily_price_bar_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker",
+            "trade_date",
+            "source",
+            "record_hash",
+            name="uq_daily_price_revision_record",
+        ),
+        Index("ix_daily_price_revision_ticker_date", "ticker", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String(32))
+    trade_date: Mapped[date] = mapped_column(Date)
+    open: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    high: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    low: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    close: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    volume: Mapped[Decimal] = mapped_column(Numeric(24, 4))
+    vwap: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    transactions: Mapped[int | None] = mapped_column(BigInteger)
+    adjusted: Mapped[bool] = mapped_column(Boolean, default=True)
+    source: Mapped[str] = mapped_column(String(32), default="massive")
+    source_timestamp_ms: Mapped[int | None] = mapped_column(BigInteger)
+    record_hash: Mapped[str] = mapped_column(String(64))
+    observed_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class SecurityDailyFeature(Base):
     __tablename__ = "security_daily_features"
     __table_args__ = (
         UniqueConstraint(
-            "ticker", "as_of_date", name="uq_security_features_ticker_date"
+            "ticker",
+            "as_of_date",
+            "calculation_version",
+            name="uq_security_features_ticker_date_version",
         ),
         Index("ix_security_features_date", "as_of_date"),
         Index("ix_security_features_liquidity", "as_of_date", "avg_dollar_volume_20d"),
@@ -94,9 +148,29 @@ class SecurityDailyFeature(Base):
     )
     as_of_date: Mapped[date] = mapped_column(Date)
     price_date: Mapped[date] = mapped_column(Date)
+    reference_name: Mapped[str | None] = mapped_column(String(512))
+    reference_primary_exchange: Mapped[str | None] = mapped_column(String(32))
+    reference_security_type: Mapped[str | None] = mapped_column(String(32))
+    reference_active: Mapped[bool | None] = mapped_column(Boolean)
+    reference_sic_code: Mapped[str | None] = mapped_column(String(8))
+    reference_sic_description: Mapped[str | None] = mapped_column(String(255))
     close: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    price_change_20d_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
     price_change_12w_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    drawdown_12w_high_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
     drawdown_52w_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    high_20d: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    low_20d: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    high_60d: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    low_60d: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    distance_to_20d_high_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    distance_to_60d_high_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    atr_14: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    atr_14_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    overnight_gap_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    relative_return_20d_vs_qqq_pct: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 8)
+    )
     avg_volume_20d: Mapped[Decimal | None] = mapped_column(Numeric(24, 4))
     avg_dollar_volume_20d: Mapped[Decimal | None] = mapped_column(Numeric(28, 4))
     ema_10: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
@@ -131,6 +205,10 @@ class SecurityDailyFeature(Base):
     latest_source_filing_date: Mapped[date | None] = mapped_column(Date)
     calculation_version: Mapped[str] = mapped_column(String(32))
     quality_flags: Mapped[list[str] | None] = mapped_column(JSONB)
+    source_data_cutoff_utc: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    source_manifest: Mapped[dict | None] = mapped_column(JSONB)
     calculated_at_utc: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -154,6 +232,7 @@ class FinancialFact(Base):
     period_start: Mapped[date | None] = mapped_column(Date)
     period_end: Mapped[date] = mapped_column(Date)
     filed_date: Mapped[date | None] = mapped_column(Date)
+    available_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     form: Mapped[str | None] = mapped_column(String(32))
     fiscal_year: Mapped[int | None] = mapped_column(Integer)
     fiscal_period: Mapped[str | None] = mapped_column(String(16))
@@ -216,4 +295,124 @@ class IngestionCheckpoint(Base):
     details: Mapped[dict | None] = mapped_column(JSONB)
     updated_at_utc: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class StrategyDefinition(Base):
+    __tablename__ = "strategy_definitions"
+    __table_args__ = (
+        UniqueConstraint("strategy_key", "version", name="uq_strategy_key_version"),
+        {"schema": "strategy_tracking"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    strategy_key: Mapped[str] = mapped_column(String(128), index=True)
+    version: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str | None] = mapped_column(String(255))
+    configuration: Mapped[dict] = mapped_column(JSONB)
+    skill_fingerprint: Mapped[str | None] = mapped_column(String(128))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class StrategyRun(Base):
+    __tablename__ = "strategy_runs"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_strategy_run_idempotency"),
+        Index(
+            "ix_strategy_runs_definition_date", "strategy_definition_id", "as_of_date"
+        ),
+        {"schema": "strategy_tracking"},
+    )
+
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    strategy_definition_id: Mapped[int] = mapped_column(
+        ForeignKey("strategy_tracking.strategy_definitions.id", ondelete="RESTRICT")
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(255))
+    as_of_date: Mapped[date] = mapped_column(Date)
+    run_type: Mapped[str] = mapped_column(String(32), index=True)
+    feature_calculation_version: Mapped[str | None] = mapped_column(String(32))
+    data_cutoff_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    filters: Mapped[dict] = mapped_column(JSONB)
+    summary: Mapped[dict | None] = mapped_column(JSONB)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    generated_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class StrategyCandidate(Base):
+    __tablename__ = "strategy_candidates"
+    __table_args__ = (
+        UniqueConstraint("run_id", "ticker", name="uq_strategy_candidate_run_ticker"),
+        Index("ix_strategy_candidates_ticker", "ticker"),
+        {"schema": "strategy_tracking"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("strategy_tracking.strategy_runs.run_id", ondelete="CASCADE")
+    )
+    ticker: Mapped[str] = mapped_column(String(32))
+    stage: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str | None] = mapped_column(String(32))
+    score: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    score_components: Mapped[dict | None] = mapped_column(JSONB)
+    metrics: Mapped[dict | None] = mapped_column(JSONB)
+    reasons: Mapped[list | None] = mapped_column(JSONB)
+    trade_plan: Mapped[dict | None] = mapped_column(JSONB)
+    payload: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class StrategyEvidence(Base):
+    __tablename__ = "strategy_evidence"
+    __table_args__ = (
+        Index("ix_strategy_evidence_run_ticker", "run_id", "ticker"),
+        {"schema": "strategy_tracking"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("strategy_tracking.strategy_runs.run_id", ondelete="CASCADE")
+    )
+    ticker: Mapped[str | None] = mapped_column(String(32))
+    evidence_type: Mapped[str] = mapped_column(String(64))
+    source_url: Mapped[str | None] = mapped_column(Text)
+    accession_number: Mapped[str | None] = mapped_column(String(32))
+    published_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retrieved_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    summary: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class StrategyOutcomeObservation(Base):
+    __tablename__ = "strategy_outcome_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "ticker",
+            "observation_date",
+            "horizon",
+            name="uq_strategy_outcome_observation",
+        ),
+        Index("ix_strategy_outcomes_ticker_date", "ticker", "observation_date"),
+        {"schema": "strategy_tracking"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("strategy_tracking.strategy_runs.run_id", ondelete="CASCADE")
+    )
+    ticker: Mapped[str] = mapped_column(String(32))
+    observation_date: Mapped[date] = mapped_column(Date)
+    horizon: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str | None] = mapped_column(String(32))
+    metrics: Mapped[dict] = mapped_column(JSONB)
+    execution_assumptions: Mapped[dict | None] = mapped_column(JSONB)
+    observed_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )

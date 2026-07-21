@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0
+
+- Preserve distinct Massive/SEC security-reference states and future daily-price revisions.
+- Timestamp SEC financial facts by filing acceptance time for point-in-time replays.
+- Make derived snapshots coexist by ticker, date, and calculation version and record their source
+  cutoff and source manifest.
+- Add 20-session return, 12-week-high drawdown, 20/60-session ranges, ATR(14), overnight gap, and
+  relative 20-session performance versus QQQ.
+- Add an isolated `strategy_tracking` schema for immutable strategy definitions, as-run/replay/
+  backtest records, candidates, evidence, and append-only outcome observations.
+- Add read tools for historical security states, price revisions, and strategy runs.
+- Add opt-in MCP strategy-write tools and authenticated HTTP strategy-write routes while keeping
+  Massive, SEC, and derived repository data read-only to clients.
+- Default to the existing `stock_data_repo` Compose project name to prevent upgrade-time container
+  name conflicts.
+
 ## 0.3.3
 
 - Add a versioned readable taxonomy containing all 10 SIC divisions and all 83 SIC major groups.

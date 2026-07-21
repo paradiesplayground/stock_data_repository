@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.models import DailyPriceBar, Security
 from app.providers.massive import MassiveClient
+from app.services.history import record_price_revisions, record_security_snapshots
 from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ def _upsert_securities(session: Session, rows: list[dict[str, object]]) -> int:
     rows = _dedupe_security_rows(rows)
     if not rows:
         return 0
+    record_security_snapshots(session, rows, "massive")
     statement = insert(Security).values(rows)
     excluded = statement.excluded
     statement = statement.on_conflict_do_update(
@@ -118,7 +120,7 @@ def sync_market_day(
         "massive",
         details={"trade_date": trade_date.isoformat()},
     )
-    seen = written = 0
+    seen = written = revisions_written = 0
     try:
         if client is None:
             with MassiveClient(settings) as owned_client:
@@ -178,6 +180,7 @@ def sync_market_day(
                 )
         for start in range(0, len(rows), 1000):
             batch = rows[start : start + 1000]
+            revisions_written += record_price_revisions(session, batch)
             statement = insert(DailyPriceBar).values(batch)
             excluded = statement.excluded
             statement = statement.on_conflict_do_update(
@@ -203,6 +206,7 @@ def sync_market_day(
             {
                 "trade_date": trade_date.isoformat(),
                 "request_id": payload.get("request_id"),
+                "price_revisions_written": revisions_written,
             },
         )
         return seen, written

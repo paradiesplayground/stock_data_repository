@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
@@ -10,6 +10,8 @@ from app.industry_taxonomy import classify_sic
 from app.mcp_queries import (
     get_data_freshness as query_data_freshness,
     get_industry_hierarchy as query_industry_hierarchy,
+    get_price_revisions as query_price_revisions,
+    get_security_history as query_security_history,
     get_security_features as query_security_features_for_ticker,
     query_security_features as query_feature_rows,
 )
@@ -19,7 +21,13 @@ from app.models import (
     FinancialFact,
     Security,
 )
-from app.security import require_api_token
+from app.security import require_api_token, require_configured_api_token
+from app.services.strategy_tracking import (
+    get_strategy_run as query_strategy_run,
+    list_strategy_runs as query_strategy_runs,
+    record_strategy_outcomes,
+    record_strategy_run,
+)
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_api_token)])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -53,6 +61,7 @@ def list_features(
     min_ttm_revenue_growth_pct: float | None = None,
     min_quarter_revenue_growth_pct: float | None = None,
     max_price_change_12w_pct: float | None = None,
+    max_drawdown_12w_high_pct: float | None = None,
     max_drawdown_52w_pct: float | None = None,
     min_avg_dollar_volume_20d: float | None = None,
     exclude_healthcare: bool = False,
@@ -62,6 +71,7 @@ def list_features(
     sort_by: str = "avg_dollar_volume_20d",
     descending: bool = True,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    calculation_version: str | None = None,
 ) -> dict[str, object]:
     return query_feature_rows(
         session=session,
@@ -73,6 +83,7 @@ def list_features(
         min_ttm_revenue_growth_pct=min_ttm_revenue_growth_pct,
         min_quarter_revenue_growth_pct=min_quarter_revenue_growth_pct,
         max_price_change_12w_pct=max_price_change_12w_pct,
+        max_drawdown_12w_high_pct=max_drawdown_12w_high_pct,
         max_drawdown_52w_pct=max_drawdown_52w_pct,
         min_avg_dollar_volume_20d=min_avg_dollar_volume_20d,
         exclude_healthcare=exclude_healthcare,
@@ -82,6 +93,7 @@ def list_features(
         sort_by=sort_by,
         descending=descending,
         limit=limit,
+        calculation_version=calculation_version,
     )
 
 
@@ -90,10 +102,23 @@ def get_features_for_ticker(
     ticker: str,
     session: DbSession,
     as_of: date | None = None,
+    calculation_version: str | None = None,
 ) -> dict[str, object]:
     return query_security_features_for_ticker(
-        session, ticker, as_of.isoformat() if as_of else None
+        session,
+        ticker,
+        as_of.isoformat() if as_of else None,
+        calculation_version,
     )
+
+
+@router.get("/securities/{ticker}/history")
+def get_security_history(
+    ticker: str,
+    session: DbSession,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict[str, object]:
+    return query_security_history(session, ticker, limit)
 
 
 @router.get("/securities")
@@ -204,6 +229,81 @@ def get_prices(
     }
 
 
+@router.get("/securities/{ticker}/price-revisions")
+def get_price_revisions(
+    ticker: str,
+    session: DbSession,
+    start: date | None = None,
+    end: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> dict[str, object]:
+    return query_price_revisions(
+        session,
+        ticker,
+        start.isoformat() if start else None,
+        end.isoformat() if end else None,
+        limit,
+    )
+
+
+@router.get("/strategy-runs")
+def list_recorded_strategy_runs(
+    session: DbSession,
+    strategy_key: str | None = None,
+    strategy_version: str | None = None,
+    run_type: str | None = None,
+    start: date | None = None,
+    end: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict[str, object]:
+    return query_strategy_runs(
+        session,
+        strategy_key,
+        strategy_version,
+        run_type,
+        start.isoformat() if start else None,
+        end.isoformat() if end else None,
+        limit,
+    )
+
+
+@router.get("/strategy-runs/{run_id}")
+def get_recorded_strategy_run(run_id: str, session: DbSession) -> dict[str, object]:
+    result = query_strategy_run(session, run_id)
+    if not result.get("found"):
+        raise HTTPException(status_code=404, detail="Strategy run not found")
+    return result
+
+
+@router.post("/strategy-runs", dependencies=[Depends(require_configured_api_token)])
+def create_strategy_run(
+    payload: dict[str, Any],
+    session: DbSession,
+) -> dict[str, object]:
+    try:
+        return record_strategy_run(session, **payload)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post(
+    "/strategy-runs/{run_id}/outcomes",
+    dependencies=[Depends(require_configured_api_token)],
+)
+def create_strategy_outcomes(
+    run_id: str,
+    payload: dict[str, Any],
+    session: DbSession,
+) -> dict[str, object]:
+    observations = payload.get("observations")
+    if not isinstance(observations, list):
+        raise HTTPException(status_code=422, detail="observations must be a list")
+    try:
+        return record_strategy_outcomes(session, run_id, observations)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @router.get("/securities/{ticker}/facts")
 def get_facts(
     ticker: str,
@@ -247,6 +347,7 @@ def get_facts(
                 "period_start": row.period_start,
                 "period_end": row.period_end,
                 "filed_date": row.filed_date,
+                "available_at_utc": row.available_at_utc,
                 "form": row.form,
                 "fiscal_year": row.fiscal_year,
                 "fiscal_period": row.fiscal_period,
