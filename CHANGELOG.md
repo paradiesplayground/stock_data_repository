@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.4.5
+
+- Fix `backfill-features` CLI dispatch after strategy configuration support accidentally made the
+  command access an argument defined only for replay and simulation commands.
+- Add regression coverage proving resumable feature backfills remain strategy-neutral.
+
+## 0.4.4
+
+- Add MCP tools to list and inspect strategy profiles, preview configuration-only overrides,
+  and run replay plus simulation in one call from a downstream skill.
+- Accept validated in-memory strategy and simulation configurations so scenario tuning does not
+  require copying files into a container or changing Python.
+- Reject unknown override keys to prevent misspelled settings from being silently ignored.
+- Wire the existing CLI `replay-strategy --strategy-config` argument through to the replay engine.
+- Keep all scenario writes isolated under `strategy_tracking`; Massive, SEC, and feature records
+  remain unchanged.
+
+## 0.4.3
+
+- Fix simulation persistence so the parent run is inserted before its trade
+  and equity rows, preventing PostgreSQL foreign-key failures.
+
+## 0.4.2
+
+- Add a point-in-time mechanical replay for `fallen-growth-swing:1.1.0` over feature version
+  `1.3.0`, with explicit qualitative-data limitations.
+- Add variable-capital and variable-risk portfolio simulations with cash, position-count,
+  aggregate-risk, slippage, order-expiration, partial-target, stop, gap, and time-exit rules.
+- Persist immutable scenario parameters, every signal/fill/rejection, summary metrics, and the
+  daily equity curve under `strategy_tracking`.
+- Add `replay-strategy`, `simulate-strategy`, `list-simulations`, and `get-simulation` CLI commands.
+- Add migration `0005_strategy_backtesting` without changing source or feature tables.
+- Move replay thresholds, scoring bands, risk tiers, trade-plan multiples, and simulation defaults
+  into versioned JSON profiles, with configuration fingerprints stored on every replay.
+- Add `--strategy-config` and `--simulation-config` so scenario changes never rewrite raw or
+  derived market data and do not require Python edits.
+
 ## 0.4.1
 
 - Add an opt-in inactive-ticker reference reconciliation for survivorship-safe historical work.

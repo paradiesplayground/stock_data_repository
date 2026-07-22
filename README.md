@@ -7,12 +7,14 @@ An authoritative data repository for U.S. equity research. It ingests:
 - Versioned deterministic fields derived from those stored sources
 - Source freshness and ingestion audit records
 - Optional append-only observations produced by downstream strategy skills
+- Optional versioned mechanical replays and portfolio simulations
 
-It deliberately does **not** score, rank, recommend, size, or trade stocks. Caller-supplied filters
-can be applied to deterministic fields, but interpretation belongs to the downstream swing-trading
-skill. This service provides facts and their provenance; missing facts remain missing instead of
-being creatively hallucinated into existence. Massive and SEC source records remain read-only to
-clients. Strategy observations use separate, explicitly enabled append operations.
+The source and derived-data layers deliberately do **not** score, rank, recommend, size, or trade
+stocks. Caller-supplied filters and the downstream swing-trading skill own live interpretation.
+The separately versioned `strategy_tracking` layer can now reproduce a documented mechanical
+subset of that rubric and simulate its trade plans. Missing qualitative evidence remains missing
+instead of being creatively hallucinated into existence. Massive and SEC source records remain
+read-only to clients.
 
 ## Architecture
 
@@ -38,6 +40,7 @@ PostgreSQL stores normalized data. Original SEC ZIP archives are retained under 
 | Price revisions | Massive | Distinct values observed when an existing ticker/date bar is refreshed |
 | Daily derived fields | Massive + SEC | Versioned growth, price movement, liquidity, technical, balance-sheet, cash-flow, share, and market-cap fields |
 | Strategy tracking | Downstream callers | Versioned strategy definitions, as-run/replay candidates, evidence, and outcome observations |
+| Strategy simulations | Internal backtest engine | Immutable scenario parameters, signal ledger, fills, exits, P&L, and daily equity curve |
 | Freshness | Internal audit | Job, status, timestamps, counts, source request details, failures |
 
 SEC financial values remain stored unchanged as reported source facts. The derived table separately
@@ -210,6 +213,8 @@ GET /v1/securities/{ticker}/facts
 GET /v1/securities/{ticker}/filings
 GET /v1/strategy-runs
 GET /v1/strategy-runs/{run_id}
+GET /v1/strategy-simulations
+GET /v1/strategy-simulations/{simulation_id}
 POST /v1/strategy-runs
 POST /v1/strategy-runs/{run_id}/outcomes
 ```
@@ -243,6 +248,10 @@ get_security_features
 query_security_features
 list_strategy_runs
 get_strategy_run
+list_strategy_simulations
+get_strategy_simulation
+list_strategy_profiles
+get_strategy_profile
 ```
 
 Set `MCP_ENABLE_STRATEGY_WRITES=true` to additionally expose:
@@ -250,12 +259,20 @@ Set `MCP_ENABLE_STRATEGY_WRITES=true` to additionally expose:
 ```text
 record_strategy_run
 record_strategy_outcomes
+preview_strategy_scenario
+run_strategy_scenario
 ```
 
 The write tools are disabled by default. They can append complete, versioned strategy runs and
 later outcome observations to the isolated `strategy_tracking` schema. They cannot update source
 facts, prices, filings, reference data, or derived fields. After changing this setting, recreate
 the MCP container and refresh the ChatGPT app's tool discovery.
+
+`run_strategy_scenario` accepts a bundled base profile, a new immutable strategy version, nested
+strategy overrides, nested portfolio overrides, and a date range. It validates the resolved
+configuration, replays the strategy, runs the portfolio simulation, and returns both summaries in
+one call. Unknown override keys are rejected. No JSON file needs to be created or copied into a
+container.
 
 `query_security_features` applies caller-provided thresholds and sorting to deterministic fields.
 Its preferred `exclude_industry_groups` argument accepts readable labels or stable keys returned by
@@ -319,6 +336,12 @@ python -m app.cli backfill-market --start 2025-06-01 --end 2026-07-17
 python -m app.cli sync-features
 python -m app.cli sync-features --date 2026-07-17
 python -m app.cli backfill-features --start 2026-01-20 --end 2026-07-20 --resume
+python -m app.cli replay-strategy --start 2026-01-20 --end 2026-07-20 --resume
+python -m app.cli replay-strategy --start 2026-01-20 --end 2026-07-20 --strategy-config config/strategies/my-scenario.json
+python -m app.cli simulate-strategy --start 2026-01-20 --end 2026-07-20 --starting-capital 10000 --risk-per-trade-pct 3
+python -m app.cli simulate-strategy --start 2026-01-20 --end 2026-07-20 --simulation-config config/simulations/default.json
+python -m app.cli list-simulations
+python -m app.cli get-simulation --simulation-id UUID
 python -m app.cli validate-features --ticker AAPL --ticker NVDA
 python -m app.cli sync-companyfacts
 python -m app.cli sync-submissions
@@ -365,6 +388,29 @@ once to enrich currently inactive symbols, then run `sync-submissions` so newly 
 their retained SEC metadata. Historical feature calculation version `1.3.0` uses exact-session
 price bars as universe membership and no longer excludes a historical symbol because it is inactive
 today. Use `backfill-features --start ... --end ... --resume` for an idempotent range backfill.
+
+Upgrading from v0.4.1 to v0.4.2 applies migration `0005_strategy_backtesting`. It adds only tables
+under `strategy_tracking`; source prices, SEC facts, and v1.3 feature snapshots are unchanged. Run
+`replay-strategy` once for the desired feature range, then run any number of independently stored
+`simulate-strategy` scenarios. A scenario key hashes the source replay runs and every execution
+parameter, so repeating the same scenario is idempotent while changing capital or risk creates a
+separate result.
+
+Upgrading from v0.4.2 to v0.4.3 requires no migration or data reload. Rebuild the worker image to
+apply the simulation persistence-ordering fix, then rerun any simulation that previously failed;
+the failed transaction was rolled back and requires no cleanup.
+
+All replay thresholds, scoring bands, risk tiers, entry/stop/target multiples, and constructive-
+volume rules live in `config/strategies/*.json`. Portfolio capital, risk, slippage, order lifetime,
+position limits, and holding period live in `config/simulations/*.json`. Python implements the
+generic evaluator and execution engine; it does not contain the default scenario values. CLI flags
+can temporarily override simulation-profile values without editing the profile.
+
+Create a new strategy JSON file and change `strategy.version` whenever a filter, score, or trade-
+plan rule changes. The resolved configuration and its fingerprint are stored with every replay, so
+two rule sets cannot silently share an immutable strategy version. These files affect only replay
+and simulation records under `strategy_tracking`; they never modify Massive price bars, SEC facts,
+reference history, or versioned feature snapshots.
 
 ## Derived-field rules and limitations
 
@@ -425,6 +471,38 @@ available if formulas change.
 The derived layer does not currently determine going-concern language, catalysts, earnings dates,
 bid/ask spreads, public float, short interest, or whether growth is organic. Those remain separate
 research steps for candidates returned by caller-supplied filters.
+
+## Deterministic replay and simulation
+
+Strategy version `fallen-growth-swing:1.1.0` is a mechanical point-in-time replay, not a claim that
+historical qualitative research was performed. It applies the stored listing, healthcare, price,
+market-cap, revenue-growth, decline, liquidity, cash-runway, and technical fields. Unknown SIC or
+missing cash-runway/trade-plan data is retained as incomplete and never made actionable. Catalyst,
+customer concentration, organic-growth, going-concern text, spread, and public-float points remain
+zero or unavailable. This conservative limitation is stored in the immutable strategy definition.
+
+The checked-in default profile places a buy-stop 0.1% above the rolling 20-session high, uses the
+higher of the 20-session low or two ATR below the trigger as the initial stop, and set targets at
+2R and 3R. The simulator uses a three-session order window by default, rejects a gap more than 5%
+above the trigger, sizes against current mark-to-market equity and available cash, sells half at
+2R, moves the remainder's stop to entry, and exits the remainder at 3R or after 15 sessions. Stops
+win same-daily-bar ambiguity; gaps through a stop fill at the open; slippage is adverse on each
+side. Open positions at the test end are marked to market and are not counted as closed winners.
+
+Use `--strategy-config` to select a versioned replay profile and `--simulation-config` to select a
+portfolio scenario. `--starting-capital`, `--risk-per-trade-pct`, `--max-total-risk-pct`,
+`--max-open-positions`, `--slippage-pct`, `--order-lifetime-sessions`, and
+`--max-holding-sessions` are scenario variables. Market-cap risk multipliers from the strategy
+rubric still reduce the requested per-trade risk for smaller companies.
+
+From an MCP-enabled skill, call `preview_strategy_scenario` to inspect the exact resolved
+configuration and fingerprints, then call `run_strategy_scenario` with the same inputs. Use a new
+`strategy_version` whenever strategy rules change. Portfolio-only changes may reuse the strategy
+version because they are independently fingerprinted in the simulation scenario.
+
+Upgrading from v0.4.4 to v0.4.5 requires no migration or data reload. Rebuild the worker image to
+pick up the corrected `backfill-features` CLI dispatch. Existing raw, derived, replay, and
+simulation records are preserved.
 
 ## Development and tests
 

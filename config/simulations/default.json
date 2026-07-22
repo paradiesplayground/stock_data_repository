@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "scenario_name": "default-10k-3pct",
+  "starting_capital": "10000",
+  "risk_per_trade_pct": "3",
+  "max_total_risk_pct": "6",
+  "max_open_positions": 2,
+  "slippage_pct": "0.10",
+  "order_lifetime_sessions": 3,
+  "max_holding_sessions": 15,
+  "execution_rules": {
+    "risk_basis": "current_mark_to_market_equity",
+    "same_bar_assumption": "stop_before_targets",
+    "gap_through_stop": "exit_at_open_with_adverse_slippage",
+    "target_one": "sell_half_then_move_stop_to_entry",
+    "end_of_test_open_positions": "mark_to_market_not_counted_as_closed_wins"
+  }
+}

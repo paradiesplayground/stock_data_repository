@@ -416,3 +416,103 @@ class StrategyOutcomeObservation(Base):
     observed_at_utc: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class StrategySimulationRun(Base):
+    __tablename__ = "strategy_simulation_runs"
+    __table_args__ = (
+        UniqueConstraint("scenario_key", name="uq_strategy_simulation_scenario"),
+        Index(
+            "ix_strategy_simulations_definition_dates",
+            "strategy_definition_id",
+            "start_date",
+            "end_date",
+        ),
+        Index("ix_strategy_simulation_runs_status", "status"),
+        {"schema": "strategy_tracking"},
+    )
+
+    simulation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    strategy_definition_id: Mapped[int] = mapped_column(
+        ForeignKey("strategy_tracking.strategy_definitions.id", ondelete="RESTRICT")
+    )
+    scenario_key: Mapped[str] = mapped_column(String(255))
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+    feature_calculation_version: Mapped[str] = mapped_column(String(32))
+    source_runs_hash: Mapped[str] = mapped_column(String(64))
+    parameters: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(32))
+    summary: Mapped[dict | None] = mapped_column(JSONB)
+    generated_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class StrategySimulationTrade(Base):
+    __tablename__ = "strategy_simulation_trades"
+    __table_args__ = (
+        UniqueConstraint(
+            "simulation_id",
+            "source_run_id",
+            "ticker",
+            name="uq_strategy_simulation_trade_signal",
+        ),
+        Index("ix_strategy_simulation_trades_ticker", "ticker"),
+        Index("ix_strategy_simulation_trades_status", "status"),
+        {"schema": "strategy_tracking"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    simulation_id: Mapped[str] = mapped_column(
+        ForeignKey(
+            "strategy_tracking.strategy_simulation_runs.simulation_id",
+            ondelete="CASCADE",
+        )
+    )
+    source_run_id: Mapped[str] = mapped_column(String(36))
+    ticker: Mapped[str] = mapped_column(String(32))
+    signal_date: Mapped[date] = mapped_column(Date)
+    order_expiration_date: Mapped[date | None] = mapped_column(Date)
+    entry_date: Mapped[date | None] = mapped_column(Date)
+    exit_date: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(32))
+    initial_shares: Mapped[int | None] = mapped_column(BigInteger)
+    remaining_shares: Mapped[int | None] = mapped_column(BigInteger)
+    entry_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    initial_stop_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    target_one_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    target_two_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    exit_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    planned_risk: Mapped[Decimal | None] = mapped_column(Numeric(20, 4))
+    net_pnl: Mapped[Decimal | None] = mapped_column(Numeric(20, 4))
+    realized_r: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    holding_sessions: Mapped[int | None] = mapped_column(Integer)
+    exit_reason: Mapped[str | None] = mapped_column(String(64))
+    details: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class StrategySimulationEquityPoint(Base):
+    __tablename__ = "strategy_simulation_equity"
+    __table_args__ = (
+        UniqueConstraint(
+            "simulation_id",
+            "market_date",
+            name="uq_strategy_simulation_equity_date",
+        ),
+        {"schema": "strategy_tracking"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    simulation_id: Mapped[str] = mapped_column(
+        ForeignKey(
+            "strategy_tracking.strategy_simulation_runs.simulation_id",
+            ondelete="CASCADE",
+        )
+    )
+    market_date: Mapped[date] = mapped_column(Date)
+    cash: Mapped[Decimal] = mapped_column(Numeric(20, 4))
+    equity: Mapped[Decimal] = mapped_column(Numeric(20, 4))
+    drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    open_positions: Mapped[int] = mapped_column(Integer)
+    planned_open_risk: Mapped[Decimal] = mapped_column(Numeric(20, 4))

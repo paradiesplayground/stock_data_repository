@@ -1,6 +1,7 @@
 import argparse
 import json
 from datetime import date
+from decimal import Decimal
 
 from app.config import get_settings
 from app.db import SessionLocal
@@ -22,10 +23,21 @@ from app.services.sec_ingestion import (
     sync_sec_incremental,
     sync_submissions,
 )
+from app.services.strategy_replay import replay_strategy_range
+from app.services.strategy_simulation import (
+    SimulationParameters,
+    get_simulation,
+    list_simulations,
+    run_simulation,
+)
 
 
 def _date(value: str) -> date:
     return date.fromisoformat(value)
+
+
+def _decimal(value: str) -> Decimal:
+    return Decimal(value)
 
 
 def main() -> None:
@@ -46,6 +58,27 @@ def main() -> None:
     feature_backfill.add_argument("--start", type=_date, required=True)
     feature_backfill.add_argument("--end", type=_date, required=True)
     feature_backfill.add_argument("--resume", action="store_true")
+    replay = subparsers.add_parser("replay-strategy")
+    replay.add_argument("--start", type=_date, required=True)
+    replay.add_argument("--end", type=_date, required=True)
+    replay.add_argument("--resume", action="store_true")
+    replay.add_argument("--strategy-config")
+    simulation = subparsers.add_parser("simulate-strategy")
+    simulation.add_argument("--start", type=_date, required=True)
+    simulation.add_argument("--end", type=_date, required=True)
+    simulation.add_argument("--strategy-config")
+    simulation.add_argument("--simulation-config")
+    simulation.add_argument("--starting-capital", type=_decimal)
+    simulation.add_argument("--risk-per-trade-pct", type=_decimal)
+    simulation.add_argument("--max-total-risk-pct", type=_decimal)
+    simulation.add_argument("--max-open-positions", type=int)
+    simulation.add_argument("--slippage-pct", type=_decimal)
+    simulation.add_argument("--order-lifetime-sessions", type=int)
+    simulation.add_argument("--max-holding-sessions", type=int)
+    simulations = subparsers.add_parser("list-simulations")
+    simulations.add_argument("--limit", type=int, default=20)
+    simulation_detail = subparsers.add_parser("get-simulation")
+    simulation_detail.add_argument("--simulation-id", required=True)
     validation = subparsers.add_parser("validate-features")
     validation.add_argument("--ticker", action="append", required=True)
     validation.add_argument("--date", type=_date)
@@ -86,6 +119,35 @@ def main() -> None:
                 args.end,
                 resume=args.resume,
             )
+        elif args.command == "replay-strategy":
+            result = replay_strategy_range(
+                session,
+                args.start,
+                args.end,
+                resume=args.resume,
+                configuration_path=args.strategy_config,
+            )
+        elif args.command == "simulate-strategy":
+            result = run_simulation(
+                session,
+                args.start,
+                args.end,
+                SimulationParameters.from_configuration(
+                    args.simulation_config,
+                    starting_capital=args.starting_capital,
+                    risk_per_trade_pct=args.risk_per_trade_pct,
+                    max_total_risk_pct=args.max_total_risk_pct,
+                    max_open_positions=args.max_open_positions,
+                    slippage_pct=args.slippage_pct,
+                    order_lifetime_sessions=args.order_lifetime_sessions,
+                    max_holding_sessions=args.max_holding_sessions,
+                ),
+                strategy_configuration_path=args.strategy_config,
+            )
+        elif args.command == "list-simulations":
+            result = list_simulations(session, args.limit)
+        elif args.command == "get-simulation":
+            result = get_simulation(session, args.simulation_id)
         elif args.command == "validate-features":
             result = validate_feature_calculations(session, args.ticker, args.date)
         elif args.command == "sync-companyfacts":
@@ -96,7 +158,13 @@ def main() -> None:
             result = sync_sec_all(session, settings)
         else:
             result = sync_sec_incremental(session, settings)
-    if args.command == "validate-features":
+    if args.command in {
+        "validate-features",
+        "replay-strategy",
+        "simulate-strategy",
+        "list-simulations",
+        "get-simulation",
+    }:
         print(json.dumps(result, indent=2))
     else:
         print(result)
