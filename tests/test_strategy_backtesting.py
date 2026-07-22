@@ -437,6 +437,51 @@ def test_scenario_materializes_optional_relative_strength_requirement() -> None:
     assert actionable["require_positive_relative_return_20d_vs_qqq"] is True
 
 
+def test_scenario_materializes_optional_constructive_volume_requirement() -> None:
+    resolved = resolve_strategy_scenario(
+        "fallen-growth-swing-v1.1.1-moderate.json",
+        "1.1.11",
+        {
+            "scoring": {
+                "actionable": {"require_constructive_volume": True}
+            }
+        },
+    )
+
+    actionable = resolved["strategy_configuration"]["scoring"]["actionable"]
+    assert actionable["require_constructive_volume"] is True
+
+
+def test_constructive_volume_requirement_blocks_low_volume() -> None:
+    configuration = replay_configuration()
+    configuration["scoring"]["actionable"]["require_constructive_volume"] = True
+
+    candidate = score_feature(
+        _feature(),
+        constructive_volume=False,
+        excluded_sic_prefixes=["28", "80"],
+        configuration=configuration,
+    )
+
+    assert candidate["stage"] == "qualified"
+    assert candidate["action"] == "keep-watching"
+    assert "constructive_volume_below_configured_minimum" in candidate["reasons"]
+
+
+def test_constructive_volume_requirement_allows_high_volume() -> None:
+    configuration = replay_configuration()
+    configuration["scoring"]["actionable"]["require_constructive_volume"] = True
+
+    candidate = score_feature(
+        _feature(),
+        constructive_volume=True,
+        excluded_sic_prefixes=["28", "80"],
+        configuration=configuration,
+    )
+
+    assert candidate["action"] == "actionable"
+
+
 def test_relative_strength_requirement_blocks_non_outperformer() -> None:
     configuration = replay_configuration()
     configuration["scoring"]["actionable"][

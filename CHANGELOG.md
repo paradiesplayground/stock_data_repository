@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.11
+
+- Add an optional actionable-entry rule requiring constructive breakout volume at the configured
+  multiplier (1.5 times normal volume in the Moderate profile).
+- Preserve all existing profiles and scenario fingerprints unless the new rule is enabled.
+- Include a readable failure reason when an otherwise-qualified candidate misses the volume gate.
+
 ## 0.4.10
 
 - Add an optional actionable-entry rule requiring a candidate's stored 20-session return to
