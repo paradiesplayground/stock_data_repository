@@ -7,7 +7,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STRATEGY_CONFIG_ROOT = PROJECT_ROOT / "config" / "strategies"
 DEFAULT_STRATEGY_CONFIG = (
-    STRATEGY_CONFIG_ROOT / "fallen-growth-swing-v1.1.1.json"
+    STRATEGY_CONFIG_ROOT / "fallen-growth-swing-v1.2.0.json"
 )
 DEFAULT_SIMULATION_CONFIG = PROJECT_ROOT / "config" / "simulations" / "default.json"
 DEFAULT_MARKET_REGIME = {

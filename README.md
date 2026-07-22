@@ -51,7 +51,6 @@ latest source dates, and quality flags. Raw facts remain available for audit.
 
 1. A Massive Stocks API key. Massive currently includes the grouped daily market endpoint on all Stocks plans. Basic is end-of-day; Starter is 15-minute delayed.
 2. A descriptive SEC User-Agent containing a monitored email address.
-3. An existing Unraid Docker network named `paradiesplayground`.
 
 ## Unraid installation
 
@@ -396,6 +395,12 @@ under `strategy_tracking`; source prices, SEC facts, and v1.3 feature snapshots 
 parameter, so repeating the same scenario is idempotent while changing capital or risk creates a
 separate result.
 
+Upgrading to v0.4.8 applies migration `0006_daily_return_feature`. Feature calculation version
+`1.4.0` stores `daily_return_pct` as the close-to-close percentage change from the immediately
+preceding available trading session. Raw Massive OHLCV rows remain unchanged. New daily feature
+runs populate the field automatically; rerun a historical feature date only when that stored
+metric is needed for an older alert.
+
 Upgrading from v0.4.2 to v0.4.3 requires no migration or data reload. Rebuild the worker image to
 apply the simulation persistence-ordering fix, then rerun any simulation that previously failed;
 the failed transaction was rolled back and requires no cleanup.
@@ -406,11 +411,10 @@ position limits, and holding period live in `config/simulations/*.json`. Python 
 generic evaluator and execution engine; it does not contain the default scenario values. CLI flags
 can temporarily override simulation-profile values without editing the profile.
 
-Alert presentation policy also lives in the versioned strategy profile. The default `1.1.1`
-profile requires each displayed ticker's signed, two-decimal, close-to-close daily move, using the
-immediately preceding trading session and `N/A` when no comparable prior close exists. The skill
-calculates and renders this field; the database remains limited to neutral source data and stored
-run results.
+Alert presentation policy also lives in the versioned strategy profile. The default `1.2.0`
+profile requires each displayed ticker's signed, two-decimal daily move from the stored
+`daily_return_pct` feature, using `N/A` when the feature is unavailable. The skill renders the
+stored field; it does not recalculate it.
 
 Create a new strategy JSON file and change `strategy.version` whenever a filter, score, or trade-
 plan rule changes. The resolved configuration and its fingerprint are stored with every replay, so
@@ -421,9 +425,11 @@ reference history, or versioned feature snapshots.
 ## Derived-field rules and limitations
 
 Each row in `security_daily_features` is keyed by ticker, `as_of_date`, and
-`calculation_version`. The current calculation version is `1.3.0`, so old feature snapshots remain
+`calculation_version`. The current calculation version is `1.4.0`, so old feature snapshots remain
 available if formulas change.
 
+- Daily return compares the latest close with the immediately preceding available trading-session
+  close for that ticker.
 - Twelve-week change compares the latest close with the last available close on or before 84
   calendar days earlier.
 - Fifty-two-week drawdown compares the latest close with the maximum adjusted high during the

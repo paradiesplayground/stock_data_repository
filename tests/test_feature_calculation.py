@@ -290,6 +290,7 @@ def test_average_dollar_volume_uses_each_days_price() -> None:
     metrics, _ = _price_metrics(rows, as_of)
 
     assert metrics["avg_dollar_volume_20d"] == Decimal("2500")
+    assert metrics["daily_return_pct"] == Decimal("100")
 
 
 def test_rsi_handles_flat_series_without_division_by_zero() -> None:

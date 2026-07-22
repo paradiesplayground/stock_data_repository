@@ -17,6 +17,7 @@ from app.services.feature_calculation import (
 VALIDATED_FIELDS = (
     "price_date",
     "close",
+    "daily_return_pct",
     "price_change_20d_pct",
     "price_change_12w_pct",
     "drawdown_12w_high_pct",

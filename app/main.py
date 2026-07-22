@@ -9,7 +9,7 @@ configure_logging()
 
 app = FastAPI(
     title="Stock Data Repository",
-    version="0.4.7",
+    version="0.4.8",
     description=(
         "Repository of Massive market data, SEC EDGAR facts/filings, deterministic "
         "derived features, and isolated versioned strategy observations."

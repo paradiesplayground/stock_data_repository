@@ -223,11 +223,13 @@ def test_default_profile_owns_daily_move_reporting_policy() -> None:
     configuration = replay_configuration()
     daily_move = configuration["reporting"]["daily_move"]
 
-    assert configuration["strategy"]["version"] == "1.1.1"
+    assert configuration["strategy"]["version"] == "1.2.0"
+    assert configuration["strategy"]["feature_calculation_version"] == "1.4.0"
     assert daily_move == {
         "enabled": True,
         "lookback_sessions": 1,
         "formula": "close_to_close",
+        "source_field": "daily_return_pct",
         "decimal_places": 2,
         "show_explicit_sign": True,
         "unavailable_label": "N/A",

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.8
+
+- Add stored `daily_return_pct` to versioned derived features using the prior trading-session close.
+- Advance feature calculation to `1.4.0` while preserving all earlier snapshots.
+- Expose the daily return through feature API/MCP results and allow sorting by it.
+- Add strategy profile `1.2.0`, which reads the stored field for daily-alert presentation.
+
 ## 0.4.7
 
 - Add a configuration-driven market-regime gate for new entries using a benchmark close versus a
