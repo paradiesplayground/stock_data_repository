@@ -500,6 +500,12 @@ configuration and fingerprints, then call `run_strategy_scenario` with the same 
 `strategy_version` whenever strategy rules change. Portfolio-only changes may reuse the strategy
 version because they are independently fingerprinted in the simulation scenario.
 
+Scenarios may optionally add a `market_regime` policy. When enabled, new fills can require the
+benchmark's prior-session close to be above its configurable moving average and can additionally
+require that average to be rising. Existing positions continue through their normal stops, targets,
+and time exits while entry permission is off. The prior close is used deliberately so a backtest
+cannot authorize an entry with information from the same session's future close.
+
 Upgrading from v0.4.4 to v0.4.5 requires no migration or data reload. Rebuild the worker image to
 pick up the corrected `backfill-features` CLI dispatch. Existing raw, derived, replay, and
 simulation records are preserved.
