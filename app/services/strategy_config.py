@@ -23,6 +23,7 @@ OPTIONAL_MARKET_REGIME = {
 }
 OPTIONAL_ACTIONABLE_RULES = {
     "require_positive_relative_return_20d_vs_qqq": False,
+    "require_constructive_volume": False,
 }
 
 
@@ -139,16 +140,10 @@ def validate_strategy_configuration(
                 "enabled market_regime must require at least one condition"
             )
     actionable = configuration["scoring"]["actionable"]
-    relative_strength_required = actionable.get(
-        "require_positive_relative_return_20d_vs_qqq"
-    )
-    if relative_strength_required is not None and not isinstance(
-        relative_strength_required, bool
-    ):
-        raise ValueError(
-            "scoring.actionable."
-            "require_positive_relative_return_20d_vs_qqq must be boolean"
-        )
+    for key in OPTIONAL_ACTIONABLE_RULES:
+        value = actionable.get(key)
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f"scoring.actionable.{key} must be boolean")
     return configuration
 
 
