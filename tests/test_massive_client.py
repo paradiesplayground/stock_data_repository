@@ -34,6 +34,39 @@ def test_grouped_daily_uses_bulk_market_endpoint_and_bearer_auth() -> None:
     assert route.calls[0].request.headers["Authorization"] == "Bearer secret"
 
 
+@respx.mock
+def test_reference_iterator_can_request_inactive_tickers() -> None:
+    route = respx.get(
+        "https://api.massive.com/v3/reference/tickers",
+        params={
+            "market": "stocks",
+            "active": "false",
+            "limit": 1000,
+            "sort": "ticker",
+            "order": "asc",
+        },
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "OK",
+                "results": [{"ticker": "DELISTED", "active": False}],
+            },
+        )
+    )
+    settings = Settings(
+        massive_api_key="secret",
+        massive_requests_per_minute=10000,
+        sec_user_agent="Test test@example.com",
+    )
+
+    with MassiveClient(settings) as client:
+        rows = list(client.iter_stock_tickers(active=False))
+
+    assert rows == [{"ticker": "DELISTED", "active": False}]
+    assert route.called
+
+
 def test_duplicate_tickers_are_removed_before_upsert() -> None:
     rows = [
         {"ticker": "TEST", "name": "Older name"},

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1
+
+- Add an opt-in inactive-ticker reference reconciliation for survivorship-safe historical work.
+- Build historical feature universes from exact-session price bars instead of today's active flag.
+- Resolve reference history as of the requested session, with an explicit imputation flag when
+  only later best-known metadata is available.
+- Bump derived features to `1.3.0` while preserving prior calculation versions.
+- Add a resumable QQQ-session-driven `backfill-features` CLI command.
+
 ## 0.4.0
 
 - Preserve distinct Massive/SEC security-reference states and future daily-price revisions.

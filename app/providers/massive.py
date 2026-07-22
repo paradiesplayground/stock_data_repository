@@ -58,11 +58,11 @@ class MassiveClient:
             return response.json()
         raise RuntimeError("Massive request failed after retries")
 
-    def iter_active_stock_tickers(self) -> Iterator[dict[str, Any]]:
+    def iter_stock_tickers(self, active: bool = True) -> Iterator[dict[str, Any]]:
         url = f"{self.base_url}/v3/reference/tickers"
         params: dict[str, Any] | None = {
             "market": "stocks",
-            "active": "true",
+            "active": "true" if active else "false",
             "limit": 1000,
             "sort": "ticker",
             "order": "asc",
@@ -73,6 +73,10 @@ class MassiveClient:
             next_url = payload.get("next_url")
             url = next_url or ""
             params = None
+
+    def iter_active_stock_tickers(self) -> Iterator[dict[str, Any]]:
+        """Backward-compatible active-only reference iterator."""
+        yield from self.iter_stock_tickers(active=True)
 
     def get_grouped_daily(self, trade_date: date) -> dict[str, Any]:
         return self._get(
