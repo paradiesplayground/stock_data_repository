@@ -219,6 +219,29 @@ def test_bundled_scenario_profiles_preserve_historical_fingerprints() -> None:
     )
 
 
+def test_default_profile_owns_daily_move_reporting_policy() -> None:
+    configuration = replay_configuration()
+    daily_move = configuration["reporting"]["daily_move"]
+
+    assert configuration["strategy"]["version"] == "1.1.1"
+    assert daily_move == {
+        "enabled": True,
+        "lookback_sessions": 1,
+        "formula": "close_to_close",
+        "decimal_places": 2,
+        "show_explicit_sign": True,
+        "unavailable_label": "N/A",
+        "include_in": [
+            "ranked_watchlist",
+            "transition_table",
+            "trigger_hit",
+            "near_trigger",
+            "complete_state",
+            "candidate_detail",
+        ],
+    }
+
+
 def test_scenario_overrides_reject_unknown_settings() -> None:
     with pytest.raises(ValueError, match="hard_thresholds.typo_threshold"):
         with_nested_overrides(

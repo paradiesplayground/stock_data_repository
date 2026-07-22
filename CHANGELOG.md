@@ -31,6 +31,8 @@
 - Wire the existing CLI `replay-strategy --strategy-config` argument through to the replay engine.
 - Keep all scenario writes isolated under `strategy_tracking`; Massive, SEC, and feature records
   remain unchanged.
+- Add strategy profile `1.1.1`, declaring daily percent movement as versioned alert-reporting
+  configuration while preserving `1.1.0` for rollback.
 
 ## 0.4.3
 

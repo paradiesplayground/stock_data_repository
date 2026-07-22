@@ -406,6 +406,12 @@ position limits, and holding period live in `config/simulations/*.json`. Python 
 generic evaluator and execution engine; it does not contain the default scenario values. CLI flags
 can temporarily override simulation-profile values without editing the profile.
 
+Alert presentation policy also lives in the versioned strategy profile. The default `1.1.1`
+profile requires each displayed ticker's signed, two-decimal, close-to-close daily move, using the
+immediately preceding trading session and `N/A` when no comparable prior close exists. The skill
+calculates and renders this field; the database remains limited to neutral source data and stored
+run results.
+
 Create a new strategy JSON file and change `strategy.version` whenever a filter, score, or trade-
 plan rule changes. The resolved configuration and its fingerprint are stored with every replay, so
 two rule sets cannot silently share an immutable strategy version. These files affect only replay
