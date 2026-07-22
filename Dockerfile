@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY app ./app
+COPY config ./config
 
 RUN mkdir -p /data/raw /data/tmp \
     && chown -R 99:100 /app /data

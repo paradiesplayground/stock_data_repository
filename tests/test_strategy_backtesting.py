@@ -1,10 +1,11 @@
+import json
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
-from app.services.strategy_replay import score_feature
+from app.services.strategy_replay import replay_configuration, score_feature
 from app.services.strategy_simulation import (
     Bar,
     Signal,
@@ -125,6 +126,28 @@ def test_healthcare_candidate_is_excluded() -> None:
     )
 
 
+def test_strategy_threshold_changes_are_loaded_from_config(tmp_path) -> None:
+    configuration = replay_configuration()
+    configuration.pop("configuration_fingerprint")
+    configuration["scoring"]["actionable"]["minimum_total_score"] = 80
+    configuration["universe"]["exclude_industry_groups"] = ["Healthcare"]
+    configuration["universe"].pop("excluded_sic_prefixes")
+    configuration["universe"].pop("industry_taxonomy_version")
+    path = tmp_path / "strict.json"
+    path.write_text(json.dumps(configuration), encoding="utf-8")
+
+    loaded = replay_configuration(str(path))
+    candidate = score_feature(
+        _feature(),
+        constructive_volume=True,
+        excluded_sic_prefixes=loaded["universe"]["excluded_sic_prefixes"],
+        configuration=loaded,
+    )
+
+    assert candidate["score"] == 74
+    assert candidate["action"] == "keep-watching"
+
+
 def test_variable_account_and_risk_change_position_size() -> None:
     sessions = [date(2026, 1, 20), date(2026, 1, 21)]
     bars = _bars((sessions[1], "10", "10.50", "9.50", "10.20"))
@@ -155,6 +178,32 @@ def test_variable_account_and_risk_change_position_size() -> None:
 
     assert small.trades[0].initial_shares == 100
     assert large.trades[0].initial_shares == 750
+
+
+def test_simulation_parameters_load_profile_with_cli_style_override(tmp_path) -> None:
+    profile = {
+        "schema_version": 1,
+        "scenario_name": "conservative",
+        "starting_capital": "20000",
+        "risk_per_trade_pct": "1",
+        "max_total_risk_pct": "3",
+        "max_open_positions": 3,
+        "slippage_pct": "0.05",
+        "order_lifetime_sessions": 5,
+        "max_holding_sessions": 20,
+        "execution_rules": {"same_bar_assumption": "stop_before_targets"},
+    }
+    path = tmp_path / "simulation.json"
+    path.write_text(json.dumps(profile), encoding="utf-8")
+
+    parameters = SimulationParameters.from_configuration(
+        str(path), risk_per_trade_pct=D("2")
+    )
+
+    assert parameters.starting_capital == D("20000")
+    assert parameters.risk_per_trade_pct == D("2")
+    assert parameters.order_lifetime_sessions == 5
+    assert parameters.payload()["scenario_name"] == "conservative"
 
 
 def test_stop_wins_when_stop_and_targets_share_fill_day_bar() -> None:

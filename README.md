@@ -327,7 +327,9 @@ python -m app.cli sync-features
 python -m app.cli sync-features --date 2026-07-17
 python -m app.cli backfill-features --start 2026-01-20 --end 2026-07-20 --resume
 python -m app.cli replay-strategy --start 2026-01-20 --end 2026-07-20 --resume
+python -m app.cli replay-strategy --start 2026-01-20 --end 2026-07-20 --strategy-config config/strategies/my-scenario.json
 python -m app.cli simulate-strategy --start 2026-01-20 --end 2026-07-20 --starting-capital 10000 --risk-per-trade-pct 3
+python -m app.cli simulate-strategy --start 2026-01-20 --end 2026-07-20 --simulation-config config/simulations/default.json
 python -m app.cli list-simulations
 python -m app.cli get-simulation --simulation-id UUID
 python -m app.cli validate-features --ticker AAPL --ticker NVDA
@@ -383,6 +385,18 @@ under `strategy_tracking`; source prices, SEC facts, and v1.3 feature snapshots 
 `simulate-strategy` scenarios. A scenario key hashes the source replay runs and every execution
 parameter, so repeating the same scenario is idempotent while changing capital or risk creates a
 separate result.
+
+All replay thresholds, scoring bands, risk tiers, entry/stop/target multiples, and constructive-
+volume rules live in `config/strategies/*.json`. Portfolio capital, risk, slippage, order lifetime,
+position limits, and holding period live in `config/simulations/*.json`. Python implements the
+generic evaluator and execution engine; it does not contain the default scenario values. CLI flags
+can temporarily override simulation-profile values without editing the profile.
+
+Create a new strategy JSON file and change `strategy.version` whenever a filter, score, or trade-
+plan rule changes. The resolved configuration and its fingerprint are stored with every replay, so
+two rule sets cannot silently share an immutable strategy version. These files affect only replay
+and simulation records under `strategy_tracking`; they never modify Massive price bars, SEC facts,
+reference history, or versioned feature snapshots.
 
 ## Derived-field rules and limitations
 
@@ -453,7 +467,7 @@ missing cash-runway/trade-plan data is retained as incomplete and never made act
 customer concentration, organic-growth, going-concern text, spread, and public-float points remain
 zero or unavailable. This conservative limitation is stored in the immutable strategy definition.
 
-Actionable mechanical signals place a buy-stop 0.1% above the rolling 20-session high, use the
+The checked-in default profile places a buy-stop 0.1% above the rolling 20-session high, uses the
 higher of the 20-session low or two ATR below the trigger as the initial stop, and set targets at
 2R and 3R. The simulator uses a three-session order window by default, rejects a gap more than 5%
 above the trigger, sizes against current mark-to-market equity and available cash, sells half at
@@ -461,7 +475,8 @@ above the trigger, sizes against current mark-to-market equity and available cas
 win same-daily-bar ambiguity; gaps through a stop fill at the open; slippage is adverse on each
 side. Open positions at the test end are marked to market and are not counted as closed winners.
 
-`--starting-capital`, `--risk-per-trade-pct`, `--max-total-risk-pct`,
+Use `--strategy-config` to select a versioned replay profile and `--simulation-config` to select a
+portfolio scenario. `--starting-capital`, `--risk-per-trade-pct`, `--max-total-risk-pct`,
 `--max-open-positions`, `--slippage-pct`, `--order-lifetime-sessions`, and
 `--max-holding-sessions` are scenario variables. Market-cap risk multipliers from the strategy
 rubric still reduce the requested per-trade risk for smaller companies.

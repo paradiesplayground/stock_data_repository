@@ -62,18 +62,19 @@ def main() -> None:
     replay.add_argument("--start", type=_date, required=True)
     replay.add_argument("--end", type=_date, required=True)
     replay.add_argument("--resume", action="store_true")
+    replay.add_argument("--strategy-config")
     simulation = subparsers.add_parser("simulate-strategy")
     simulation.add_argument("--start", type=_date, required=True)
     simulation.add_argument("--end", type=_date, required=True)
-    simulation.add_argument(
-        "--starting-capital", type=_decimal, default=Decimal("10000")
-    )
-    simulation.add_argument("--risk-per-trade-pct", type=_decimal, default=Decimal("3"))
-    simulation.add_argument("--max-total-risk-pct", type=_decimal, default=Decimal("6"))
-    simulation.add_argument("--max-open-positions", type=int, default=2)
-    simulation.add_argument("--slippage-pct", type=_decimal, default=Decimal("0.10"))
-    simulation.add_argument("--order-lifetime-sessions", type=int, default=3)
-    simulation.add_argument("--max-holding-sessions", type=int, default=15)
+    simulation.add_argument("--strategy-config")
+    simulation.add_argument("--simulation-config")
+    simulation.add_argument("--starting-capital", type=_decimal)
+    simulation.add_argument("--risk-per-trade-pct", type=_decimal)
+    simulation.add_argument("--max-total-risk-pct", type=_decimal)
+    simulation.add_argument("--max-open-positions", type=int)
+    simulation.add_argument("--slippage-pct", type=_decimal)
+    simulation.add_argument("--order-lifetime-sessions", type=int)
+    simulation.add_argument("--max-holding-sessions", type=int)
     simulations = subparsers.add_parser("list-simulations")
     simulations.add_argument("--limit", type=int, default=20)
     simulation_detail = subparsers.add_parser("get-simulation")
@@ -117,6 +118,7 @@ def main() -> None:
                 args.start,
                 args.end,
                 resume=args.resume,
+                configuration_path=args.strategy_config,
             )
         elif args.command == "replay-strategy":
             result = replay_strategy_range(
@@ -130,7 +132,8 @@ def main() -> None:
                 session,
                 args.start,
                 args.end,
-                SimulationParameters(
+                SimulationParameters.from_configuration(
+                    args.simulation_config,
                     starting_capital=args.starting_capital,
                     risk_per_trade_pct=args.risk_per_trade_pct,
                     max_total_risk_pct=args.max_total_risk_pct,
@@ -139,6 +142,7 @@ def main() -> None:
                     order_lifetime_sessions=args.order_lifetime_sessions,
                     max_holding_sessions=args.max_holding_sessions,
                 ),
+                strategy_configuration_path=args.strategy_config,
             )
         elif args.command == "list-simulations":
             result = list_simulations(session, args.limit)

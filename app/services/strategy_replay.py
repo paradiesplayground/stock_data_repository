@@ -9,64 +9,30 @@ from sqlalchemy.orm import Session
 
 from app.industry_taxonomy import TAXONOMY_VERSION, resolve_industry_groups
 from app.models import DailyPriceBar, SecurityDailyFeature, StrategyRun
+from app.services.strategy_config import (
+    configuration_hash,
+    load_strategy_configuration,
+)
 from app.services.strategy_tracking import record_strategy_run
 
-STRATEGY_KEY = "fallen-growth-swing"
-STRATEGY_VERSION = "1.1.0"
-FEATURE_VERSION = "1.3.0"
-REPLAY_MODEL = "deterministic-replay-v1"
-
-MIN_PRICE = Decimal("5")
-MIN_MARKET_CAP = Decimal("100000000")
-STANDARD_MARKET_CAP = Decimal("250000000")
-MIN_TTM_GROWTH = Decimal("40")
-MIN_QUARTER_GROWTH = Decimal("40")
-MAX_PRICE_CHANGE_12W = Decimal("-20")
-MIN_DOLLAR_VOLUME = Decimal("30000000")
-MIN_CASH_RUNWAY = Decimal("12")
-MAX_ENTRY_GAP_PCT = Decimal("5")
+_DEFAULT_CONFIGURATION = load_strategy_configuration()
+STRATEGY_KEY = _DEFAULT_CONFIGURATION["strategy"]["key"]
+STRATEGY_VERSION = _DEFAULT_CONFIGURATION["strategy"]["version"]
+FEATURE_VERSION = _DEFAULT_CONFIGURATION["strategy"]["feature_calculation_version"]
+REPLAY_MODEL = _DEFAULT_CONFIGURATION["strategy"]["replay_model"]
 
 
-def replay_configuration() -> dict[str, Any]:
-    resolved, prefixes = resolve_industry_groups(["Healthcare"])
-    return {
-        "schema_version": 1,
-        "model": REPLAY_MODEL,
-        "feature_calculation_version": FEATURE_VERSION,
-        "universe": {
-            "exchanges": ["XNAS", "XNYS"],
-            "security_type": "CS",
-            "exclude_otc": True,
-            "minimum_price": str(MIN_PRICE),
-            "minimum_market_cap": str(MIN_MARKET_CAP),
-            "standard_market_cap": str(STANDARD_MARKET_CAP),
-            "exclude_industry_groups": [item["key"] for item in resolved],
-            "excluded_sic_prefixes": prefixes,
-            "industry_taxonomy_version": TAXONOMY_VERSION,
-        },
-        "hard_thresholds": {
-            "minimum_ttm_revenue_growth_pct": str(MIN_TTM_GROWTH),
-            "minimum_quarter_revenue_growth_pct": str(MIN_QUARTER_GROWTH),
-            "maximum_price_change_12w_pct": str(MAX_PRICE_CHANGE_12W),
-            "minimum_avg_dollar_volume_20d": str(MIN_DOLLAR_VOLUME),
-            "minimum_cash_runway_months": str(MIN_CASH_RUNWAY),
-        },
-        "scoring_model": "mechanical-subset-of-skill-rubric-v1",
-        "entry_model": {
-            "trigger": "0.1% above rolling 20-session high",
-            "initial_stop": "higher of rolling 20-session low or two ATR below trigger",
-            "target_one_r": "2",
-            "target_two_r": "3",
-            "maximum_gap_above_trigger_pct": str(MAX_ENTRY_GAP_PCT),
-        },
-        "known_limitations": [
-            "no historical catalyst score",
-            "no historical bid-ask spread or public-float score",
-            "no automated going-concern text review",
-            "no customer-concentration or organic-growth score",
-            "unknown SIC classifications are retained as incomplete and never actionable",
-        ],
-    }
+def replay_configuration(path: str | None = None) -> dict[str, Any]:
+    configuration = load_strategy_configuration(path)
+    requested_groups = configuration["universe"]["exclude_industry_groups"]
+    resolved, prefixes = resolve_industry_groups(requested_groups)
+    configuration["universe"]["exclude_industry_groups"] = [
+        item["key"] for item in resolved
+    ]
+    configuration["universe"]["excluded_sic_prefixes"] = prefixes
+    configuration["universe"]["industry_taxonomy_version"] = TAXONOMY_VERSION
+    configuration["configuration_fingerprint"] = configuration_hash(configuration)
+    return configuration
 
 
 def _json_decimal(value: Decimal | None) -> str | None:
@@ -80,44 +46,32 @@ def _sic_excluded(sic_code: str | None, prefixes: list[str]) -> bool | None:
     return any(normalized.startswith(prefix) for prefix in prefixes)
 
 
-def _growth_points(value: Decimal | None) -> int:
-    if value is None or value < 40:
+def _band_points(
+    value: Decimal | None,
+    bands: list[dict[str, Any]],
+    threshold_key: str,
+) -> int:
+    if value is None:
         return 0
-    if value >= 100:
-        return 10
-    if value >= 75:
-        return 8
-    return 6
+    ordered = sorted(
+        bands, key=lambda item: Decimal(str(item[threshold_key])), reverse=True
+    )
+    for band in ordered:
+        if value >= Decimal(str(band[threshold_key])):
+            return int(band["points"])
+    return 0
 
 
-def _liquidity_points(value: Decimal | None) -> int:
-    if value is None or value < 30_000_000:
-        return 0
-    if value >= 100_000_000:
-        return 9
-    if value >= 50_000_000:
-        return 7
-    return 5
-
-
-def _risk_multiplier(market_cap: Decimal) -> Decimal:
-    if market_cap >= 1_000_000_000:
-        return Decimal("1")
-    if market_cap >= 500_000_000:
-        return Decimal("0.75")
-    if market_cap >= 250_000_000:
-        return Decimal("0.50")
-    return Decimal("0.25")
-
-
-def _risk_tier(market_cap: Decimal) -> str:
-    if market_cap >= 1_000_000_000:
-        return "standard"
-    if market_cap >= 500_000_000:
-        return "elevated"
-    if market_cap >= 250_000_000:
-        return "high"
-    return "speculative"
+def _risk_tier(market_cap: Decimal, configuration: dict[str, Any]) -> dict[str, Any]:
+    tiers = sorted(
+        configuration["risk_tiers"],
+        key=lambda item: Decimal(str(item["minimum_market_cap"])),
+        reverse=True,
+    )
+    for tier in tiers:
+        if market_cap >= Decimal(str(tier["minimum_market_cap"])):
+            return tier
+    raise ValueError("risk_tiers must cover the configured minimum market cap")
 
 
 def score_feature(
@@ -125,8 +79,13 @@ def score_feature(
     *,
     constructive_volume: bool,
     excluded_sic_prefixes: list[str],
+    configuration: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Return a reproducible replay candidate from stored point-in-time fields."""
+    configuration = configuration or replay_configuration()
+    universe = configuration["universe"]
+    thresholds = configuration["hard_thresholds"]
+    scoring = configuration["scoring"]
     required_values = (
         feature.close,
         feature.approximate_market_cap,
@@ -138,15 +97,20 @@ def score_feature(
     if any(value is None for value in required_values):
         return None
     if (
-        feature.reference_primary_exchange not in {"XNAS", "XNYS"}
-        or feature.reference_security_type != "CS"
-        or feature.reference_active is not True
-        or feature.close < MIN_PRICE
-        or feature.approximate_market_cap < MIN_MARKET_CAP
-        or feature.revenue_ttm_yoy_pct < MIN_TTM_GROWTH
-        or feature.latest_quarter_revenue_yoy_pct < MIN_QUARTER_GROWTH
-        or feature.price_change_12w_pct > MAX_PRICE_CHANGE_12W
-        or feature.avg_dollar_volume_20d < MIN_DOLLAR_VOLUME
+        feature.reference_primary_exchange not in set(universe["exchanges"])
+        or feature.reference_security_type not in set(universe["security_types"])
+        or (universe["require_active"] and feature.reference_active is not True)
+        or feature.close < Decimal(str(universe["minimum_price"]))
+        or feature.approximate_market_cap
+        < Decimal(str(universe["minimum_market_cap"]))
+        or feature.revenue_ttm_yoy_pct
+        < Decimal(str(thresholds["minimum_ttm_revenue_growth_pct"]))
+        or feature.latest_quarter_revenue_yoy_pct
+        < Decimal(str(thresholds["minimum_quarter_revenue_growth_pct"]))
+        or feature.price_change_12w_pct
+        > Decimal(str(thresholds["maximum_price_change_12w_pct"]))
+        or feature.avg_dollar_volume_20d
+        < Decimal(str(thresholds["minimum_avg_dollar_volume_20d"]))
     ):
         return None
 
@@ -156,21 +120,34 @@ def score_feature(
 
     reasons: list[str] = []
     warnings: list[str] = []
-    revenue_points = _growth_points(feature.revenue_ttm_yoy_pct) + _growth_points(
-        feature.latest_quarter_revenue_yoy_pct
+    revenue_points = _band_points(
+        feature.revenue_ttm_yoy_pct, scoring["growth_bands"], "minimum_pct"
+    ) + _band_points(
+        feature.latest_quarter_revenue_yoy_pct,
+        scoring["growth_bands"],
+        "minimum_pct",
     )
 
-    price_points = 4
-    if feature.drawdown_52w_pct is not None and Decimal(
-        "-60"
-    ) <= feature.drawdown_52w_pct <= Decimal("-30"):
-        price_points += 4
+    price_setup = scoring["price_setup"]
+    price_points = int(price_setup["base_points"])
+    if (
+        feature.drawdown_52w_pct is not None
+        and Decimal(str(price_setup["drawdown_52w_min_pct"]))
+        <= feature.drawdown_52w_pct
+        <= Decimal(str(price_setup["drawdown_52w_max_pct"]))
+    ):
+        price_points += int(price_setup["drawdown_points"])
     if feature.ema_10 is not None and feature.close >= feature.ema_10:
-        price_points += 3
+        price_points += int(price_setup["above_ema_10_points"])
     if feature.ema_20 is not None and feature.close >= feature.ema_20:
-        price_points += 4
+        price_points += int(price_setup["above_ema_20_points"])
 
-    liquidity_points = _liquidity_points(feature.avg_dollar_volume_20d)
+    liquidity_points = _band_points(
+        feature.avg_dollar_volume_20d,
+        scoring["liquidity_bands"],
+        "minimum_dollars",
+    )
+    durability = scoring["financial_durability"]
     financial_points = 0
     self_funding = (
         feature.free_cash_flow_ttm is not None and feature.free_cash_flow_ttm >= 0
@@ -178,45 +155,57 @@ def score_feature(
     if self_funding:
         # Runway is intentionally null for non-burning companies in the
         # derived-data contract; positive FCF satisfies both runway buckets.
-        financial_points += 6
-    elif feature.cash_runway_months is not None and feature.cash_runway_months >= 12:
-        financial_points += 4
-        if feature.cash_runway_months >= 24:
-            financial_points += 2
-    if feature.share_count_yoy_pct is not None and feature.share_count_yoy_pct < 15:
-        financial_points += 3
+        financial_points += int(durability["self_funding_runway_points"])
+    elif (
+        feature.cash_runway_months is not None
+        and feature.cash_runway_months
+        >= Decimal(str(durability["minimum_runway_months"]))
+    ):
+        financial_points += int(durability["minimum_runway_points"])
+        if feature.cash_runway_months >= Decimal(
+            str(durability["strong_runway_months"])
+        ):
+            financial_points += int(durability["strong_runway_points"])
+    if (
+        feature.share_count_yoy_pct is not None
+        and feature.share_count_yoy_pct
+        < Decimal(str(durability["maximum_share_growth_pct"]))
+    ):
+        financial_points += int(durability["share_growth_points"])
     if (
         feature.total_debt is not None
         and feature.cash_and_short_term_investments is not None
         and feature.total_debt <= feature.cash_and_short_term_investments
     ):
-        financial_points += 3
+        financial_points += int(durability["debt_covered_by_cash_points"])
     if feature.free_cash_flow_ttm is not None and feature.free_cash_flow_ttm >= 0:
-        financial_points += 3
+        financial_points += int(durability["positive_free_cash_flow_points"])
 
+    technical = scoring["technical_confirmation"]
     technical_points = 0
     if (
         feature.low_20d is not None
         and feature.low_60d is not None
         and feature.low_20d > feature.low_60d
     ):
-        technical_points += 3
+        technical_points += int(technical["higher_low_points"])
     if (feature.ema_10 is not None and feature.close >= feature.ema_10) or (
         feature.ema_20 is not None and feature.close >= feature.ema_20
     ):
-        technical_points += 3
+        technical_points += int(technical["above_ema_points"])
     if (
         feature.distance_to_20d_high_pct is not None
-        and feature.distance_to_20d_high_pct >= Decimal("-3")
+        and feature.distance_to_20d_high_pct
+        >= Decimal(str(technical["minimum_distance_to_20d_high_pct"]))
     ):
-        technical_points += 3
+        technical_points += int(technical["near_high_points"])
     if constructive_volume:
-        technical_points += 3
+        technical_points += int(technical["constructive_volume_points"])
     if (
         feature.relative_return_20d_vs_qqq_pct is not None
         and feature.relative_return_20d_vs_qqq_pct > 0
     ):
-        technical_points += 3
+        technical_points += int(technical["positive_relative_return_points"])
 
     score_components = {
         "revenue_growth": revenue_points,
@@ -238,45 +227,76 @@ def score_feature(
         warnings.append("missing_cash_runway")
     elif (
         feature.cash_runway_months is not None
-        and feature.cash_runway_months < MIN_CASH_RUNWAY
+        and feature.cash_runway_months
+        < Decimal(str(thresholds["minimum_cash_runway_months"]))
     ):
-        reasons.append("cash_runway_below_12_months")
+        reasons.append("cash_runway_below_configured_minimum")
     if feature.high_20d is None or feature.low_20d is None or feature.atr_14 is None:
         incomplete = True
         warnings.append("missing_trade_plan_price_fields")
 
     rejected = bool(reasons)
+    actionable_rules = scoring["actionable"]
     actionable = (
         not incomplete
         and not rejected
-        and score >= 60
-        and technical_points >= 9
-        and (feature.rsi_14 is None or feature.rsi_14 < 75)
+        and score >= int(actionable_rules["minimum_total_score"])
+        and technical_points >= int(actionable_rules["minimum_technical_points"])
+        and (
+            feature.rsi_14 is None
+            or feature.rsi_14 < Decimal(str(actionable_rules["maximum_rsi_14"]))
+        )
     )
     stage = "rejected" if rejected else "incomplete" if incomplete else "qualified"
     action = "remove" if rejected else "actionable" if actionable else "keep-watching"
 
     trade_plan = None
     if not incomplete and not rejected:
-        trigger = feature.high_20d * Decimal("1.001")
-        atr_stop = trigger - (feature.atr_14 * Decimal("2"))
+        entry_model = configuration["entry_model"]
+        trigger = feature.high_20d * (
+            Decimal("1")
+            + Decimal(str(entry_model["trigger_above_high_pct"])) / Decimal("100")
+        )
+        atr_stop = trigger - (
+            feature.atr_14 * Decimal(str(entry_model["atr_stop_multiple"]))
+        )
         stop = max(feature.low_20d, atr_stop)
         if stop >= trigger:
-            stop = trigger - feature.atr_14
+            stop = trigger - (
+                feature.atr_14
+                * Decimal(str(entry_model["fallback_atr_stop_multiple"]))
+            )
         risk_per_share = trigger - stop
         if risk_per_share > 0:
             trade_plan = {
                 "entry_order": "buy-stop",
                 "entry_trigger": str(trigger),
                 "maximum_entry_price": str(
-                    trigger * (Decimal("1") + MAX_ENTRY_GAP_PCT / Decimal("100"))
+                    trigger
+                    * (
+                        Decimal("1")
+                        + Decimal(
+                            str(entry_model["maximum_gap_above_trigger_pct"])
+                        )
+                        / Decimal("100")
+                    )
                 ),
                 "initial_stop": str(stop),
-                "target_one": str(trigger + risk_per_share * Decimal("2")),
-                "target_two": str(trigger + risk_per_share * Decimal("3")),
-                "risk_tier": _risk_tier(feature.approximate_market_cap),
+                "target_one": str(
+                    trigger
+                    + risk_per_share * Decimal(str(entry_model["target_one_r"]))
+                ),
+                "target_two": str(
+                    trigger
+                    + risk_per_share * Decimal(str(entry_model["target_two_r"]))
+                ),
+                "risk_tier": _risk_tier(
+                    feature.approximate_market_cap, configuration
+                )["tier"],
                 "risk_multiplier": str(
-                    _risk_multiplier(feature.approximate_market_cap)
+                    _risk_tier(feature.approximate_market_cap, configuration)[
+                        "multiplier"
+                    ]
                 ),
             }
         else:
@@ -317,7 +337,10 @@ def score_feature(
 
 
 def _constructive_volume_tickers(
-    session: Session, as_of_date: date, tickers: set[str]
+    session: Session,
+    as_of_date: date,
+    tickers: set[str],
+    configuration: dict[str, Any],
 ) -> set[str]:
     if not tickers:
         return set()
@@ -349,7 +372,8 @@ def _constructive_volume_tickers(
                 SecurityDailyFeature.avg_volume_20d,
             ).where(
                 SecurityDailyFeature.as_of_date == as_of_date,
-                SecurityDailyFeature.calculation_version == FEATURE_VERSION,
+                SecurityDailyFeature.calculation_version
+                == configuration["strategy"]["feature_calculation_version"],
                 SecurityDailyFeature.ticker.in_(tickers),
             )
         ).all()
@@ -360,28 +384,49 @@ def _constructive_volume_tickers(
         if ticker in prior_close
         and features.get(ticker)
         and close > prior_close[ticker]
-        and volume >= features[ticker] * Decimal("1.5")
+        and volume
+        >= features[ticker]
+        * Decimal(
+            str(
+                configuration["scoring"]["technical_confirmation"][
+                    "constructive_volume_multiplier"
+                ]
+            )
+        )
     }
 
 
-def replay_strategy_date(session: Session, as_of_date: date) -> dict[str, Any]:
-    configuration = replay_configuration()
+def replay_strategy_date(
+    session: Session,
+    as_of_date: date,
+    configuration: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    configuration = configuration or replay_configuration()
+    metadata = configuration["strategy"]
+    strategy_key = metadata["key"]
+    strategy_version = metadata["version"]
+    feature_version = metadata["feature_calculation_version"]
+    replay_model = metadata["replay_model"]
+    fingerprint = configuration["configuration_fingerprint"]
     excluded_prefixes = configuration["universe"]["excluded_sic_prefixes"]
     features = session.scalars(
         select(SecurityDailyFeature)
         .where(
             SecurityDailyFeature.as_of_date == as_of_date,
-            SecurityDailyFeature.calculation_version == FEATURE_VERSION,
+            SecurityDailyFeature.calculation_version == feature_version,
             SecurityDailyFeature.price_date == as_of_date,
         )
         .order_by(SecurityDailyFeature.ticker)
     ).all()
     if not features:
         raise RuntimeError(
-            f"No {FEATURE_VERSION} feature snapshot exists for {as_of_date}"
+            f"No {feature_version} feature snapshot exists for {as_of_date}"
         )
     constructive = _constructive_volume_tickers(
-        session, as_of_date, {item.ticker for item in features}
+        session,
+        as_of_date,
+        {item.ticker for item in features},
+        configuration,
     )
     candidates = [
         candidate
@@ -391,6 +436,7 @@ def replay_strategy_date(session: Session, as_of_date: date) -> dict[str, Any]:
                 feature,
                 constructive_volume=feature.ticker in constructive,
                 excluded_sic_prefixes=excluded_prefixes,
+                configuration=configuration,
             )
         )
         is not None
@@ -405,7 +451,8 @@ def replay_strategy_date(session: Session, as_of_date: date) -> dict[str, Any]:
         default=None,
     )
     summary = {
-        "model": REPLAY_MODEL,
+        "model": replay_model,
+        "configuration_fingerprint": fingerprint,
         "feature_rows_reviewed": len(features),
         "raw_candidate_count": len(candidates),
         "qualified_count": sum(item["stage"] == "qualified" for item in candidates),
@@ -416,20 +463,24 @@ def replay_strategy_date(session: Session, as_of_date: date) -> dict[str, Any]:
     }
     result = record_strategy_run(
         session,
-        strategy_key=STRATEGY_KEY,
-        strategy_version=STRATEGY_VERSION,
-        strategy_name="Fallen growth swing — deterministic replay",
+        strategy_key=strategy_key,
+        strategy_version=strategy_version,
+        strategy_name=metadata["name"],
         as_of_date=as_of_date.isoformat(),
         run_type="backtest",
         idempotency_key=(
-            f"{STRATEGY_KEY}:{STRATEGY_VERSION}:{as_of_date}:"
-            f"{FEATURE_VERSION}:{REPLAY_MODEL}"
+            f"{strategy_key}:{strategy_version}:{as_of_date}:"
+            f"{feature_version}:{replay_model}:{fingerprint[:16]}"
         ),
         configuration=configuration,
-        filters={"exclude_industry_groups": ["Healthcare"]},
+        filters={
+            "exclude_industry_groups": configuration["universe"][
+                "exclude_industry_groups"
+            ]
+        },
         candidates=candidates,
         summary=summary,
-        feature_calculation_version=FEATURE_VERSION,
+        feature_calculation_version=feature_version,
         data_cutoff_at_utc=source_cutoff.isoformat() if source_cutoff else None,
         notes=(
             "Mechanical point-in-time replay. Historical qualitative catalyst, "
@@ -446,9 +497,17 @@ def replay_strategy_range(
     end_date: date,
     *,
     resume: bool = False,
+    configuration_path: str | None = None,
 ) -> dict[str, Any]:
     if start_date > end_date:
         raise ValueError("Replay start date must be on or before end date")
+    configuration = replay_configuration(configuration_path)
+    metadata = configuration["strategy"]
+    strategy_key = metadata["key"]
+    strategy_version = metadata["version"]
+    feature_version = metadata["feature_calculation_version"]
+    replay_model = metadata["replay_model"]
+    fingerprint = configuration["configuration_fingerprint"]
     sessions = session.scalars(
         select(DailyPriceBar.trade_date)
         .where(
@@ -463,15 +522,15 @@ def replay_strategy_range(
     actionable = raw_candidates = 0
     for market_date in sessions:
         key = (
-            f"{STRATEGY_KEY}:{STRATEGY_VERSION}:{market_date}:"
-            f"{FEATURE_VERSION}:{REPLAY_MODEL}"
+            f"{strategy_key}:{strategy_version}:{market_date}:"
+            f"{feature_version}:{replay_model}:{fingerprint[:16]}"
         )
         if resume and session.scalar(
             select(StrategyRun.run_id).where(StrategyRun.idempotency_key == key)
         ):
             skipped.append(market_date.isoformat())
             continue
-        result = replay_strategy_date(session, market_date)
+        result = replay_strategy_date(session, market_date, configuration)
         completed.append(market_date.isoformat())
         actionable += result["actionable_count"]
         raw_candidates += result["raw_candidate_count"]
@@ -480,9 +539,10 @@ def replay_strategy_range(
         .where(
             StrategyRun.run_type == "backtest",
             StrategyRun.as_of_date.between(start_date, end_date),
-            StrategyRun.feature_calculation_version == FEATURE_VERSION,
+            StrategyRun.feature_calculation_version == feature_version,
             StrategyRun.idempotency_key.like(
-                f"{STRATEGY_KEY}:{STRATEGY_VERSION}:%:{FEATURE_VERSION}:{REPLAY_MODEL}"
+                f"{strategy_key}:{strategy_version}:%:{feature_version}:"
+                f"{replay_model}:{fingerprint[:16]}"
             ),
         )
         .order_by(StrategyRun.as_of_date)
@@ -491,10 +551,11 @@ def replay_strategy_range(
         json.dumps(source_runs, separators=(",", ":")).encode()
     ).hexdigest()
     return {
-        "strategy_key": STRATEGY_KEY,
-        "strategy_version": STRATEGY_VERSION,
-        "replay_model": REPLAY_MODEL,
-        "feature_calculation_version": FEATURE_VERSION,
+        "strategy_key": strategy_key,
+        "strategy_version": strategy_version,
+        "replay_model": replay_model,
+        "feature_calculation_version": feature_version,
+        "configuration_fingerprint": fingerprint,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "market_sessions": len(sessions),

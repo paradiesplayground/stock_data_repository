@@ -19,27 +19,56 @@ from app.models import (
     StrategySimulationRun,
     StrategySimulationTrade,
 )
-from app.services.strategy_replay import (
-    FEATURE_VERSION,
-    REPLAY_MODEL,
-    STRATEGY_KEY,
-    STRATEGY_VERSION,
+from app.services.strategy_replay import replay_configuration
+from app.services.strategy_config import (
+    load_simulation_configuration,
+    with_overrides,
 )
 
 ZERO = Decimal("0")
 ONE = Decimal("1")
 HUNDRED = Decimal("100")
+_DEFAULT_SIMULATION = load_simulation_configuration()
 
 
 @dataclass(frozen=True)
 class SimulationParameters:
-    starting_capital: Decimal = Decimal("10000")
-    risk_per_trade_pct: Decimal = Decimal("3")
-    max_total_risk_pct: Decimal = Decimal("6")
-    max_open_positions: int = 2
-    slippage_pct: Decimal = Decimal("0.10")
-    order_lifetime_sessions: int = 3
-    max_holding_sessions: int = 15
+    starting_capital: Decimal = Decimal(str(_DEFAULT_SIMULATION["starting_capital"]))
+    risk_per_trade_pct: Decimal = Decimal(
+        str(_DEFAULT_SIMULATION["risk_per_trade_pct"])
+    )
+    max_total_risk_pct: Decimal = Decimal(
+        str(_DEFAULT_SIMULATION["max_total_risk_pct"])
+    )
+    max_open_positions: int = int(_DEFAULT_SIMULATION["max_open_positions"])
+    slippage_pct: Decimal = Decimal(str(_DEFAULT_SIMULATION["slippage_pct"]))
+    order_lifetime_sessions: int = int(
+        _DEFAULT_SIMULATION["order_lifetime_sessions"]
+    )
+    max_holding_sessions: int = int(_DEFAULT_SIMULATION["max_holding_sessions"])
+    scenario_name: str = str(_DEFAULT_SIMULATION.get("scenario_name", "default"))
+    execution_rules: dict[str, Any] = field(
+        default_factory=lambda: dict(_DEFAULT_SIMULATION["execution_rules"])
+    )
+
+    @classmethod
+    def from_configuration(
+        cls,
+        path: str | None = None,
+        **overrides: Any,
+    ) -> "SimulationParameters":
+        values = with_overrides(load_simulation_configuration(path), overrides)
+        return cls(
+            starting_capital=Decimal(str(values["starting_capital"])),
+            risk_per_trade_pct=Decimal(str(values["risk_per_trade_pct"])),
+            max_total_risk_pct=Decimal(str(values["max_total_risk_pct"])),
+            max_open_positions=int(values["max_open_positions"]),
+            slippage_pct=Decimal(str(values["slippage_pct"])),
+            order_lifetime_sessions=int(values["order_lifetime_sessions"]),
+            max_holding_sessions=int(values["max_holding_sessions"]),
+            scenario_name=str(values.get("scenario_name", "unnamed")),
+            execution_rules=dict(values["execution_rules"]),
+        )
 
     def validate(self) -> None:
         if self.starting_capital <= 0:
@@ -63,6 +92,7 @@ class SimulationParameters:
 
     def payload(self) -> dict[str, Any]:
         return {
+            "scenario_name": self.scenario_name,
             "starting_capital": str(self.starting_capital),
             "risk_per_trade_pct": str(self.risk_per_trade_pct),
             "max_total_risk_pct": str(self.max_total_risk_pct),
@@ -70,11 +100,7 @@ class SimulationParameters:
             "slippage_pct_each_side": str(self.slippage_pct),
             "order_lifetime_sessions": self.order_lifetime_sessions,
             "max_holding_sessions": self.max_holding_sessions,
-            "risk_basis": "current_mark_to_market_equity",
-            "same_bar_assumption": "stop_before_targets",
-            "gap_through_stop": "exit_at_open_with_adverse_slippage",
-            "target_one": "sell_half_then_move_stop_to_entry",
-            "end_of_test_open_positions": "mark_to_market_not_counted_as_closed_wins",
+            "execution_rules": self.execution_rules,
         }
 
 
@@ -519,8 +545,12 @@ def simulate_signals(
 
 
 def _load_signals(
-    session: Session, start_date: date, end_date: date
+    session: Session,
+    start_date: date,
+    end_date: date,
+    strategy_configuration: dict[str, Any],
 ) -> tuple[list[Signal], list[str], StrategyDefinition]:
+    metadata = strategy_configuration["strategy"]
     rows = session.execute(
         select(StrategyRun, StrategyDefinition, StrategyCandidate)
         .join(
@@ -529,11 +559,12 @@ def _load_signals(
         )
         .join(StrategyCandidate, StrategyCandidate.run_id == StrategyRun.run_id)
         .where(
-            StrategyDefinition.strategy_key == STRATEGY_KEY,
-            StrategyDefinition.version == STRATEGY_VERSION,
+            StrategyDefinition.strategy_key == metadata["key"],
+            StrategyDefinition.version == metadata["version"],
             StrategyRun.run_type == "backtest",
             StrategyRun.as_of_date.between(start_date, end_date),
-            StrategyRun.feature_calculation_version == FEATURE_VERSION,
+            StrategyRun.feature_calculation_version
+            == metadata["feature_calculation_version"],
             StrategyCandidate.action == "actionable",
         )
         .order_by(
@@ -643,19 +674,27 @@ def run_simulation(
     start_date: date,
     end_date: date,
     parameters: SimulationParameters,
+    strategy_configuration_path: str | None = None,
 ) -> dict[str, Any]:
     if start_date > end_date:
         raise ValueError("Simulation start date must be on or before end date")
     parameters.validate()
-    signals, run_hashes, definition = _load_signals(session, start_date, end_date)
+    strategy_configuration = replay_configuration(strategy_configuration_path)
+    metadata = strategy_configuration["strategy"]
+    signals, run_hashes, definition = _load_signals(
+        session, start_date, end_date, strategy_configuration
+    )
     source_runs_hash = hashlib.sha256(
         json.dumps(run_hashes, separators=(",", ":")).encode()
     ).hexdigest()
     scenario_payload = {
-        "strategy_key": STRATEGY_KEY,
-        "strategy_version": STRATEGY_VERSION,
-        "replay_model": REPLAY_MODEL,
-        "feature_version": FEATURE_VERSION,
+        "strategy_key": metadata["key"],
+        "strategy_version": metadata["version"],
+        "replay_model": metadata["replay_model"],
+        "feature_version": metadata["feature_calculation_version"],
+        "strategy_configuration_fingerprint": strategy_configuration[
+            "configuration_fingerprint"
+        ],
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "source_runs_hash": source_runs_hash,
@@ -689,10 +728,15 @@ def run_simulation(
     benchmark = _benchmark_return(sessions, bars)
     result.summary.update(
         {
-            "strategy_key": STRATEGY_KEY,
-            "strategy_version": STRATEGY_VERSION,
-            "replay_model": REPLAY_MODEL,
-            "feature_calculation_version": FEATURE_VERSION,
+            "strategy_key": metadata["key"],
+            "strategy_version": metadata["version"],
+            "replay_model": metadata["replay_model"],
+            "feature_calculation_version": metadata[
+                "feature_calculation_version"
+            ],
+            "strategy_configuration_fingerprint": strategy_configuration[
+                "configuration_fingerprint"
+            ],
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "market_sessions": len(sessions),
@@ -710,7 +754,7 @@ def run_simulation(
             scenario_key=scenario_key,
             start_date=start_date,
             end_date=end_date,
-            feature_calculation_version=FEATURE_VERSION,
+            feature_calculation_version=metadata["feature_calculation_version"],
             source_runs_hash=source_runs_hash,
             parameters=parameters.payload(),
             status="completed",

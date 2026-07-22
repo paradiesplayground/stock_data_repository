@@ -10,6 +10,10 @@
   daily equity curve under `strategy_tracking`.
 - Add `replay-strategy`, `simulate-strategy`, `list-simulations`, and `get-simulation` CLI commands.
 - Add migration `0005_strategy_backtesting` without changing source or feature tables.
+- Move replay thresholds, scoring bands, risk tiers, trade-plan multiples, and simulation defaults
+  into versioned JSON profiles, with configuration fingerprints stored on every replay.
+- Add `--strategy-config` and `--simulation-config` so scenario changes never rewrite raw or
+  derived market data and do not require Python edits.
 
 ## 0.4.1
 
