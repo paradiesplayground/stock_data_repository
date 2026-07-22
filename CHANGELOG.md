@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.6
+
+- Restore the Moderate `1.1.1`, Expanded `1.1.2`, and Discovery `1.1.3` strategy profiles to the
+  tracked repository so clean Git deployments expose the same scenario bases as prior releases.
+- Preserve the original configuration fingerprints used by historical replay and simulation runs.
+
 ## 0.4.5
 
 - Fix `backfill-features` CLI dispatch after strategy configuration support accidentally made the
