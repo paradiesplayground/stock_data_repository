@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.services.strategy_simulation as strategy_simulation
-from app.services.strategy_config import with_nested_overrides
+from app.services.strategy_config import list_strategy_profiles, with_nested_overrides
 from app.services.strategy_replay import replay_configuration, score_feature
 from app.services.strategy_scenarios import resolve_strategy_scenario
 from app.services.strategy_simulation import (
@@ -175,6 +175,23 @@ def test_scenario_resolves_nested_config_and_simulation_overrides() -> None:
     assert strategy["scoring"]["actionable"]["minimum_total_score"] == 50
     assert simulation["risk_per_trade_pct"] == "2"
     assert simulation["max_open_positions"] == 4
+
+
+def test_bundled_scenario_profiles_preserve_historical_fingerprints() -> None:
+    profiles = {
+        item["profile"]: item["configuration_fingerprint"]
+        for item in list_strategy_profiles()
+    }
+
+    assert profiles["fallen-growth-swing-v1.1.1-moderate.json"] == (
+        "2ce66453b781e565ff160debf8e46c4e0c6c6071b57812d8e9f6aed86f5d3dac"
+    )
+    assert profiles["fallen-growth-swing-v1.1.2-expanded.json"] == (
+        "9bd6d4b6abd8e673bb5feaa95bc5d5699b9c96d194db763df7b2cad47ba294a2"
+    )
+    assert profiles["fallen-growth-swing-v1.1.3-discovery.json"] == (
+        "d80b657a1b6319b7754804da8357bb1de22c11a874a27519846779d00396d057"
+    )
 
 
 def test_scenario_overrides_reject_unknown_settings() -> None:
