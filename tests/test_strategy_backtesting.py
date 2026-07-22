@@ -345,6 +345,74 @@ def test_market_regime_uses_previous_close_without_lookahead() -> None:
     assert summary["decision_basis"] == "previous_session_close"
 
 
+def test_market_regime_requires_all_configured_benchmarks() -> None:
+    sessions = [
+        date(2026, 1, 20),
+        date(2026, 1, 21),
+        date(2026, 1, 22),
+        date(2026, 1, 23),
+    ]
+    bars = {}
+    for market_date, qqq_close, spy_close in zip(
+        sessions,
+        ("100", "90", "120", "121"),
+        ("100", "110", "90", "91"),
+    ):
+        bars[market_date] = {
+            ticker: Bar(
+                market_date=market_date,
+                ticker=ticker,
+                open=D(close),
+                high=D(close),
+                low=D(close),
+                close=D(close),
+            )
+            for ticker, close in (("QQQ", qqq_close), ("SPY", spy_close))
+        }
+    configuration = {
+        "market_regime": {
+            "enabled": True,
+            "benchmark_ticker": "QQQ",
+            "additional_benchmark_tickers": ["SPY"],
+            "benchmark_combination": "all",
+            "moving_average_sessions": 2,
+            "require_close_above_moving_average": True,
+            "require_moving_average_rising": False,
+        }
+    }
+
+    permissions, summary = _market_regime_permissions(
+        sessions, bars, configuration
+    )
+
+    assert permissions[sessions[2]] is False
+    assert permissions[sessions[3]] is False
+    assert summary["benchmark_tickers"] == ["QQQ", "SPY"]
+    assert summary["benchmark_combination"] == "all"
+
+
+def test_scenario_accepts_optional_multiple_market_benchmarks() -> None:
+    resolved = resolve_strategy_scenario(
+        "fallen-growth-swing-v1.1.1-moderate.json",
+        "1.1.7",
+        {
+            "market_regime": {
+                "enabled": True,
+                "benchmark_ticker": "QQQ",
+                "additional_benchmark_tickers": ["SPY"],
+                "benchmark_combination": "all",
+                "moving_average_sessions": 50,
+                "require_close_above_moving_average": True,
+                "require_moving_average_rising": False,
+            }
+        },
+    )
+
+    regime = resolved["strategy_configuration"]["market_regime"]
+    assert regime["additional_benchmark_tickers"] == ["SPY"]
+    assert regime["benchmark_combination"] == "all"
+
+
 def test_simulation_parameters_load_profile_with_cli_style_override(tmp_path) -> None:
     profile = {
         "schema_version": 1,
