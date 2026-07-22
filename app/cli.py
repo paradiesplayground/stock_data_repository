@@ -118,7 +118,6 @@ def main() -> None:
                 args.start,
                 args.end,
                 resume=args.resume,
-                configuration_path=args.strategy_config,
             )
         elif args.command == "replay-strategy":
             result = replay_strategy_range(

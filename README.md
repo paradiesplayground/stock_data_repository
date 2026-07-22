@@ -500,9 +500,9 @@ configuration and fingerprints, then call `run_strategy_scenario` with the same 
 `strategy_version` whenever strategy rules change. Portfolio-only changes may reuse the strategy
 version because they are independently fingerprinted in the simulation scenario.
 
-Upgrading from v0.4.3 to v0.4.4 requires no migration or data reload. Rebuild the API, worker, and
-MCP image so the new scenario tools are discovered. Existing raw, derived, replay, and simulation
-records are preserved.
+Upgrading from v0.4.4 to v0.4.5 requires no migration or data reload. Rebuild the worker image to
+pick up the corrected `backfill-features` CLI dispatch. Existing raw, derived, replay, and
+simulation records are preserved.
 
 ## Development and tests
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.5
+
+- Fix `backfill-features` CLI dispatch after strategy configuration support accidentally made the
+  command access an argument defined only for replay and simulation commands.
+- Add regression coverage proving resumable feature backfills remain strategy-neutral.
+
 ## 0.4.4
 
 - Add MCP tools to list and inspect strategy profiles, preview configuration-only overrides,
