@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+STRATEGY_CONFIG_ROOT = PROJECT_ROOT / "config" / "strategies"
 DEFAULT_STRATEGY_CONFIG = (
-    PROJECT_ROOT / "config" / "strategies" / "fallen-growth-swing-v1.1.0.json"
+    STRATEGY_CONFIG_ROOT / "fallen-growth-swing-v1.1.0.json"
 )
 DEFAULT_SIMULATION_CONFIG = PROJECT_ROOT / "config" / "simulations" / "default.json"
 
@@ -29,10 +30,41 @@ def configuration_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+def list_strategy_profiles() -> list[dict[str, Any]]:
+    profiles = []
+    for path in sorted(STRATEGY_CONFIG_ROOT.glob("*.json")):
+        configuration = load_strategy_configuration(path)
+        profiles.append(
+            {
+                "profile": path.name,
+                "strategy_key": configuration["strategy"]["key"],
+                "strategy_version": configuration["strategy"]["version"],
+                "name": configuration["strategy"]["name"],
+                "configuration_fingerprint": configuration_hash(configuration),
+            }
+        )
+    return profiles
+
+
+def load_strategy_profile(profile: str) -> dict[str, Any]:
+    name = profile if profile.endswith(".json") else f"{profile}.json"
+    if Path(name).name != name:
+        raise ValueError("strategy profile must be a bundled profile name")
+    path = STRATEGY_CONFIG_ROOT / name
+    return load_strategy_configuration(path)
+
+
 def load_strategy_configuration(
     path: str | Path | None = None,
 ) -> dict[str, Any]:
     configuration = _load_json(path or DEFAULT_STRATEGY_CONFIG, "strategy configuration")
+    return validate_strategy_configuration(configuration)
+
+
+def validate_strategy_configuration(
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    configuration = copy.deepcopy(configuration)
     required_sections = {
         "strategy",
         "universe",
@@ -59,6 +91,13 @@ def load_simulation_configuration(
     configuration = _load_json(
         path or DEFAULT_SIMULATION_CONFIG, "simulation configuration"
     )
+    return validate_simulation_configuration(configuration)
+
+
+def validate_simulation_configuration(
+    configuration: dict[str, Any],
+) -> dict[str, Any]:
+    configuration = copy.deepcopy(configuration)
     required = {
         "starting_capital",
         "risk_per_trade_pct",
@@ -73,6 +112,28 @@ def load_simulation_configuration(
     if missing:
         raise ValueError(f"simulation configuration is missing: {', '.join(missing)}")
     return configuration
+
+
+def with_nested_overrides(
+    configuration: dict[str, Any], overrides: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply only known configuration keys, rejecting typo-created settings."""
+    result = copy.deepcopy(configuration)
+
+    def merge(target: dict[str, Any], changes: dict[str, Any], prefix: str) -> None:
+        for key, value in changes.items():
+            path = f"{prefix}.{key}" if prefix else key
+            if key not in target:
+                raise ValueError(f"unknown configuration setting: {path}")
+            if isinstance(value, dict):
+                if not isinstance(target[key], dict):
+                    raise ValueError(f"configuration setting is not an object: {path}")
+                merge(target[key], value, path)
+            else:
+                target[key] = value
+
+    merge(result, overrides, "")
+    return result
 
 
 def with_overrides(

@@ -22,6 +22,7 @@ from app.models import (
 from app.services.strategy_replay import replay_configuration
 from app.services.strategy_config import (
     load_simulation_configuration,
+    validate_simulation_configuration,
     with_overrides,
 )
 
@@ -58,6 +59,27 @@ class SimulationParameters:
         **overrides: Any,
     ) -> "SimulationParameters":
         values = with_overrides(load_simulation_configuration(path), overrides)
+        return cls(
+            starting_capital=Decimal(str(values["starting_capital"])),
+            risk_per_trade_pct=Decimal(str(values["risk_per_trade_pct"])),
+            max_total_risk_pct=Decimal(str(values["max_total_risk_pct"])),
+            max_open_positions=int(values["max_open_positions"]),
+            slippage_pct=Decimal(str(values["slippage_pct"])),
+            order_lifetime_sessions=int(values["order_lifetime_sessions"]),
+            max_holding_sessions=int(values["max_holding_sessions"]),
+            scenario_name=str(values.get("scenario_name", "unnamed")),
+            execution_rules=dict(values["execution_rules"]),
+        )
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: dict[str, Any],
+        **overrides: Any,
+    ) -> "SimulationParameters":
+        values = with_overrides(
+            validate_simulation_configuration(payload), overrides
+        )
         return cls(
             starting_capital=Decimal(str(values["starting_capital"])),
             risk_per_trade_pct=Decimal(str(values["risk_per_trade_pct"])),
@@ -675,11 +697,18 @@ def run_simulation(
     end_date: date,
     parameters: SimulationParameters,
     strategy_configuration_path: str | None = None,
+    strategy_configuration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if start_date > end_date:
         raise ValueError("Simulation start date must be on or before end date")
     parameters.validate()
-    strategy_configuration = replay_configuration(strategy_configuration_path)
+    strategy_configuration = (
+        replay_configuration(strategy_configuration_path)
+        if strategy_configuration is None
+        else replay_configuration(
+            strategy_configuration_path, strategy_configuration
+        )
+    )
     metadata = strategy_configuration["strategy"]
     signals, run_hashes, definition = _load_signals(
         session, start_date, end_date, strategy_configuration

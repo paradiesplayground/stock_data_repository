@@ -250,6 +250,8 @@ list_strategy_runs
 get_strategy_run
 list_strategy_simulations
 get_strategy_simulation
+list_strategy_profiles
+get_strategy_profile
 ```
 
 Set `MCP_ENABLE_STRATEGY_WRITES=true` to additionally expose:
@@ -257,12 +259,20 @@ Set `MCP_ENABLE_STRATEGY_WRITES=true` to additionally expose:
 ```text
 record_strategy_run
 record_strategy_outcomes
+preview_strategy_scenario
+run_strategy_scenario
 ```
 
 The write tools are disabled by default. They can append complete, versioned strategy runs and
 later outcome observations to the isolated `strategy_tracking` schema. They cannot update source
 facts, prices, filings, reference data, or derived fields. After changing this setting, recreate
 the MCP container and refresh the ChatGPT app's tool discovery.
+
+`run_strategy_scenario` accepts a bundled base profile, a new immutable strategy version, nested
+strategy overrides, nested portfolio overrides, and a date range. It validates the resolved
+configuration, replays the strategy, runs the portfolio simulation, and returns both summaries in
+one call. Unknown override keys are rejected. No JSON file needs to be created or copied into a
+container.
 
 `query_security_features` applies caller-provided thresholds and sorting to deterministic fields.
 Its preferred `exclude_industry_groups` argument accepts readable labels or stable keys returned by
@@ -484,6 +494,15 @@ portfolio scenario. `--starting-capital`, `--risk-per-trade-pct`, `--max-total-r
 `--max-open-positions`, `--slippage-pct`, `--order-lifetime-sessions`, and
 `--max-holding-sessions` are scenario variables. Market-cap risk multipliers from the strategy
 rubric still reduce the requested per-trade risk for smaller companies.
+
+From an MCP-enabled skill, call `preview_strategy_scenario` to inspect the exact resolved
+configuration and fingerprints, then call `run_strategy_scenario` with the same inputs. Use a new
+`strategy_version` whenever strategy rules change. Portfolio-only changes may reuse the strategy
+version because they are independently fingerprinted in the simulation scenario.
+
+Upgrading from v0.4.3 to v0.4.4 requires no migration or data reload. Rebuild the API, worker, and
+MCP image so the new scenario tools are discovered. Existing raw, derived, replay, and simulation
+records are preserved.
 
 ## Development and tests
 

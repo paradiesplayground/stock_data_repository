@@ -12,6 +12,7 @@ from app.models import DailyPriceBar, SecurityDailyFeature, StrategyRun
 from app.services.strategy_config import (
     configuration_hash,
     load_strategy_configuration,
+    validate_strategy_configuration,
 )
 from app.services.strategy_tracking import record_strategy_run
 
@@ -22,8 +23,17 @@ FEATURE_VERSION = _DEFAULT_CONFIGURATION["strategy"]["feature_calculation_versio
 REPLAY_MODEL = _DEFAULT_CONFIGURATION["strategy"]["replay_model"]
 
 
-def replay_configuration(path: str | None = None) -> dict[str, Any]:
-    configuration = load_strategy_configuration(path)
+def replay_configuration(
+    path: str | None = None,
+    configuration: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if path is not None and configuration is not None:
+        raise ValueError("provide a strategy configuration path or payload, not both")
+    configuration = (
+        validate_strategy_configuration(configuration)
+        if configuration is not None
+        else load_strategy_configuration(path)
+    )
     requested_groups = configuration["universe"]["exclude_industry_groups"]
     resolved, prefixes = resolve_industry_groups(requested_groups)
     configuration["universe"]["exclude_industry_groups"] = [
@@ -498,10 +508,11 @@ def replay_strategy_range(
     *,
     resume: bool = False,
     configuration_path: str | None = None,
+    configuration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if start_date > end_date:
         raise ValueError("Replay start date must be on or before end date")
-    configuration = replay_configuration(configuration_path)
+    configuration = replay_configuration(configuration_path, configuration)
     metadata = configuration["strategy"]
     strategy_key = metadata["key"]
     strategy_version = metadata["version"]

@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -28,6 +29,14 @@ from app.services.strategy_simulation import (
     get_simulation as query_strategy_simulation,
     list_simulations as query_strategy_simulations,
 )
+from app.services.strategy_config import (
+    list_strategy_profiles as query_strategy_profiles,
+    load_strategy_profile,
+)
+from app.services.strategy_scenarios import (
+    resolve_strategy_scenario,
+    run_strategy_scenario as execute_strategy_scenario,
+)
 
 settings = get_settings()
 mcp = FastMCP(
@@ -36,8 +45,9 @@ mcp = FastMCP(
         "Authoritative Massive market data and SEC EDGAR source facts remain read-only. "
         "It also exposes versioned deterministic features and neutral user-supplied filtering. "
         "Optional append-oriented tools may store versioned downstream strategy observations. "
-        "Read-only tools expose separately generated mechanical replay simulations; MCP does not "
-        "execute simulations or place trades. "
+        "Scenario tools may execute versioned mechanical replays and simulations only when "
+        "strategy writes are enabled; they never alter market, SEC, or feature data and never "
+        "place trades. "
         "Treat missing or stale data as unverified and preserve source provenance."
     ),
     host=settings.mcp_host,
@@ -246,7 +256,63 @@ def get_strategy_simulation(
         )
 
 
+@mcp.tool()
+def list_strategy_profiles() -> dict[str, Any]:
+    """List bundled versioned strategy configuration profiles available as scenario bases."""
+    profiles = query_strategy_profiles()
+    return {"count": len(profiles), "items": profiles}
+
+
+@mcp.tool()
+def get_strategy_profile(profile: str) -> dict[str, Any]:
+    """Return one bundled strategy profile so callers can inspect every configurable rule."""
+    return {"profile": profile, "configuration": load_strategy_profile(profile)}
+
+
 if settings.mcp_enable_strategy_writes:
+
+    @mcp.tool()
+    def preview_strategy_scenario(
+        base_profile: str,
+        strategy_version: str,
+        strategy_overrides: dict[str, Any] | None = None,
+        simulation_overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Validate and resolve a config-only scenario without running or storing it."""
+        return resolve_strategy_scenario(
+            base_profile,
+            strategy_version,
+            strategy_overrides,
+            simulation_overrides,
+        )
+
+    @mcp.tool()
+    def run_strategy_scenario(
+        start_date: str,
+        end_date: str,
+        base_profile: str,
+        strategy_version: str,
+        strategy_overrides: dict[str, Any] | None = None,
+        simulation_overrides: dict[str, Any] | None = None,
+        resume: bool = True,
+    ) -> dict[str, Any]:
+        """Run replay plus simulation from config overrides without changing source data."""
+        try:
+            start = date.fromisoformat(start_date)
+            end = date.fromisoformat(end_date)
+        except ValueError as error:
+            raise ValueError("start_date and end_date must be YYYY-MM-DD") from error
+        with SessionLocal() as session:
+            return execute_strategy_scenario(
+                session,
+                start,
+                end,
+                base_profile,
+                strategy_version,
+                strategy_overrides,
+                simulation_overrides,
+                resume=resume,
+            )
 
     @mcp.tool()
     def record_strategy_run(

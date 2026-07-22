@@ -6,7 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 import app.services.strategy_simulation as strategy_simulation
+from app.services.strategy_config import with_nested_overrides
 from app.services.strategy_replay import replay_configuration, score_feature
+from app.services.strategy_scenarios import resolve_strategy_scenario
 from app.services.strategy_simulation import (
     Bar,
     EquityPoint,
@@ -150,6 +152,37 @@ def test_strategy_threshold_changes_are_loaded_from_config(tmp_path) -> None:
 
     assert candidate["score"] == 74
     assert candidate["action"] == "keep-watching"
+
+
+def test_scenario_resolves_nested_config_and_simulation_overrides() -> None:
+    resolved = resolve_strategy_scenario(
+        "fallen-growth-swing-v1.1.0.json",
+        "1.1.2",
+        {
+            "hard_thresholds": {
+                "minimum_ttm_revenue_growth_pct": "20",
+                "maximum_price_change_12w_pct": "-10",
+            },
+            "scoring": {"actionable": {"minimum_total_score": 50}},
+        },
+        {"risk_per_trade_pct": "2", "max_open_positions": 4},
+    )
+
+    strategy = resolved["strategy_configuration"]
+    simulation = resolved["simulation_configuration"]
+    assert strategy["strategy"]["version"] == "1.1.2"
+    assert strategy["hard_thresholds"]["minimum_ttm_revenue_growth_pct"] == "20"
+    assert strategy["scoring"]["actionable"]["minimum_total_score"] == 50
+    assert simulation["risk_per_trade_pct"] == "2"
+    assert simulation["max_open_positions"] == 4
+
+
+def test_scenario_overrides_reject_unknown_settings() -> None:
+    with pytest.raises(ValueError, match="hard_thresholds.typo_threshold"):
+        with_nested_overrides(
+            replay_configuration(),
+            {"hard_thresholds": {"typo_threshold": "20"}},
+        )
 
 
 def test_variable_account_and_risk_change_position_size() -> None:

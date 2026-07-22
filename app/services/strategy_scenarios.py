@@ -1,0 +1,96 @@
+from datetime import date
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.services.strategy_config import (
+    configuration_hash,
+    load_simulation_configuration,
+    load_strategy_profile,
+    validate_simulation_configuration,
+    validate_strategy_configuration,
+    with_nested_overrides,
+)
+from app.services.strategy_replay import replay_configuration, replay_strategy_range
+from app.services.strategy_simulation import SimulationParameters, run_simulation
+
+
+def resolve_strategy_scenario(
+    base_profile: str,
+    strategy_version: str,
+    strategy_overrides: dict[str, Any] | None = None,
+    simulation_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not strategy_version.strip():
+        raise ValueError("strategy_version is required")
+    strategy = with_nested_overrides(
+        load_strategy_profile(base_profile), strategy_overrides or {}
+    )
+    strategy["strategy"]["version"] = strategy_version.strip()
+    strategy = validate_strategy_configuration(strategy)
+    resolved_strategy = replay_configuration(configuration=strategy)
+
+    simulation = with_nested_overrides(
+        load_simulation_configuration(), simulation_overrides or {}
+    )
+    simulation = validate_simulation_configuration(simulation)
+    return {
+        "base_profile": base_profile,
+        "strategy_configuration": resolved_strategy,
+        "strategy_configuration_fingerprint": resolved_strategy[
+            "configuration_fingerprint"
+        ],
+        "simulation_configuration": simulation,
+        "simulation_configuration_fingerprint": configuration_hash(simulation),
+    }
+
+
+def run_strategy_scenario(
+    session: Session,
+    start_date: date,
+    end_date: date,
+    base_profile: str,
+    strategy_version: str,
+    strategy_overrides: dict[str, Any] | None = None,
+    simulation_overrides: dict[str, Any] | None = None,
+    *,
+    resume: bool = True,
+) -> dict[str, Any]:
+    resolved = resolve_strategy_scenario(
+        base_profile,
+        strategy_version,
+        strategy_overrides,
+        simulation_overrides,
+    )
+    strategy = resolved["strategy_configuration"]
+    # replay_strategy_range resolves the payload and adds its fingerprint itself.
+    replay_payload = {
+        key: value for key, value in strategy.items() if key != "configuration_fingerprint"
+    }
+    replay = replay_strategy_range(
+        session,
+        start_date,
+        end_date,
+        resume=resume,
+        configuration=replay_payload,
+    )
+    parameters = SimulationParameters.from_payload(
+        resolved["simulation_configuration"]
+    )
+    simulation = run_simulation(
+        session,
+        start_date,
+        end_date,
+        parameters,
+        strategy_configuration=replay_payload,
+    )
+    compact_replay = {
+        key: value
+        for key, value in replay.items()
+        if key not in {"completed_dates", "skipped_dates"}
+    }
+    return {
+        "configuration": resolved,
+        "replay": compact_replay,
+        "simulation": simulation,
+    }

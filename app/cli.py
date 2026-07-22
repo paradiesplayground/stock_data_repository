@@ -126,6 +126,7 @@ def main() -> None:
                 args.start,
                 args.end,
                 resume=args.resume,
+                configuration_path=args.strategy_config,
             )
         elif args.command == "simulate-strategy":
             result = run_simulation(
