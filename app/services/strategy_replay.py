@@ -250,16 +250,22 @@ def score_feature(
     require_relative_strength = actionable_rules.get(
         "require_positive_relative_return_20d_vs_qqq", False
     )
+    require_constructive_volume = actionable_rules.get(
+        "require_constructive_volume", False
+    )
     relative_strength_passes = (
         feature.relative_return_20d_vs_qqq_pct is not None
         and feature.relative_return_20d_vs_qqq_pct > 0
     )
     if require_relative_strength and not relative_strength_passes:
         warnings.append("relative_return_20d_vs_qqq_not_positive")
+    if require_constructive_volume and not constructive_volume:
+        warnings.append("constructive_volume_below_configured_minimum")
     actionable = (
         not incomplete
         and not rejected
         and (not require_relative_strength or relative_strength_passes)
+        and (not require_constructive_volume or constructive_volume)
         and score >= int(actionable_rules["minimum_total_score"])
         and technical_points >= int(actionable_rules["minimum_technical_points"])
         and (
