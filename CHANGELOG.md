@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3
+
+- Fix simulation persistence so the parent run is inserted before its trade
+  and equity rows, preventing PostgreSQL foreign-key failures.
+
 ## 0.4.2
 
 - Add a point-in-time mechanical replay for `fallen-growth-swing:1.1.0` over feature version

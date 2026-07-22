@@ -761,6 +761,10 @@ def run_simulation(
             summary=result.summary,
         )
     )
+    # The child models refer to the parent by scalar simulation_id rather than
+    # ORM relationships, so SQLAlchemy cannot infer the required INSERT order.
+    # Persist the parent within this transaction before adding dependent rows.
+    session.flush()
     for trade in result.trades:
         session.add(
             StrategySimulationTrade(

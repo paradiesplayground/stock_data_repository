@@ -5,11 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 
+import app.services.strategy_simulation as strategy_simulation
 from app.services.strategy_replay import replay_configuration, score_feature
 from app.services.strategy_simulation import (
     Bar,
+    EquityPoint,
     Signal,
     SimulationParameters,
+    SimulationResult,
+    run_simulation,
     simulate_signals,
 )
 
@@ -267,3 +271,70 @@ def test_invalid_risk_configuration_is_rejected() -> None:
         SimulationParameters(
             risk_per_trade_pct=D("3"), max_total_risk_pct=D("2")
         ).validate()
+
+
+def test_simulation_parent_is_flushed_before_dependent_rows(monkeypatch) -> None:
+    events = []
+
+    class RecordingSession:
+        def scalar(self, _statement):
+            return None
+
+        def add(self, row):
+            events.append(("add", type(row).__name__))
+
+        def flush(self):
+            events.append(("flush", None))
+
+        def commit(self):
+            events.append(("commit", None))
+
+    market_date = date(2026, 1, 20)
+    configuration = replay_configuration()
+    monkeypatch.setattr(
+        strategy_simulation,
+        "replay_configuration",
+        lambda _path=None: configuration,
+    )
+    monkeypatch.setattr(
+        strategy_simulation,
+        "_load_signals",
+        lambda *_args: ([], [], SimpleNamespace(id=1)),
+    )
+    monkeypatch.setattr(
+        strategy_simulation,
+        "_load_bars",
+        lambda *_args: ([market_date], {}),
+    )
+    monkeypatch.setattr(
+        strategy_simulation,
+        "simulate_signals",
+        lambda *_args: SimulationResult(
+            trades=[],
+            equity_points=[
+                EquityPoint(
+                    market_date=market_date,
+                    cash=D("10000"),
+                    equity=D("10000"),
+                    drawdown_pct=D("0"),
+                    open_positions=0,
+                    planned_open_risk=D("0"),
+                )
+            ],
+            summary={},
+        ),
+    )
+
+    run_simulation(
+        RecordingSession(),
+        market_date,
+        market_date,
+        SimulationParameters(),
+    )
+
+    assert events == [
+        ("add", "StrategySimulationRun"),
+        ("flush", None),
+        ("add", "StrategySimulationEquityPoint"),
+        ("commit", None),
+    ]

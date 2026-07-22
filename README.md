@@ -386,6 +386,10 @@ under `strategy_tracking`; source prices, SEC facts, and v1.3 feature snapshots 
 parameter, so repeating the same scenario is idempotent while changing capital or risk creates a
 separate result.
 
+Upgrading from v0.4.2 to v0.4.3 requires no migration or data reload. Rebuild the worker image to
+apply the simulation persistence-ordering fix, then rerun any simulation that previously failed;
+the failed transaction was rolled back and requires no cleanup.
+
 All replay thresholds, scoring bands, risk tiers, entry/stop/target multiples, and constructive-
 volume rules live in `config/strategies/*.json`. Portfolio capital, risk, slippage, order lifetime,
 position limits, and holding period live in `config/simulations/*.json`. Python implements the
