@@ -413,6 +413,66 @@ def test_scenario_accepts_optional_multiple_market_benchmarks() -> None:
     assert regime["benchmark_combination"] == "all"
 
 
+def test_scenario_materializes_optional_relative_strength_requirement() -> None:
+    resolved = resolve_strategy_scenario(
+        "fallen-growth-swing-v1.1.1-moderate.json",
+        "1.1.8",
+        {
+            "scoring": {
+                "actionable": {
+                    "require_positive_relative_return_20d_vs_qqq": True
+                }
+            },
+            "market_regime": {
+                "enabled": True,
+                "benchmark_ticker": "SPY",
+                "moving_average_sessions": 50,
+                "require_close_above_moving_average": True,
+                "require_moving_average_rising": False,
+            },
+        },
+    )
+
+    actionable = resolved["strategy_configuration"]["scoring"]["actionable"]
+    assert actionable["require_positive_relative_return_20d_vs_qqq"] is True
+
+
+def test_relative_strength_requirement_blocks_non_outperformer() -> None:
+    configuration = replay_configuration()
+    configuration["scoring"]["actionable"][
+        "require_positive_relative_return_20d_vs_qqq"
+    ] = True
+
+    candidate = score_feature(
+        _feature(relative_return_20d_vs_qqq_pct=D("-0.01")),
+        constructive_volume=True,
+        excluded_sic_prefixes=["28", "80"],
+        configuration=configuration,
+    )
+
+    assert candidate["stage"] == "qualified"
+    assert candidate["action"] == "keep-watching"
+    assert "relative_return_20d_vs_qqq_not_positive" in candidate["reasons"]
+    assert candidate["metrics"]["relative_return_20d_vs_qqq_pct"] == "-0.01"
+
+
+def test_relative_strength_requirement_allows_outperformer() -> None:
+    configuration = replay_configuration()
+    configuration["scoring"]["actionable"][
+        "require_positive_relative_return_20d_vs_qqq"
+    ] = True
+
+    candidate = score_feature(
+        _feature(relative_return_20d_vs_qqq_pct=D("0.01")),
+        constructive_volume=True,
+        excluded_sic_prefixes=["28", "80"],
+        configuration=configuration,
+    )
+
+    assert candidate["action"] == "actionable"
+    assert candidate["metrics"]["relative_return_20d_vs_qqq_pct"] == "0.01"
+
+
 def test_simulation_parameters_load_profile_with_cli_style_override(tmp_path) -> None:
     profile = {
         "schema_version": 1,

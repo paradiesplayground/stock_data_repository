@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.services.strategy_config import (
     DEFAULT_MARKET_REGIME,
+    OPTIONAL_ACTIONABLE_RULES,
     OPTIONAL_MARKET_REGIME,
     configuration_hash,
     load_simulation_configuration,
@@ -38,6 +39,13 @@ def resolve_strategy_scenario(
         for key, default in OPTIONAL_MARKET_REGIME.items():
             if key in regime_overrides and key not in strategy["market_regime"]:
                 strategy["market_regime"][key] = copy.deepcopy(default)
+    actionable_overrides = strategy_overrides.get("scoring", {}).get(
+        "actionable", {}
+    )
+    actionable = strategy["scoring"]["actionable"]
+    for key, default in OPTIONAL_ACTIONABLE_RULES.items():
+        if key in actionable_overrides and key not in actionable:
+            actionable[key] = copy.deepcopy(default)
     strategy = with_nested_overrides(strategy, strategy_overrides)
     strategy["strategy"]["version"] = strategy_version.strip()
     strategy = validate_strategy_configuration(strategy)

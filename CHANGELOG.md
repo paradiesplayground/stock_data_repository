@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.10
+
+- Add an optional actionable-entry rule requiring a candidate's stored 20-session return to
+  exceed QQQ's return over the same period.
+- Keep existing profiles and scenario fingerprints unchanged unless the rule is explicitly
+  enabled.
+- Include the relative-return value and a readable failure reason in runs that enable the rule.
+
 ## 0.4.9
 
 - Allow a market-regime scenario to evaluate multiple benchmark tickers and require either all or
