@@ -523,6 +523,9 @@ Scenarios may also set
 candidate to have outperformed QQQ over the prior 20 sessions. The stored point-in-time relative
 return remains a scoring input when this optional hard gate is disabled.
 
+Set `scoring.actionable.require_constructive_volume` to require an actionable candidate's
+breakout volume to meet the configured constructive-volume multiplier.
+
 Upgrading from v0.4.4 to v0.4.5 requires no migration or data reload. Rebuild the worker image to
 pick up the corrected `backfill-features` CLI dispatch. Existing raw, derived, replay, and
 simulation records are preserved.
