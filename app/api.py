@@ -28,6 +28,10 @@ from app.services.strategy_tracking import (
     record_strategy_outcomes,
     record_strategy_run,
 )
+from app.services.strategy_simulation import (
+    get_simulation as query_strategy_simulation,
+    list_simulations as query_strategy_simulations,
+)
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_api_token)])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -272,6 +276,32 @@ def get_recorded_strategy_run(run_id: str, session: DbSession) -> dict[str, obje
     result = query_strategy_run(session, run_id)
     if not result.get("found"):
         raise HTTPException(status_code=404, detail="Strategy run not found")
+    return result
+
+
+@router.get("/strategy-simulations")
+def list_strategy_simulations(
+    session: DbSession,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict[str, object]:
+    return query_strategy_simulations(session, limit)
+
+
+@router.get("/strategy-simulations/{simulation_id}")
+def get_strategy_simulation(
+    simulation_id: str,
+    session: DbSession,
+    include_equity: bool = False,
+    trade_limit: Annotated[int, Query(ge=1, le=5000)] = 500,
+) -> dict[str, object]:
+    result = query_strategy_simulation(
+        session,
+        simulation_id,
+        include_equity=include_equity,
+        trade_limit=trade_limit,
+    )
+    if not result.get("found"):
+        raise HTTPException(status_code=404, detail="Strategy simulation not found")
     return result
 
 

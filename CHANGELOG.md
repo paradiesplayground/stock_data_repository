@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.2
+
+- Add a point-in-time mechanical replay for `fallen-growth-swing:1.1.0` over feature version
+  `1.3.0`, with explicit qualitative-data limitations.
+- Add variable-capital and variable-risk portfolio simulations with cash, position-count,
+  aggregate-risk, slippage, order-expiration, partial-target, stop, gap, and time-exit rules.
+- Persist immutable scenario parameters, every signal/fill/rejection, summary metrics, and the
+  daily equity curve under `strategy_tracking`.
+- Add `replay-strategy`, `simulate-strategy`, `list-simulations`, and `get-simulation` CLI commands.
+- Add migration `0005_strategy_backtesting` without changing source or feature tables.
+
 ## 0.4.1
 
 - Add an opt-in inactive-ticker reference reconciliation for survivorship-safe historical work.

@@ -24,6 +24,10 @@ from app.services.strategy_tracking import (
     record_strategy_outcomes as save_strategy_outcomes,
     record_strategy_run as save_strategy_run,
 )
+from app.services.strategy_simulation import (
+    get_simulation as query_strategy_simulation,
+    list_simulations as query_strategy_simulations,
+)
 
 settings = get_settings()
 mcp = FastMCP(
@@ -31,8 +35,9 @@ mcp = FastMCP(
     instructions=(
         "Authoritative Massive market data and SEC EDGAR source facts remain read-only. "
         "It also exposes versioned deterministic features and neutral user-supplied filtering. "
-        "Optional append-oriented tools may store versioned downstream strategy observations, "
-        "but this server does not create scores, ranks, recommendations, sizes, or trades. "
+        "Optional append-oriented tools may store versioned downstream strategy observations. "
+        "Read-only tools expose separately generated mechanical replay simulations; MCP does not "
+        "execute simulations or place trades. "
         "Treat missing or stale data as unverified and preserve source provenance."
     ),
     host=settings.mcp_host,
@@ -216,6 +221,29 @@ def get_strategy_run(run_id: str) -> dict[str, Any]:
     """Return one strategy run with candidates, evidence, and outcome observations."""
     with SessionLocal() as session:
         return query_strategy_run(session, run_id)
+
+
+@mcp.tool()
+def list_strategy_simulations(limit: int = 20) -> dict[str, Any]:
+    """List stored deterministic portfolio simulations and their scenario summaries."""
+    with SessionLocal() as session:
+        return query_strategy_simulations(session, limit)
+
+
+@mcp.tool()
+def get_strategy_simulation(
+    simulation_id: str,
+    include_equity: bool = False,
+    trade_limit: int = 200,
+) -> dict[str, Any]:
+    """Return one simulation's parameters, summary, trade ledger, and optional equity curve."""
+    with SessionLocal() as session:
+        return query_strategy_simulation(
+            session,
+            simulation_id,
+            include_equity=include_equity,
+            trade_limit=trade_limit,
+        )
 
 
 if settings.mcp_enable_strategy_writes:
