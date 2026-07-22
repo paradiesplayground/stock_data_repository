@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.7
+
+- Add a configuration-driven market-regime gate for new entries using a benchmark close versus a
+  configurable moving average, with an optional rising-average requirement.
+- Evaluate entry permission from the prior session close to prevent look-ahead bias while allowing
+  existing positions, stops, targets, and time exits to continue normally.
+- Preserve historical bundled-profile fingerprints by materializing the optional regime section
+  only for scenarios that request it.
+
 ## 0.4.6
 
 - Restore the Moderate `1.1.1`, Expanded `1.1.2`, and Discovery `1.1.3` strategy profiles to the
