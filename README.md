@@ -518,6 +518,11 @@ require that average to be rising. Existing positions continue through their nor
 and time exits while entry permission is off. The prior close is used deliberately so a backtest
 cannot authorize an entry with information from the same session's future close.
 
+Scenarios may also set
+`scoring.actionable.require_positive_relative_return_20d_vs_qqq` to require an actionable
+candidate to have outperformed QQQ over the prior 20 sessions. The stored point-in-time relative
+return remains a scoring input when this optional hard gate is disabled.
+
 Upgrading from v0.4.4 to v0.4.5 requires no migration or data reload. Rebuild the worker image to
 pick up the corrected `backfill-features` CLI dispatch. Existing raw, derived, replay, and
 simulation records are preserved.

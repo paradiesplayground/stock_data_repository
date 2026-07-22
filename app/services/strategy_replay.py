@@ -247,9 +247,19 @@ def score_feature(
 
     rejected = bool(reasons)
     actionable_rules = scoring["actionable"]
+    require_relative_strength = actionable_rules.get(
+        "require_positive_relative_return_20d_vs_qqq", False
+    )
+    relative_strength_passes = (
+        feature.relative_return_20d_vs_qqq_pct is not None
+        and feature.relative_return_20d_vs_qqq_pct > 0
+    )
+    if require_relative_strength and not relative_strength_passes:
+        warnings.append("relative_return_20d_vs_qqq_not_positive")
     actionable = (
         not incomplete
         and not rejected
+        and (not require_relative_strength or relative_strength_passes)
         and score >= int(actionable_rules["minimum_total_score"])
         and technical_points >= int(actionable_rules["minimum_technical_points"])
         and (
@@ -314,27 +324,33 @@ def score_feature(
             action = "keep-watching"
             warnings.append("invalid_trade_plan_risk")
 
+    metrics = {
+        "close": _json_decimal(feature.close),
+        "market_cap": _json_decimal(feature.approximate_market_cap),
+        "ttm_revenue_growth_pct": _json_decimal(feature.revenue_ttm_yoy_pct),
+        "quarter_revenue_growth_pct": _json_decimal(
+            feature.latest_quarter_revenue_yoy_pct
+        ),
+        "price_change_12w_pct": _json_decimal(feature.price_change_12w_pct),
+        "drawdown_52w_pct": _json_decimal(feature.drawdown_52w_pct),
+        "avg_dollar_volume_20d": _json_decimal(feature.avg_dollar_volume_20d),
+        "cash_runway_months": _json_decimal(feature.cash_runway_months),
+        "positive_free_cash_flow": self_funding,
+        "rsi_14": _json_decimal(feature.rsi_14),
+        "relative_volume_20d": _json_decimal(feature.relative_volume_20d),
+    }
+    if "require_positive_relative_return_20d_vs_qqq" in actionable_rules:
+        metrics["relative_return_20d_vs_qqq_pct"] = _json_decimal(
+            feature.relative_return_20d_vs_qqq_pct
+        )
+
     return {
         "ticker": feature.ticker,
         "stage": stage,
         "action": action,
         "score": score,
         "score_components": score_components,
-        "metrics": {
-            "close": _json_decimal(feature.close),
-            "market_cap": _json_decimal(feature.approximate_market_cap),
-            "ttm_revenue_growth_pct": _json_decimal(feature.revenue_ttm_yoy_pct),
-            "quarter_revenue_growth_pct": _json_decimal(
-                feature.latest_quarter_revenue_yoy_pct
-            ),
-            "price_change_12w_pct": _json_decimal(feature.price_change_12w_pct),
-            "drawdown_52w_pct": _json_decimal(feature.drawdown_52w_pct),
-            "avg_dollar_volume_20d": _json_decimal(feature.avg_dollar_volume_20d),
-            "cash_runway_months": _json_decimal(feature.cash_runway_months),
-            "positive_free_cash_flow": self_funding,
-            "rsi_14": _json_decimal(feature.rsi_14),
-            "relative_volume_20d": _json_decimal(feature.relative_volume_20d),
-        },
+        "metrics": metrics,
         "reasons": reasons + warnings,
         "trade_plan": trade_plan,
         "payload": {
