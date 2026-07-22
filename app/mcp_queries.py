@@ -83,6 +83,7 @@ def _feature_item(feature: SecurityDailyFeature, security: Security) -> dict[str
         "as_of_date": _json_value(feature.as_of_date),
         "price_date": _json_value(feature.price_date),
         "close": _json_value(feature.close),
+        "daily_return_pct": _json_value(feature.daily_return_pct),
         "price_change_20d_pct": _json_value(feature.price_change_20d_pct),
         "price_change_12w_pct": _json_value(feature.price_change_12w_pct),
         "drawdown_12w_high_pct": _json_value(feature.drawdown_12w_high_pct),
@@ -297,6 +298,7 @@ def query_security_features(
     sort_columns = {
         "ticker": SecurityDailyFeature.ticker,
         "close": SecurityDailyFeature.close,
+        "daily_return": SecurityDailyFeature.daily_return_pct,
         "market_cap": SecurityDailyFeature.approximate_market_cap,
         "ttm_revenue_growth": SecurityDailyFeature.revenue_ttm_yoy_pct,
         "quarter_revenue_growth": SecurityDailyFeature.latest_quarter_revenue_yoy_pct,

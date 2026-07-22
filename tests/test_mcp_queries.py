@@ -59,12 +59,14 @@ def test_feature_query_builds_neutral_filtered_statement() -> None:
         exclude_healthcare=True,
         exclude_sic_prefixes=["13", "602"],
         exclude_industry_groups=["Healthcare"],
+        sort_by="daily_return",
     )
 
     assert result["as_of_date"] == "2026-07-17"
     assert result["count"] == 0
     sql = str(session.statement)
     assert "security_daily_features.close" in sql
+    assert "security_daily_features.daily_return_pct" in sql
     assert "security_daily_features.price_date" in sql
     assert "security_daily_features.revenue_ttm_yoy_pct" in sql
     assert "security_daily_features.reference_sic_code" in sql

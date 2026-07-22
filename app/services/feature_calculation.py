@@ -22,7 +22,7 @@ from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
 
-CALCULATION_VERSION = "1.3.0"
+CALCULATION_VERSION = "1.4.0"
 HUNDRED = Decimal("100")
 
 REFERENCE_FIELDS = (
@@ -245,6 +245,7 @@ def _price_metrics(
         {
             "price_date": latest.trade_date,
             "close": latest.close,
+            "daily_return_pct": _percent_change(latest.close, previous_close),
             "price_change_20d_pct": change_20d,
             "price_change_12w_pct": change_12w,
             "drawdown_12w_high_pct": drawdown_12w_high,

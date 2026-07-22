@@ -155,6 +155,7 @@ class SecurityDailyFeature(Base):
     reference_sic_code: Mapped[str | None] = mapped_column(String(8))
     reference_sic_description: Mapped[str | None] = mapped_column(String(255))
     close: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    daily_return_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
     price_change_20d_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
     price_change_12w_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
     drawdown_12w_high_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
