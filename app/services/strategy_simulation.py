@@ -652,8 +652,9 @@ def _load_bars(
     start_date: date,
     end_date: date,
     tickers: set[str],
-    benchmark_ticker: str = "QQQ",
+    benchmark_tickers: set[str] | None = None,
 ) -> tuple[list[date], dict[date, dict[str, Bar]]]:
+    benchmark_tickers = benchmark_tickers or {"QQQ"}
     sessions = session.scalars(
         select(DailyPriceBar.trade_date)
         .where(
@@ -666,21 +667,22 @@ def _load_bars(
     rows = session.scalars(
         select(DailyPriceBar)
         .where(
-            DailyPriceBar.ticker.in_(tickers | {"QQQ", benchmark_ticker}),
+            DailyPriceBar.ticker.in_(tickers | {"QQQ"} | benchmark_tickers),
             DailyPriceBar.trade_date.between(start_date, end_date),
         )
         .order_by(DailyPriceBar.trade_date, DailyPriceBar.ticker)
     ).all()
-    benchmark_history = session.scalars(
-        select(DailyPriceBar)
-        .where(
-            DailyPriceBar.ticker == benchmark_ticker,
-            DailyPriceBar.trade_date < start_date,
-        )
-        .order_by(DailyPriceBar.trade_date.desc())
-        .limit(260)
-    ).all()
-    rows.extend(reversed(benchmark_history))
+    for benchmark_ticker in benchmark_tickers:
+        benchmark_history = session.scalars(
+            select(DailyPriceBar)
+            .where(
+                DailyPriceBar.ticker == benchmark_ticker,
+                DailyPriceBar.trade_date < start_date,
+            )
+            .order_by(DailyPriceBar.trade_date.desc())
+            .limit(260)
+        ).all()
+        rows.extend(reversed(benchmark_history))
     bars: dict[date, dict[str, Bar]] = {}
     for row in rows:
         bars.setdefault(row.trade_date, {})[row.ticker] = Bar(
@@ -703,41 +705,66 @@ def _market_regime_permissions(
     if not regime or not regime["enabled"]:
         return None, {"enabled": False}
 
-    benchmark = str(regime["benchmark_ticker"]).upper()
-    window = int(regime["moving_average_sessions"])
-    benchmark_dates = sorted(
-        market_date
-        for market_date, daily_bars in bars.items()
-        if benchmark in daily_bars
+    benchmarks = [str(regime["benchmark_ticker"]).upper()]
+    benchmarks.extend(
+        str(ticker).upper()
+        for ticker in regime.get("additional_benchmark_tickers", [])
     )
-    closes = [bars[market_date][benchmark].close for market_date in benchmark_dates]
+    benchmarks = list(dict.fromkeys(benchmarks))
+    combination = regime.get("benchmark_combination", "all")
+    window = int(regime["moving_average_sessions"])
+    histories = {}
+    for benchmark in benchmarks:
+        benchmark_dates = sorted(
+            market_date
+            for market_date, daily_bars in bars.items()
+            if benchmark in daily_bars
+        )
+        histories[benchmark] = (
+            benchmark_dates,
+            [bars[market_date][benchmark].close for market_date in benchmark_dates],
+        )
     permissions: dict[date, bool] = {}
     insufficient = 0
     for entry_date in sessions:
         # Orders fill during the current session, so only information available
         # at the previous close may authorize a new entry.
-        prior_index = bisect_left(benchmark_dates, entry_date) - 1
-        if prior_index + 1 < window:
-            permissions[entry_date] = False
+        benchmark_permissions = []
+        session_has_insufficient_history = False
+        for benchmark in benchmarks:
+            benchmark_dates, closes = histories[benchmark]
+            prior_index = bisect_left(benchmark_dates, entry_date) - 1
+            if prior_index + 1 < window:
+                benchmark_permissions.append(False)
+                session_has_insufficient_history = True
+                continue
+            current_window = closes[prior_index - window + 1 : prior_index + 1]
+            current_average = sum(current_window, ZERO) / window
+            allowed = True
+            if regime["require_close_above_moving_average"]:
+                allowed = closes[prior_index] > current_average
+            if regime["require_moving_average_rising"]:
+                if prior_index < window:
+                    allowed = False
+                    session_has_insufficient_history = True
+                else:
+                    previous_window = closes[prior_index - window : prior_index]
+                    previous_average = sum(previous_window, ZERO) / window
+                    allowed = allowed and current_average > previous_average
+            benchmark_permissions.append(allowed)
+        if session_has_insufficient_history:
             insufficient += 1
-            continue
-        current_window = closes[prior_index - window + 1 : prior_index + 1]
-        current_average = sum(current_window, ZERO) / window
-        allowed = True
-        if regime["require_close_above_moving_average"]:
-            allowed = closes[prior_index] > current_average
-        if regime["require_moving_average_rising"]:
-            if prior_index < window:
-                allowed = False
-            else:
-                previous_window = closes[prior_index - window : prior_index]
-                previous_average = sum(previous_window, ZERO) / window
-                allowed = allowed and current_average > previous_average
-        permissions[entry_date] = allowed
+        permissions[entry_date] = (
+            all(benchmark_permissions)
+            if combination == "all"
+            else any(benchmark_permissions)
+        )
 
     return permissions, {
         **regime,
-        "benchmark_ticker": benchmark,
+        "benchmark_ticker": benchmarks[0],
+        "benchmark_tickers": benchmarks,
+        "benchmark_combination": combination,
         "decision_basis": "previous_session_close",
         "entry_sessions_allowed": sum(permissions.values()),
         "entry_sessions_blocked": sum(not item for item in permissions.values()),
@@ -824,13 +851,19 @@ def run_simulation(
         }
 
     regime = strategy_configuration.get("market_regime") or {}
-    benchmark_ticker = str(regime.get("benchmark_ticker", "QQQ")).upper()
+    benchmark_tickers = {
+        str(regime.get("benchmark_ticker", "QQQ")).upper(),
+        *(
+            str(ticker).upper()
+            for ticker in regime.get("additional_benchmark_tickers", [])
+        ),
+    }
     sessions, bars = _load_bars(
         session,
         start_date,
         end_date,
         {signal.ticker for signal in signals},
-        benchmark_ticker,
+        benchmark_tickers,
     )
     entry_permissions, regime_summary = _market_regime_permissions(
         sessions, bars, strategy_configuration

@@ -1,3 +1,4 @@
+import copy
 from datetime import date
 from typing import Any
 
@@ -5,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.services.strategy_config import (
     DEFAULT_MARKET_REGIME,
+    OPTIONAL_MARKET_REGIME,
     configuration_hash,
     load_simulation_configuration,
     load_strategy_profile,
@@ -31,6 +33,11 @@ def resolve_strategy_scenario(
     # the immutable fingerprints of those profiles remain unchanged.
     if "market_regime" in strategy_overrides and "market_regime" not in strategy:
         strategy["market_regime"] = dict(DEFAULT_MARKET_REGIME)
+    regime_overrides = strategy_overrides.get("market_regime", {})
+    if "market_regime" in strategy:
+        for key, default in OPTIONAL_MARKET_REGIME.items():
+            if key in regime_overrides and key not in strategy["market_regime"]:
+                strategy["market_regime"][key] = copy.deepcopy(default)
     strategy = with_nested_overrides(strategy, strategy_overrides)
     strategy["strategy"]["version"] = strategy_version.strip()
     strategy = validate_strategy_configuration(strategy)

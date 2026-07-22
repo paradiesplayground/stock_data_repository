@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.9
+
+- Allow a market-regime scenario to evaluate multiple benchmark tickers and require either all or
+  any of them to pass the configured moving-average conditions.
+- Keep single-benchmark scenarios backward-compatible and preserve their historical strategy
+  configuration fingerprints.
+- Continue evaluating every benchmark from the prior session close to prevent look-ahead bias.
+
 ## 0.4.8
 
 - Add stored `daily_return_pct` to versioned derived features using the prior trading-session close.

@@ -17,6 +17,10 @@ DEFAULT_MARKET_REGIME = {
     "require_close_above_moving_average": True,
     "require_moving_average_rising": False,
 }
+OPTIONAL_MARKET_REGIME = {
+    "additional_benchmark_tickers": [],
+    "benchmark_combination": "all",
+}
 
 
 def _load_json(path: str | Path, label: str) -> dict[str, Any]:
@@ -98,6 +102,21 @@ def validate_strategy_configuration(
             )
         if not str(market_regime["benchmark_ticker"]).strip():
             raise ValueError("market_regime.benchmark_ticker is required")
+        additional_benchmarks = market_regime.get(
+            "additional_benchmark_tickers", []
+        )
+        if not isinstance(additional_benchmarks, list) or any(
+            not str(ticker).strip() for ticker in additional_benchmarks
+        ):
+            raise ValueError(
+                "market_regime.additional_benchmark_tickers must be a list "
+                "of tickers"
+            )
+        combination = market_regime.get("benchmark_combination", "all")
+        if combination not in {"all", "any"}:
+            raise ValueError(
+                "market_regime.benchmark_combination must be 'all' or 'any'"
+            )
         if int(market_regime["moving_average_sessions"]) < 2:
             raise ValueError(
                 "market_regime.moving_average_sessions must be at least 2"
