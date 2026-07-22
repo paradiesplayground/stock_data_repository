@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import uuid
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -169,6 +170,7 @@ class Trade:
     fills: list[dict[str, Any]] = field(default_factory=list)
     exit_reason: str | None = None
     holding_sessions: int | None = None
+    regime_blocked_sessions: int = 0
 
     @property
     def realized_pnl(self) -> Decimal:
@@ -343,6 +345,7 @@ def simulate_signals(
     bars_by_date: dict[date, dict[str, Bar]],
     signals_by_date: dict[date, list[Signal]],
     parameters: SimulationParameters,
+    entry_allowed_by_date: dict[date, bool] | None = None,
 ) -> SimulationResult:
     parameters.validate()
     if not sessions:
@@ -391,6 +394,11 @@ def simulate_signals(
             elif bar.high >= trade.signal.trigger:
                 base_fill = trade.signal.trigger
             if base_fill is None:
+                continue
+            if entry_allowed_by_date is not None and not entry_allowed_by_date.get(
+                market_date, False
+            ):
+                trade.regime_blocked_sessions += 1
                 continue
             if len(positions) >= parameters.max_open_positions:
                 trade.status = "position_limit"
@@ -557,6 +565,12 @@ def simulate_signals(
         else None,
         "worst_gap_loss": str(min(gap_losses)) if gap_losses else None,
         "maximum_concurrent_planned_risk": str(maximum_concurrent_risk),
+        "market_regime_blocked_fill_attempts": sum(
+            item.regime_blocked_sessions for item in trades
+        ),
+        "market_regime_affected_orders": sum(
+            item.regime_blocked_sessions > 0 for item in trades
+        ),
         "insufficient_sample": len(closed) < 30,
         "status_counts": {
             status: sum(item.status == status for item in trades)
@@ -638,6 +652,7 @@ def _load_bars(
     start_date: date,
     end_date: date,
     tickers: set[str],
+    benchmark_ticker: str = "QQQ",
 ) -> tuple[list[date], dict[date, dict[str, Bar]]]:
     sessions = session.scalars(
         select(DailyPriceBar.trade_date)
@@ -651,11 +666,21 @@ def _load_bars(
     rows = session.scalars(
         select(DailyPriceBar)
         .where(
-            DailyPriceBar.ticker.in_(tickers | {"QQQ"}),
+            DailyPriceBar.ticker.in_(tickers | {"QQQ", benchmark_ticker}),
             DailyPriceBar.trade_date.between(start_date, end_date),
         )
         .order_by(DailyPriceBar.trade_date, DailyPriceBar.ticker)
     ).all()
+    benchmark_history = session.scalars(
+        select(DailyPriceBar)
+        .where(
+            DailyPriceBar.ticker == benchmark_ticker,
+            DailyPriceBar.trade_date < start_date,
+        )
+        .order_by(DailyPriceBar.trade_date.desc())
+        .limit(260)
+    ).all()
+    rows.extend(reversed(benchmark_history))
     bars: dict[date, dict[str, Bar]] = {}
     for row in rows:
         bars.setdefault(row.trade_date, {})[row.ticker] = Bar(
@@ -667,6 +692,57 @@ def _load_bars(
             close=row.close,
         )
     return sessions, bars
+
+
+def _market_regime_permissions(
+    sessions: list[date],
+    bars: dict[date, dict[str, Bar]],
+    configuration: dict[str, Any],
+) -> tuple[dict[date, bool] | None, dict[str, Any]]:
+    regime = configuration.get("market_regime")
+    if not regime or not regime["enabled"]:
+        return None, {"enabled": False}
+
+    benchmark = str(regime["benchmark_ticker"]).upper()
+    window = int(regime["moving_average_sessions"])
+    benchmark_dates = sorted(
+        market_date
+        for market_date, daily_bars in bars.items()
+        if benchmark in daily_bars
+    )
+    closes = [bars[market_date][benchmark].close for market_date in benchmark_dates]
+    permissions: dict[date, bool] = {}
+    insufficient = 0
+    for entry_date in sessions:
+        # Orders fill during the current session, so only information available
+        # at the previous close may authorize a new entry.
+        prior_index = bisect_left(benchmark_dates, entry_date) - 1
+        if prior_index + 1 < window:
+            permissions[entry_date] = False
+            insufficient += 1
+            continue
+        current_window = closes[prior_index - window + 1 : prior_index + 1]
+        current_average = sum(current_window, ZERO) / window
+        allowed = True
+        if regime["require_close_above_moving_average"]:
+            allowed = closes[prior_index] > current_average
+        if regime["require_moving_average_rising"]:
+            if prior_index < window:
+                allowed = False
+            else:
+                previous_window = closes[prior_index - window : prior_index]
+                previous_average = sum(previous_window, ZERO) / window
+                allowed = allowed and current_average > previous_average
+        permissions[entry_date] = allowed
+
+    return permissions, {
+        **regime,
+        "benchmark_ticker": benchmark,
+        "decision_basis": "previous_session_close",
+        "entry_sessions_allowed": sum(permissions.values()),
+        "entry_sessions_blocked": sum(not item for item in permissions.values()),
+        "insufficient_history_sessions": insufficient,
+    }
 
 
 def _weighted_exit_price(trade: Trade) -> Decimal | None:
@@ -747,13 +823,28 @@ def run_simulation(
             "summary": existing.summary,
         }
 
+    regime = strategy_configuration.get("market_regime") or {}
+    benchmark_ticker = str(regime.get("benchmark_ticker", "QQQ")).upper()
     sessions, bars = _load_bars(
-        session, start_date, end_date, {signal.ticker for signal in signals}
+        session,
+        start_date,
+        end_date,
+        {signal.ticker for signal in signals},
+        benchmark_ticker,
+    )
+    entry_permissions, regime_summary = _market_regime_permissions(
+        sessions, bars, strategy_configuration
     )
     signals_by_date: dict[date, list[Signal]] = {}
     for signal in signals:
         signals_by_date.setdefault(signal.signal_date, []).append(signal)
-    result = simulate_signals(sessions, bars, signals_by_date, parameters)
+    result = simulate_signals(
+        sessions,
+        bars,
+        signals_by_date,
+        parameters,
+        entry_permissions,
+    )
     benchmark = _benchmark_return(sessions, bars)
     result.summary.update(
         {
@@ -772,6 +863,7 @@ def run_simulation(
             "qqq_return_pct": str(benchmark) if benchmark is not None else None,
             "parameters": parameters.payload(),
             "source_runs_hash": source_runs_hash,
+            "market_regime": regime_summary,
         }
     )
 
@@ -823,6 +915,7 @@ def run_simulation(
                     "maximum_entry": str(trade.signal.maximum_entry),
                     "risk_multiplier": str(trade.signal.risk_multiplier),
                     "target_one_hit": trade.target_one_hit,
+                    "regime_blocked_sessions": trade.regime_blocked_sessions,
                     "fills": trade.fills,
                 },
             )

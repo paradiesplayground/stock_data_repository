@@ -4,6 +4,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.strategy_config import (
+    DEFAULT_MARKET_REGIME,
     configuration_hash,
     load_simulation_configuration,
     load_strategy_profile,
@@ -23,9 +24,14 @@ def resolve_strategy_scenario(
 ) -> dict[str, Any]:
     if not strategy_version.strip():
         raise ValueError("strategy_version is required")
-    strategy = with_nested_overrides(
-        load_strategy_profile(base_profile), strategy_overrides or {}
-    )
+    strategy = load_strategy_profile(base_profile)
+    strategy_overrides = strategy_overrides or {}
+    # Market-regime policy was introduced after the historical bundled profiles.
+    # Materialize its known defaults only when a scenario requests the section so
+    # the immutable fingerprints of those profiles remain unchanged.
+    if "market_regime" in strategy_overrides and "market_regime" not in strategy:
+        strategy["market_regime"] = dict(DEFAULT_MARKET_REGIME)
+    strategy = with_nested_overrides(strategy, strategy_overrides)
     strategy["strategy"]["version"] = strategy_version.strip()
     strategy = validate_strategy_configuration(strategy)
     resolved_strategy = replay_configuration(configuration=strategy)

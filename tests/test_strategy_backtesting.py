@@ -15,6 +15,7 @@ from app.services.strategy_simulation import (
     Signal,
     SimulationParameters,
     SimulationResult,
+    _market_regime_permissions,
     run_simulation,
     simulate_signals,
 )
@@ -177,6 +178,30 @@ def test_scenario_resolves_nested_config_and_simulation_overrides() -> None:
     assert simulation["max_open_positions"] == 4
 
 
+def test_scenario_materializes_optional_market_regime_without_changing_profile() -> None:
+    resolved = resolve_strategy_scenario(
+        "fallen-growth-swing-v1.1.1-moderate.json",
+        "1.2.0",
+        {
+            "market_regime": {
+                "enabled": True,
+                "benchmark_ticker": "QQQ",
+                "moving_average_sessions": 50,
+                "require_close_above_moving_average": True,
+                "require_moving_average_rising": False,
+            }
+        },
+    )
+
+    assert resolved["strategy_configuration"]["market_regime"] == {
+        "enabled": True,
+        "benchmark_ticker": "QQQ",
+        "moving_average_sessions": 50,
+        "require_close_above_moving_average": True,
+        "require_moving_average_rising": False,
+    }
+
+
 def test_bundled_scenario_profiles_preserve_historical_fingerprints() -> None:
     profiles = {
         item["profile"]: item["configuration_fingerprint"]
@@ -232,6 +257,67 @@ def test_variable_account_and_risk_change_position_size() -> None:
 
     assert small.trades[0].initial_shares == 100
     assert large.trades[0].initial_shares == 750
+
+
+def test_market_regime_delays_new_entry_but_keeps_order_pending() -> None:
+    sessions = [
+        date(2026, 1, 20),
+        date(2026, 1, 21),
+        date(2026, 1, 22),
+    ]
+    bars = _bars(
+        (sessions[1], "10", "10.50", "9.50", "10.20"),
+        (sessions[2], "10", "10.50", "9.50", "10.20"),
+    )
+    result = simulate_signals(
+        sessions,
+        bars,
+        {sessions[0]: [_signal()]},
+        SimulationParameters(slippage_pct=D("0")),
+        {sessions[0]: False, sessions[1]: False, sessions[2]: True},
+    )
+
+    assert result.trades[0].entry_date == sessions[2]
+    assert result.trades[0].regime_blocked_sessions == 1
+    assert result.summary["market_regime_blocked_fill_attempts"] == 1
+
+
+def test_market_regime_uses_previous_close_without_lookahead() -> None:
+    sessions = [
+        date(2026, 1, 20),
+        date(2026, 1, 21),
+        date(2026, 1, 22),
+        date(2026, 1, 23),
+    ]
+    bars = {}
+    for market_date, close in zip(sessions, ("100", "90", "120", "121")):
+        bars[market_date] = {
+            "QQQ": Bar(
+                market_date=market_date,
+                ticker="QQQ",
+                open=D(close),
+                high=D(close),
+                low=D(close),
+                close=D(close),
+            )
+        }
+    configuration = {
+        "market_regime": {
+            "enabled": True,
+            "benchmark_ticker": "QQQ",
+            "moving_average_sessions": 2,
+            "require_close_above_moving_average": True,
+            "require_moving_average_rising": False,
+        }
+    }
+
+    permissions, summary = _market_regime_permissions(
+        sessions, bars, configuration
+    )
+
+    assert permissions[sessions[2]] is False
+    assert permissions[sessions[3]] is True
+    assert summary["decision_basis"] == "previous_session_close"
 
 
 def test_simulation_parameters_load_profile_with_cli_style_override(tmp_path) -> None:

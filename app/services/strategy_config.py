@@ -10,6 +10,13 @@ DEFAULT_STRATEGY_CONFIG = (
     STRATEGY_CONFIG_ROOT / "fallen-growth-swing-v1.1.0.json"
 )
 DEFAULT_SIMULATION_CONFIG = PROJECT_ROOT / "config" / "simulations" / "default.json"
+DEFAULT_MARKET_REGIME = {
+    "enabled": False,
+    "benchmark_ticker": "QQQ",
+    "moving_average_sessions": 50,
+    "require_close_above_moving_average": True,
+    "require_moving_average_rising": False,
+}
 
 
 def _load_json(path: str | Path, label: str) -> dict[str, Any]:
@@ -82,6 +89,33 @@ def validate_strategy_configuration(
             raise ValueError(f"strategy.{field} is required")
     if not configuration["risk_tiers"]:
         raise ValueError("risk_tiers must contain at least one tier")
+    market_regime = configuration.get("market_regime")
+    if market_regime is not None:
+        missing_regime = sorted(DEFAULT_MARKET_REGIME.keys() - market_regime.keys())
+        if missing_regime:
+            raise ValueError(
+                "market_regime is missing: " + ", ".join(missing_regime)
+            )
+        if not str(market_regime["benchmark_ticker"]).strip():
+            raise ValueError("market_regime.benchmark_ticker is required")
+        if int(market_regime["moving_average_sessions"]) < 2:
+            raise ValueError(
+                "market_regime.moving_average_sessions must be at least 2"
+            )
+        for key in (
+            "enabled",
+            "require_close_above_moving_average",
+            "require_moving_average_rising",
+        ):
+            if not isinstance(market_regime[key], bool):
+                raise ValueError(f"market_regime.{key} must be boolean")
+        if market_regime["enabled"] and not (
+            market_regime["require_close_above_moving_average"]
+            or market_regime["require_moving_average_rising"]
+        ):
+            raise ValueError(
+                "enabled market_regime must require at least one condition"
+            )
     return configuration
 
 
