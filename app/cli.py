@@ -30,6 +30,10 @@ from app.services.strategy_simulation import (
     list_simulations,
     run_simulation,
 )
+from app.services.stock_alert_delivery import (
+    publish_latest_strategy_run,
+    publish_strategy_run,
+)
 
 
 def _date(value: str) -> date:
@@ -79,6 +83,10 @@ def main() -> None:
     simulations.add_argument("--limit", type=int, default=20)
     simulation_detail = subparsers.add_parser("get-simulation")
     simulation_detail.add_argument("--simulation-id", required=True)
+    publish = subparsers.add_parser("publish-stock-alert")
+    target = publish.add_mutually_exclusive_group(required=True)
+    target.add_argument("--run-id")
+    target.add_argument("--latest", action="store_true")
     validation = subparsers.add_parser("validate-features")
     validation.add_argument("--ticker", action="append", required=True)
     validation.add_argument("--date", type=_date)
@@ -148,6 +156,12 @@ def main() -> None:
             result = list_simulations(session, args.limit)
         elif args.command == "get-simulation":
             result = get_simulation(session, args.simulation_id)
+        elif args.command == "publish-stock-alert":
+            result = (
+                publish_latest_strategy_run(session, settings)
+                if args.latest
+                else publish_strategy_run(session, settings, args.run_id)
+            )
         elif args.command == "validate-features":
             result = validate_feature_calculations(session, args.ticker, args.date)
         elif args.command == "sync-companyfacts":
@@ -164,6 +178,7 @@ def main() -> None:
         "simulate-strategy",
         "list-simulations",
         "get-simulation",
+        "publish-stock-alert",
     }:
         print(json.dumps(result, indent=2))
     else:

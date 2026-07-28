@@ -86,6 +86,8 @@ API_BEARER_TOKEN=another-long-random-token
 OPENAI_TUNNEL_ID=tunnel_your_id
 OPENAI_TUNNEL_API_KEY=your-runtime-api-key
 MCP_ENABLE_STRATEGY_WRITES=true
+STOCK_ALERT_WEBHOOK_URL=https://paradiesplayground.com/api/v1/stock-alerts
+STOCK_ALERT_WEBHOOK_TOKEN=the-website-automation-api-key
 ```
 
 Do not paste API keys into chat, commit them, or bake them into the image.
@@ -341,12 +343,20 @@ python -m app.cli simulate-strategy --start 2026-01-20 --end 2026-07-20 --starti
 python -m app.cli simulate-strategy --start 2026-01-20 --end 2026-07-20 --simulation-config config/simulations/default.json
 python -m app.cli list-simulations
 python -m app.cli get-simulation --simulation-id UUID
+python -m app.cli publish-stock-alert --latest
+python -m app.cli publish-stock-alert --run-id UUID
 python -m app.cli validate-features --ticker AAPL --ticker NVDA
 python -m app.cli sync-companyfacts
 python -m app.cli sync-submissions
 python -m app.cli sync-sec
 python -m app.cli sync-sec-incremental
 ```
+
+When both webhook settings are present, every newly stored production `as_run` record is
+published after its database transaction commits. Replay and backtest records are never
+published. Delivery failure is returned and logged without rolling back the strategy run.
+Repeating the same `record_strategy_run` call or using `publish-stock-alert` safely retries the
+same run ID; the website remains responsible for duplicate suppression.
 
 Without `--date`, `sync-market` safely catches up every missing weekday through the configured
 market target. Use `--date` only when deliberately reloading or troubleshooting one session.

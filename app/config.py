@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     mcp_port: int = Field(default=8001, ge=1, le=65535)
     mcp_enable_strategy_writes: bool = False
 
+    stock_alert_webhook_url: str = ""
+    stock_alert_webhook_token: str = ""
+    stock_alert_webhook_timeout_seconds: float = Field(default=15, ge=1, le=120)
+
     timezone: str = "America/Chicago"
     market_sync_cron: str = "30 16 * * 1-5"
     reference_sync_cron: str = "30 2 * * 1-5"

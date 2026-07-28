@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.12
+
+- Store the skill's exact completed alert Markdown with immutable strategy runs.
+- Automatically publish new production `as_run` records to an optional authenticated website
+  webhook without publishing replays or backtests.
+- Add `publish-stock-alert` for safe manual delivery or retry of a stored production run.
+
 ## 0.4.11
 
 - Add an optional actionable-entry rule requiring constructive breakout volume at the configured

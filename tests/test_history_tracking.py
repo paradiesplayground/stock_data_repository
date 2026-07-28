@@ -119,6 +119,7 @@ def test_complete_strategy_run_is_normalized_and_committed() -> None:
         idempotency_key="fallen-growth-swing:1.0.0:2026-07-17:as-run",
         configuration={"min_revenue_growth_pct": 40},
         filters={"exclude_industry_groups": ["Healthcare"]},
+        report_markdown="# Daily alert\n\nNo actionable entries.",
         candidates=[
             {
                 "ticker": "aapl",
@@ -158,6 +159,7 @@ def test_complete_strategy_run_is_normalized_and_committed() -> None:
     assert definition.strategy_key == "fallen-growth-swing"
     assert definition.version == "1.0.0"
     assert run.as_of_date.isoformat() == "2026-07-17"
+    assert run.report_markdown.startswith("# Daily alert")
     assert candidate.ticker == "AAPL"
     assert candidate.score == Decimal("7.25")
     assert evidence.accepted_at_utc == datetime(2026, 7, 17, 20, 0, tzinfo=timezone.utc)

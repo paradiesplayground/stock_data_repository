@@ -123,6 +123,7 @@ def record_strategy_run(
     filters: dict[str, Any],
     candidates: list[dict[str, Any]],
     summary: dict[str, Any] | None = None,
+    report_markdown: str | None = None,
     evidence: list[dict[str, Any]] | None = None,
     strategy_name: str | None = None,
     skill_fingerprint: str | None = None,
@@ -140,6 +141,12 @@ def record_strategy_run(
     if len(candidates) > 1000:
         raise ValueError("at most 1000 candidates may be recorded in one run")
     evidence = list(evidence or [])
+    if report_markdown is not None:
+        report_markdown = report_markdown.strip()
+        if not report_markdown:
+            report_markdown = None
+        elif len(report_markdown) > 250_000:
+            raise ValueError("report_markdown must be 250000 characters or fewer")
     if len(evidence) > 1000:
         raise ValueError("at most 1000 evidence records may be recorded in one run")
 
@@ -207,6 +214,7 @@ def record_strategy_run(
         "configuration": configuration,
         "filters": filters,
         "summary": summary,
+        "report_markdown": report_markdown,
         "candidates": normalized_candidates,
         "evidence": normalized_evidence,
         "feature_calculation_version": feature_calculation_version,
@@ -220,12 +228,20 @@ def record_strategy_run(
     if existing is not None:
         if existing.payload_hash != payload_hash:
             raise ValueError("idempotency_key already exists with a different payload")
-        return {
+        result = {
             "run_id": existing.run_id,
             "recorded": False,
             "idempotent_replay": True,
             "payload_hash": existing.payload_hash,
         }
+        if existing.run_type == "as_run":
+            from app.config import get_settings
+            from app.services.stock_alert_delivery import publish_strategy_run_safely
+
+            result["website_delivery"] = publish_strategy_run_safely(
+                session, get_settings(), existing.run_id
+            )
+        return result
 
     definition = _definition(
         session,
@@ -246,6 +262,7 @@ def record_strategy_run(
         data_cutoff_at_utc=_datetime(data_cutoff_at_utc, "data_cutoff_at_utc"),
         filters=filters,
         summary=summary,
+        report_markdown=report_markdown,
         payload_hash=payload_hash,
     )
     session.add(run)
@@ -285,7 +302,7 @@ def record_strategy_run(
             )
         )
     session.commit()
-    return {
+    result = {
         "run_id": run.run_id,
         "recorded": True,
         "idempotent_replay": False,
@@ -293,6 +310,14 @@ def record_strategy_run(
         "candidate_count": len(normalized_candidates),
         "evidence_count": len(normalized_evidence),
     }
+    if normalized_run_type == "as_run":
+        from app.config import get_settings
+        from app.services.stock_alert_delivery import publish_strategy_run_safely
+
+        result["website_delivery"] = publish_strategy_run_safely(
+            session, get_settings(), run.run_id
+        )
+    return result
 
 
 def record_strategy_outcomes(
@@ -378,6 +403,7 @@ def _run_item(run: StrategyRun, definition: StrategyDefinition) -> dict[str, Any
         else None,
         "filters": run.filters,
         "summary": run.summary,
+        "report_markdown": run.report_markdown,
         "payload_hash": run.payload_hash,
         "generated_at_utc": run.generated_at_utc.isoformat(),
     }
