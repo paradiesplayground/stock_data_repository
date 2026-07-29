@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.13
+
+- Expand SEC cash-capex ingestion across canonical productive-asset, oil-and-gas, mineral,
+  real-estate, and land acquisition concepts.
+- Retain narrowly matched registrant-defined cash-capex facts while preserving their original
+  taxonomy and concept for audit.
+- Calculate feature version `1.5.0` free cash flow from the expanded capex coverage without
+  treating generic incurred-capital-spending disclosures as cash outflows.
+- After upgrading, run `sync-companyfacts` once and then `sync-features` to populate the new facts
+  and feature snapshot.
+
 ## 0.4.12
 
 - Store the skill's exact completed alert Markdown with immutable strategy runs.
