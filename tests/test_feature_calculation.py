@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import app.services.feature_calculation as feature_calculation
 from app.config import Settings
 from app.services.feature_calculation import (
+    _capex_value,
     _feature_universe_statement,
     _financial_metrics,
     _latest_instant,
@@ -364,3 +365,62 @@ def test_financial_metrics_sum_current_marketable_security_components() -> None:
 
     assert metrics["cash_and_short_term_investments"] == Decimal("80.572")
     assert metrics["total_debt"] == Decimal("8.470")
+
+
+
+def test_capex_value_accepts_productive_asset_alias() -> None:
+    annual = _fact(
+        "125",
+        date(2025, 1, 1),
+        date(2025, 12, 31),
+        date(2026, 2, 15),
+        2025,
+        "FY",
+    )
+    annual.label = "Payments to acquire productive assets"
+
+    value, period_end, status = _capex_value(
+        {"PaymentsToAcquireProductiveAssets": [annual]},
+        date(2026, 7, 17),
+    )
+
+    assert value == Decimal("125")
+    assert period_end == date(2025, 12, 31)
+    assert status == "annual_only"
+
+
+def test_capex_value_accepts_conservative_custom_cash_label() -> None:
+    annual = _fact(
+        "201.2",
+        date(2025, 1, 1),
+        date(2025, 12, 31),
+        date(2026, 2, 27),
+        2025,
+        "FY",
+    )
+    annual.label = "Purchase of property, plant and equipment, net of sales proceeds"
+
+    value, _, status = _capex_value(
+        {"PurchaseOfPropertyPlantAndEquipmentNetOfSalesProceeds": [annual]},
+        date(2026, 7, 17),
+    )
+
+    assert value == Decimal("201.2")
+    assert status == "annual_only"
+
+
+def test_capex_value_rejects_generic_incurred_capital_spending_label() -> None:
+    annual = _fact(
+        "121.7",
+        date(2025, 1, 1),
+        date(2025, 12, 31),
+        date(2026, 2, 27),
+        2025,
+        "FY",
+    )
+    annual.label = "Capital expenditures incurred"
+
+    assert _capex_value(
+        {"CapitalExpendituresIncurred": [annual]},
+        date(2026, 7, 17),
+    ) == (None, None, "unavailable")
