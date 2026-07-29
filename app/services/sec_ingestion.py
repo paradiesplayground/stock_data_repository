@@ -27,55 +27,9 @@ from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
 
-# Canonical reported facts needed by downstream analytics. These are stored as
-# source facts; this service does not calculate growth, liquidity, or scores.
-DEFAULT_FACT_CONCEPTS = {
-    "AccountsPayableCurrent",
-    "Assets",
-    "AssetsCurrent",
-    "CashAndCashEquivalentsAtCarryingValue",
-    "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
-    "CommonStockSharesOutstanding",
-    "CostOfRevenue",
-    "GrossProfit",
-    "Liabilities",
-    "LiabilitiesCurrent",
-    "LongTermDebt",
-    "LongTermDebtCurrent",
-    "LongTermDebtNoncurrent",
-    "MarketableDebtSecuritiesCurrent",
-    "MarketableEquitySecuritiesCurrent",
-    "MarketableSecuritiesCurrent",
-    "NetCashProvidedByUsedInOperatingActivities",
-    "NetIncomeLoss",
-    "OperatingIncomeLoss",
-    "PaymentsToAcquirePropertyPlantAndEquipment",
-    "PaymentsToAcquireProductiveAssets",
-    "PaymentsToAcquireOilAndGasProperty",
-    "PaymentsToAcquireMineralInterests",
-    "PaymentsToAcquireRealEstate",
-    "PaymentsToAcquireLand",
-    "RevenueFromContractWithCustomerExcludingAssessedTax",
-    "RevenueFromContractWithCustomerIncludingAssessedTax",
-    "Revenues",
-    "SalesRevenueNet",
-    "ShortTermInvestments",
-    "ShortTermBorrowings",
-    "ShortTermDebtCurrent",
-    "CommercialPaper",
-    "StockholdersEquity",
-    "WeightedAverageNumberOfDilutedSharesOutstanding",
-    "EntityCommonStockSharesOutstanding",
-}
-
-CUSTOM_CASH_CAPEX_LABELS = {
-    "purchase of property, plant and equipment, net of sales proceeds",
-    "purchases of property, plant and equipment, net of sales proceeds",
-    "purchase of property, plant and equipment",
-    "purchases of property, plant and equipment",
-    "payments to acquire property, plant and equipment",
-    "payments to acquire productive assets",
-}
+# Company Facts is the immutable raw numeric layer. Retain every numeric fact,
+# including registrant-defined taxonomies; normalization and screener policy belong
+# downstream so new metrics never require another SEC download.
 
 FINANCIAL_FORMS = ("10-K", "10-Q", "20-F", "40-F", "6-K", "8-K")
 SEC_CHECKPOINT_JOB = "sec_daily_index"
@@ -133,14 +87,6 @@ def _iter_company_fact_rows(payload: dict[str, Any]) -> Iterator[dict[str, Any]]
     cik = str(payload.get("cik", "")).zfill(10)
     for taxonomy, concepts in payload.get("facts", {}).items():
         for concept, metadata in concepts.items():
-            label = (metadata.get("label") or "").strip()
-            is_standard = taxonomy in {"us-gaap", "ifrs-full", "dei"}
-            is_supported_custom_capex = (
-                not is_standard
-                and label.casefold() in CUSTOM_CASH_CAPEX_LABELS
-            )
-            if concept not in DEFAULT_FACT_CONCEPTS and not is_supported_custom_capex:
-                continue
             for unit, facts in metadata.get("units", {}).items():
                 for fact in facts:
                     period_end = _parse_date(fact.get("end"))
