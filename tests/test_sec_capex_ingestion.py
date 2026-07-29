@@ -44,7 +44,21 @@ def test_custom_cash_capex_label_is_retained_with_original_taxonomy() -> None:
     assert rows[0]["value"] == 201200000
 
 
-def test_unrelated_custom_fact_is_not_ingested() -> None:
+def test_all_numeric_custom_facts_are_retained() -> None:
     rows = list(_iter_company_fact_rows(_payload("Capital expenditures incurred")))
 
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0]["taxonomy"] == "cls"
+    assert rows[0]["concept"] == "CustomCashCapex"
+    assert rows[0]["label"] == "Capital expenditures incurred"
+
+
+def test_all_numeric_standard_facts_are_retained() -> None:
+    payload = _payload("Research and development expense", "ResearchAndDevelopmentExpense")
+    payload["facts"]["us-gaap"] = payload["facts"].pop("cls")
+
+    rows = list(_iter_company_fact_rows(payload))
+
+    assert len(rows) == 1
+    assert rows[0]["taxonomy"] == "us-gaap"
+    assert rows[0]["concept"] == "ResearchAndDevelopmentExpense"
