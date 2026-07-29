@@ -50,6 +50,11 @@ DEFAULT_FACT_CONCEPTS = {
     "NetIncomeLoss",
     "OperatingIncomeLoss",
     "PaymentsToAcquirePropertyPlantAndEquipment",
+    "PaymentsToAcquireProductiveAssets",
+    "PaymentsToAcquireOilAndGasProperty",
+    "PaymentsToAcquireMineralInterests",
+    "PaymentsToAcquireRealEstate",
+    "PaymentsToAcquireLand",
     "RevenueFromContractWithCustomerExcludingAssessedTax",
     "RevenueFromContractWithCustomerIncludingAssessedTax",
     "Revenues",
@@ -61,6 +66,15 @@ DEFAULT_FACT_CONCEPTS = {
     "StockholdersEquity",
     "WeightedAverageNumberOfDilutedSharesOutstanding",
     "EntityCommonStockSharesOutstanding",
+}
+
+CUSTOM_CASH_CAPEX_LABELS = {
+    "purchase of property, plant and equipment, net of sales proceeds",
+    "purchases of property, plant and equipment, net of sales proceeds",
+    "purchase of property, plant and equipment",
+    "purchases of property, plant and equipment",
+    "payments to acquire property, plant and equipment",
+    "payments to acquire productive assets",
 }
 
 FINANCIAL_FORMS = ("10-K", "10-Q", "20-F", "40-F", "6-K", "8-K")
@@ -118,10 +132,14 @@ def _known_ciks(session: Session) -> set[str]:
 def _iter_company_fact_rows(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
     cik = str(payload.get("cik", "")).zfill(10)
     for taxonomy, concepts in payload.get("facts", {}).items():
-        if taxonomy not in {"us-gaap", "ifrs-full", "dei"}:
-            continue
         for concept, metadata in concepts.items():
-            if concept not in DEFAULT_FACT_CONCEPTS:
+            label = (metadata.get("label") or "").strip()
+            is_standard = taxonomy in {"us-gaap", "ifrs-full", "dei"}
+            is_supported_custom_capex = (
+                not is_standard
+                and label.casefold() in CUSTOM_CASH_CAPEX_LABELS
+            )
+            if concept not in DEFAULT_FACT_CONCEPTS and not is_supported_custom_capex:
                 continue
             for unit, facts in metadata.get("units", {}).items():
                 for fact in facts:
