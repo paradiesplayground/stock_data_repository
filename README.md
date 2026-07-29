@@ -326,6 +326,22 @@ When the tunnel reports ready, open ChatGPT **Settings -> Apps**, create a devel
 choose **Tunnel** as the connection type, and select this tunnel. Refresh tool discovery after a
 v0.4.x deployment so ChatGPT can see the tools listed above.
 
+## Financial-data architecture
+
+SEC Company Facts uses a three-layer contract:
+
+1. **Raw facts**: `financial_facts` retains every numeric fact for matched companies exactly as
+   reported, including taxonomy, concept, label, unit, period, filing, accession, and value.
+2. **Normalized features**: versioned feature calculations select and reconcile the source concepts
+   required for standard metrics while preserving nulls when a mapping is not defensible.
+3. **Screener policy**: thresholds, scoring, exclusions, and trade rules remain downstream and
+   configurable; they never control which SEC facts are retained.
+
+After upgrading to v0.4.14, run `sync-companyfacts` once to backfill facts discarded by older
+allowlists. Future normalized metrics can then be added and rebuilt with `sync-features` without
+another SEC Company Facts download. The nightly incremental job automatically retains all numeric
+facts for newly changed filers.
+
 ## Manual jobs
 
 ```bash
