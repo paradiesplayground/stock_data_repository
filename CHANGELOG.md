@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.14
+
+- Retain every numeric SEC Company Fact across standard and registrant-defined taxonomies.
+- Keep raw ingestion independent from normalized feature formulas and downstream screener policy.
+- Future metric mappings can be added and features rebuilt entirely from stored facts without
+  downloading Company Facts again.
+- Run `sync-companyfacts` once after upgrading to backfill facts excluded by earlier versions.
+
 ## 0.4.13
 
 - Expand SEC cash-capex ingestion across canonical productive-asset, oil-and-gas, mineral,
