@@ -391,7 +391,7 @@ def test_capex_value_accepts_productive_asset_alias() -> None:
 
 def test_capex_value_accepts_conservative_custom_cash_label() -> None:
     annual = _fact(
-        "201.2",
+        "-201.2",
         date(2025, 1, 1),
         date(2025, 12, 31),
         date(2026, 2, 27),
