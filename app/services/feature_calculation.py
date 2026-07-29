@@ -520,7 +520,7 @@ def _capex_value(
         facts_by_concept, CAPEX_CONCEPTS, as_of_date
     )
     if value is not None:
-        return value, period_end, status
+        return abs(value), period_end, status
 
     supported_labels = {label.casefold() for label in CUSTOM_CASH_CAPEX_LABELS}
     for concept in sorted(facts_by_concept):
@@ -532,7 +532,7 @@ def _capex_value(
         ]
         value, period_end, status = _ttm_value(facts, as_of_date)
         if value is not None:
-            return value, period_end, status
+            return abs(value), period_end, status
     return None, None, "unavailable"
 
 
@@ -995,7 +995,9 @@ def calculate_daily_features(
                 FinancialFact.cik.in_(ciks),
                 or_(
                     FinancialFact.concept.in_(FEATURE_FACT_CONCEPTS),
-                    FinancialFact.label.in_(CUSTOM_CASH_CAPEX_LABELS),
+                    func.lower(FinancialFact.label).in_(
+                        tuple(label.casefold() for label in CUSTOM_CASH_CAPEX_LABELS)
+                    ),
                 ),
                 FinancialFact.period_end >= effective_date - timedelta(days=900),
                 FinancialFact.period_end <= effective_date,
