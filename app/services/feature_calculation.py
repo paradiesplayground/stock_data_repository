@@ -22,7 +22,7 @@ from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
 
-CALCULATION_VERSION = "1.4.0"
+CALCULATION_VERSION = "1.5.0"
 HUNDRED = Decimal("100")
 
 REFERENCE_FIELDS = (
@@ -72,7 +72,22 @@ REVENUE_CONCEPTS = (
 )
 GROSS_PROFIT_CONCEPTS = ("GrossProfit",)
 OPERATING_CASH_FLOW_CONCEPTS = ("NetCashProvidedByUsedInOperatingActivities",)
-CAPEX_CONCEPTS = ("PaymentsToAcquirePropertyPlantAndEquipment",)
+CAPEX_CONCEPTS = (
+    "PaymentsToAcquirePropertyPlantAndEquipment",
+    "PaymentsToAcquireProductiveAssets",
+    "PaymentsToAcquireOilAndGasProperty",
+    "PaymentsToAcquireMineralInterests",
+    "PaymentsToAcquireRealEstate",
+    "PaymentsToAcquireLand",
+)
+CUSTOM_CASH_CAPEX_LABELS = (
+    "Purchase of property, plant and equipment, net of sales proceeds",
+    "Purchases of property, plant and equipment, net of sales proceeds",
+    "Purchase of property, plant and equipment",
+    "Purchases of property, plant and equipment",
+    "Payments to acquire property, plant and equipment",
+    "Payments to acquire productive assets",
+)
 CASH_CONCEPTS = (
     "CashAndCashEquivalentsAtCarryingValue",
     "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
@@ -497,6 +512,30 @@ def _flow_value(
     return None, None, "unavailable"
 
 
+def _capex_value(
+    facts_by_concept: dict[str, list[FinancialFact]],
+    as_of_date: date,
+) -> tuple[Decimal | None, date | None, str]:
+    value, period_end, status = _flow_value(
+        facts_by_concept, CAPEX_CONCEPTS, as_of_date
+    )
+    if value is not None:
+        return value, period_end, status
+
+    supported_labels = {label.casefold() for label in CUSTOM_CASH_CAPEX_LABELS}
+    for concept in sorted(facts_by_concept):
+        facts = [
+            fact
+            for fact in facts_by_concept[concept]
+            if (getattr(fact, "label", "") or "").strip().casefold()
+            in supported_labels
+        ]
+        value, period_end, status = _ttm_value(facts, as_of_date)
+        if value is not None:
+            return value, period_end, status
+    return None, None, "unavailable"
+
+
 def _shares_metrics(
     facts_by_concept: dict[str, list[FinancialFact]], as_of_date: date
 ) -> tuple[Decimal | None, Decimal | None, date | None]:
@@ -637,8 +676,8 @@ def _financial_metrics(
     operating_cash_flow, ocf_end, ocf_status = _flow_value(
         facts_by_concept, OPERATING_CASH_FLOW_CONCEPTS, as_of_date
     )
-    capex, capex_end, capex_status = _flow_value(
-        facts_by_concept, CAPEX_CONCEPTS, as_of_date
+    capex, capex_end, capex_status = _capex_value(
+        facts_by_concept, as_of_date
     )
     free_cash_flow = (
         operating_cash_flow - capex
@@ -954,7 +993,10 @@ def calculate_daily_features(
         fact_rows = session.scalars(
             select(FinancialFact).where(
                 FinancialFact.cik.in_(ciks),
-                FinancialFact.concept.in_(FEATURE_FACT_CONCEPTS),
+                or_(
+                    FinancialFact.concept.in_(FEATURE_FACT_CONCEPTS),
+                    FinancialFact.label.in_(CUSTOM_CASH_CAPEX_LABELS),
+                ),
                 FinancialFact.period_end >= effective_date - timedelta(days=900),
                 FinancialFact.period_end <= effective_date,
                 or_(
