@@ -148,6 +148,13 @@ docker compose exec worker python -m app.cli sync-features
 
 SEC bulk archives are large. The first SEC import and first price backfill can take a while; subsequent scheduled updates are incremental database upserts.
 
+`sync-companyfacts` fingerprints the downloaded archive and checkpoints the last completed
+company after every member. If interrupted, rerunning the same command resumes at the next member.
+For an interrupted load created before checkpoint support, the first upgraded run detects the
+already-complete CIK prefix, checkpoints it, and continues at the first incomplete company instead
+of rewriting the stored facts. Logs report companies completed, percent, throughput, and ETA every
+25 companies. Do not run `sync-features` until the Company Facts command reports success.
+
 ## Schedule
 
 Defaults use `America/Chicago`:
