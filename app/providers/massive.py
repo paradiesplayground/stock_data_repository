@@ -137,7 +137,15 @@ class MassiveClient:
 
     def get_ticker_events(self, identifier: str) -> dict[str, Any]:
         encoded_identifier = quote(identifier, safe="")
-        return self._get(
-            f"{self.base_url}/vX/reference/tickers/{encoded_identifier}/events",
-            params={"types": "ticker_change"},
-        )
+        try:
+            return self._get(
+                f"{self.base_url}/vX/reference/tickers/{encoded_identifier}/events",
+                params={"types": "ticker_change"},
+            )
+        except httpx.HTTPStatusError as error:
+            # Massive's experimental ticker-events endpoint returns 404 when a
+            # valid security has no event timeline. Treat that as an empty
+            # result so one inactive ticker cannot abort the universe sync.
+            if error.response.status_code == 404:
+                return {"results": {"events": []}}
+            raise
