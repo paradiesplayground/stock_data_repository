@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import time
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -9,7 +10,7 @@ from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
 from dateutil.parser import isoparse
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 FINANCIAL_FORMS = ("10-K", "10-Q", "20-F", "40-F", "6-K", "8-K")
 SEC_CHECKPOINT_JOB = "sec_daily_index"
+COMPANYFACTS_CHECKPOINT_JOB = "sec_companyfacts_archive"
 
 
 def _parse_date(value: Any) -> date | None:
@@ -167,29 +169,188 @@ def _refresh_fact_availability(session: Session, accession_numbers: set[str]) ->
         session.commit()
 
 
+def _archive_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _save_companyfacts_checkpoint(
+    session: Session,
+    archive_sha256: str,
+    member_name: str | None,
+    position: int,
+    total: int,
+    seen: int,
+    written: int,
+    *,
+    complete: bool = False,
+) -> None:
+    details = {
+        "archive_sha256": archive_sha256,
+        "last_member": member_name,
+        "position": position,
+        "total_members": total,
+        "records_seen": seen,
+        "records_written": written,
+        "complete": complete,
+    }
+    checkpoint = session.get(IngestionCheckpoint, COMPANYFACTS_CHECKPOINT_JOB)
+    if checkpoint is None:
+        checkpoint = IngestionCheckpoint(
+            job_name=COMPANYFACTS_CHECKPOINT_JOB,
+            checkpoint_date=date.today(),
+            details=details,
+        )
+        session.add(checkpoint)
+    else:
+        checkpoint.checkpoint_date = date.today()
+        checkpoint.details = details
+    session.commit()
+
+
+def _progress_message(
+    position: int, total: int, seen: int, written: int, started_at: float
+) -> None:
+    elapsed = max(time.monotonic() - started_at, 0.001)
+    rate = position / elapsed
+    remaining = max(total - position, 0)
+    eta_seconds = int(remaining / rate) if rate else 0
+    logger.info(
+        "SEC Company Facts processed %s/%s companies (%.2f%%); "
+        "%s facts seen, %s written; %.2f companies/s; ETA %s",
+        position,
+        total,
+        position * 100 / total if total else 100.0,
+        seen,
+        written,
+        rate,
+        str(timedelta(seconds=eta_seconds)),
+    )
+
+
 def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
     tracker = RunTracker(session, "sec_companyfacts", "sec-edgar")
     archive = settings.raw_dir / "sec" / "companyfacts.zip"
     seen = written = 0
+    skipped_companies = 0
+    started_at = time.monotonic()
     try:
         with SecClient(settings) as client:
             client.download_companyfacts(archive)
+        archive_sha256 = _archive_sha256(archive)
         allowed_ciks = _known_ciks(session)
+        checkpoint = session.get(IngestionCheckpoint, COMPANYFACTS_CHECKPOINT_JOB)
+        checkpoint_details = checkpoint.details or {} if checkpoint else {}
+        resume_member = (
+            checkpoint_details.get("last_member")
+            if checkpoint_details.get("archive_sha256") == archive_sha256
+            and not checkpoint_details.get("complete")
+            else None
+        )
+
         with zipfile.ZipFile(archive) as source:
+            members = []
             for member in source.infolist():
                 if not member.filename.endswith(".json"):
                     continue
                 cik = Path(member.filename).stem.removeprefix("CIK").zfill(10)
-                if cik not in allowed_ciks:
+                if cik in allowed_ciks:
+                    members.append((member, cik))
+
+            start_position = 0
+            if resume_member:
+                for index, (member, _) in enumerate(members):
+                    if member.filename == resume_member:
+                        start_position = index + 1
+                        break
+                logger.info(
+                    "Resuming SEC Company Facts after %s at company %s/%s",
+                    resume_member,
+                    start_position,
+                    len(members),
+                )
+            else:
+                logger.info(
+                    "No matching Company Facts checkpoint; detecting companies already "
+                    "fully loaded before writing missing data"
+                )
+
+            for index, (member, cik) in enumerate(members, start=1):
+                if index <= start_position:
                     continue
                 with source.open(member) as handle:
                     payload = json.load(handle)
                 rows = list(_iter_company_fact_rows(payload))
-                seen += len(rows)
-                written += _upsert_fact_rows(session, rows)
+                unique_rows = list(
+                    {str(row["fact_id"]): row for row in rows}.values()
+                )
+
+                # Bootstrap interrupted runs created before checkpoint support. Because
+                # each company was loaded as a unit, a CIK with at least the archive's
+                # unique row count is already complete and can be skipped safely.
+                if not resume_member:
+                    existing = session.scalar(
+                        select(func.count())
+                        .select_from(FinancialFact)
+                        .where(FinancialFact.cik == cik)
+                    ) or 0
+                    if existing >= len(unique_rows):
+                        skipped_companies += 1
+                        seen += len(unique_rows)
+                        _save_companyfacts_checkpoint(
+                            session,
+                            archive_sha256,
+                            member.filename,
+                            index,
+                            len(members),
+                            seen,
+                            written,
+                        )
+                        if index == 1 or index % 25 == 0 or index == len(members):
+                            _progress_message(
+                                index, len(members), seen, written, started_at
+                            )
+                        continue
+
+                seen += len(unique_rows)
+                written += _upsert_fact_rows(session, unique_rows)
+                _save_companyfacts_checkpoint(
+                    session,
+                    archive_sha256,
+                    member.filename,
+                    index,
+                    len(members),
+                    seen,
+                    written,
+                )
+                if index == 1 or index % 25 == 0 or index == len(members):
+                    _progress_message(index, len(members), seen, written, started_at)
+
+        _save_companyfacts_checkpoint(
+            session,
+            archive_sha256,
+            members[-1][0].filename if members else None,
+            len(members),
+            len(members),
+            seen,
+            written,
+            complete=True,
+        )
         if not settings.sec_keep_archives:
             archive.unlink(missing_ok=True)
-        tracker.succeed(seen, written, {"companies_matched": len(allowed_ciks)})
+        tracker.succeed(
+            seen,
+            written,
+            {
+                "companies_matched": len(allowed_ciks),
+                "companies_processed": len(members),
+                "companies_skipped_as_complete": skipped_companies,
+                "archive_sha256": archive_sha256,
+            },
+        )
         return seen, written
     except Exception as error:
         tracker.fail(error, seen, written)
