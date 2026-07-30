@@ -1,4 +1,6 @@
-from app.services.sec_ingestion import _iter_company_fact_rows
+import hashlib
+
+from app.services.sec_ingestion import _archive_sha256, _iter_company_fact_rows
 
 
 def _payload(label: str, concept: str = "CustomCashCapex") -> dict:
@@ -62,3 +64,12 @@ def test_all_numeric_standard_facts_are_retained() -> None:
     assert len(rows) == 1
     assert rows[0]["taxonomy"] == "us-gaap"
     assert rows[0]["concept"] == "ResearchAndDevelopmentExpense"
+
+
+def test_companyfacts_archive_fingerprint_is_stable(tmp_path) -> None:
+    archive = tmp_path / "companyfacts.zip"
+    archive.write_bytes(b"company-facts-test")
+
+    assert _archive_sha256(archive) == hashlib.sha256(
+        b"company-facts-test"
+    ).hexdigest()
