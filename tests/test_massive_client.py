@@ -205,6 +205,25 @@ def test_corporate_actions_and_ticker_events_use_historical_endpoints() -> None:
     assert event_route.called
 
 
+@respx.mock
+def test_ticker_events_treats_not_found_as_no_events() -> None:
+    event_route = respx.get(
+        "https://api.massive.com/vX/reference/tickers/AAB.WS/events",
+        params={"types": "ticker_change"},
+    ).mock(return_value=httpx.Response(404))
+    settings = Settings(
+        massive_api_key="secret",
+        massive_requests_per_minute=10000,
+        sec_user_agent="Test test@example.com",
+    )
+
+    with MassiveClient(settings) as client:
+        events = client.get_ticker_events("AAB.WS")
+
+    assert events == {"results": {"events": []}}
+    assert event_route.called
+
+
 def test_duplicate_tickers_are_removed_before_upsert() -> None:
     rows = [
         {"ticker": "TEST", "name": "Older name"},
