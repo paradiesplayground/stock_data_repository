@@ -1,6 +1,6 @@
 import logging
 import signal
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -10,7 +10,11 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
 from app.services.feature_calculation import calculate_daily_features
-from app.services.massive_ingestion import sync_market_incremental, sync_reference_data
+from app.services.massive_ingestion import (
+    sync_corporate_actions,
+    sync_market_incremental,
+    sync_reference_data,
+)
 from app.services.sec_ingestion import sync_sec_incremental
 
 logger = logging.getLogger(__name__)
@@ -18,7 +22,19 @@ logger = logging.getLogger(__name__)
 
 def _run_reference() -> None:
     with SessionLocal() as session:
-        sync_reference_data(session, get_settings())
+        sync_reference_data(session, get_settings(), include_inactive=True)
+
+
+def _run_corporate_actions() -> None:
+    settings = get_settings()
+    end_date = datetime.now(ZoneInfo(settings.timezone)).date()
+    with SessionLocal() as session:
+        sync_corporate_actions(
+            session,
+            settings,
+            start_date=end_date - timedelta(days=14),
+            end_date=end_date,
+        )
 
 
 def _run_market() -> None:
@@ -55,6 +71,15 @@ def main() -> None:
         _run_market,
         CronTrigger.from_crontab(settings.market_sync_cron, timezone=settings.timezone),
         id="massive_daily_prices",
+        **common,
+    )
+    scheduler.add_job(
+        _run_corporate_actions,
+        CronTrigger.from_crontab(
+            settings.corporate_actions_sync_cron,
+            timezone=settings.timezone,
+        ),
+        id="massive_corporate_actions",
         **common,
     )
     scheduler.add_job(

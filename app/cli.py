@@ -12,10 +12,13 @@ from app.services.feature_calculation import (
 )
 from app.services.feature_validation import validate_feature_calculations
 from app.services.massive_ingestion import (
+    backfill_reference_snapshots,
     backfill_market_data,
+    sync_corporate_actions,
     sync_market_incremental,
     sync_market_day,
     sync_reference_data,
+    sync_ticker_events,
 )
 from app.services.sec_ingestion import (
     sync_companyfacts,
@@ -51,11 +54,22 @@ def main() -> None:
 
     reference = subparsers.add_parser("sync-reference")
     reference.add_argument("--include-inactive", action="store_true")
+    reference.add_argument("--active-only", action="store_true")
+    reference_backfill = subparsers.add_parser("backfill-reference")
+    reference_backfill.add_argument("--start", type=_date, required=True)
+    reference_backfill.add_argument("--end", type=_date, required=True)
+    reference_backfill.add_argument("--active-only", action="store_true")
+    reference_backfill.add_argument("--resume", action="store_true")
     market = subparsers.add_parser("sync-market")
     market.add_argument("--date", type=_date)
     backfill = subparsers.add_parser("backfill-market")
     backfill.add_argument("--start", type=_date)
     backfill.add_argument("--end", type=_date)
+    corporate_actions = subparsers.add_parser("sync-corporate-actions")
+    corporate_actions.add_argument("--start", type=_date)
+    corporate_actions.add_argument("--end", type=_date)
+    ticker_events = subparsers.add_parser("sync-ticker-events")
+    ticker_events.add_argument("--resume", action="store_true")
     features = subparsers.add_parser("sync-features")
     features.add_argument("--date", type=_date)
     feature_backfill = subparsers.add_parser("backfill-features")
@@ -102,7 +116,16 @@ def main() -> None:
             result = sync_reference_data(
                 session,
                 settings,
-                include_inactive=args.include_inactive,
+                include_inactive=not args.active_only,
+            )
+        elif args.command == "backfill-reference":
+            result = backfill_reference_snapshots(
+                session,
+                settings,
+                args.start,
+                args.end,
+                include_inactive=not args.active_only,
+                resume=args.resume,
             )
         elif args.command == "sync-market":
             result = (
@@ -117,6 +140,19 @@ def main() -> None:
             )
         elif args.command == "backfill-market":
             result = backfill_market_data(session, settings, args.start, args.end)
+        elif args.command == "sync-corporate-actions":
+            result = sync_corporate_actions(
+                session,
+                settings,
+                args.start,
+                args.end,
+            )
+        elif args.command == "sync-ticker-events":
+            result = sync_ticker_events(
+                session,
+                settings,
+                resume=args.resume,
+            )
         elif args.command == "sync-features":
             result = calculate_daily_features(session, settings, args.date)
         elif args.command == "backfill-features":

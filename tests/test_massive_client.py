@@ -35,6 +35,33 @@ def test_grouped_daily_uses_bulk_market_endpoint_and_bearer_auth() -> None:
 
 
 @respx.mock
+def test_grouped_daily_can_request_unadjusted_bars() -> None:
+    route = respx.get(
+        "https://api.massive.com/v2/aggs/grouped/locale/us/market/stocks/2026-07-17",
+        params={"adjusted": "false", "include_otc": "false"},
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={"status": "OK", "adjusted": False, "results": []},
+        )
+    )
+    settings = Settings(
+        massive_api_key="secret",
+        massive_requests_per_minute=10000,
+        sec_user_agent="Test test@example.com",
+    )
+
+    with MassiveClient(settings) as client:
+        payload = client.get_grouped_daily(
+            date(2026, 7, 17),
+            adjusted=False,
+        )
+
+    assert payload["adjusted"] is False
+    assert route.called
+
+
+@respx.mock
 def test_reference_iterator_can_request_inactive_tickers() -> None:
     route = respx.get(
         "https://api.massive.com/v3/reference/tickers",
@@ -65,6 +92,117 @@ def test_reference_iterator_can_request_inactive_tickers() -> None:
 
     assert rows == [{"ticker": "DELISTED", "active": False}]
     assert route.called
+
+
+@respx.mock
+def test_reference_iterator_can_request_a_historical_snapshot() -> None:
+    route = respx.get(
+        "https://api.massive.com/v3/reference/tickers",
+        params={
+            "market": "stocks",
+            "active": "true",
+            "date": "2022-10-27",
+            "limit": 1000,
+            "sort": "ticker",
+            "order": "asc",
+        },
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "OK",
+                "results": [{"ticker": "TWTR", "active": True}],
+            },
+        )
+    )
+    settings = Settings(
+        massive_api_key="secret",
+        massive_requests_per_minute=10000,
+        sec_user_agent="Test test@example.com",
+    )
+
+    with MassiveClient(settings) as client:
+        rows = list(
+            client.iter_stock_tickers(
+                active=True,
+                as_of_date=date(2022, 10, 27),
+            )
+        )
+
+    assert rows == [{"ticker": "TWTR", "active": True}]
+    assert route.called
+
+
+@respx.mock
+def test_corporate_actions_and_ticker_events_use_historical_endpoints() -> None:
+    split_route = respx.get(
+        "https://api.massive.com/stocks/v1/splits",
+        params={
+            "execution_date.gte": "2021-07-30",
+            "execution_date.lte": "2026-07-30",
+            "limit": 5000,
+            "sort": "execution_date.asc",
+        },
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={"results": [{"id": "split-1", "ticker": "NVDA"}]},
+        )
+    )
+    dividend_route = respx.get(
+        "https://api.massive.com/stocks/v1/dividends",
+        params={
+            "ex_dividend_date.gte": "2021-07-30",
+            "ex_dividend_date.lte": "2026-07-30",
+            "limit": 5000,
+            "sort": "ex_dividend_date.asc",
+        },
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={"results": [{"id": "dividend-1", "ticker": "AAPL"}]},
+        )
+    )
+    event_route = respx.get(
+        "https://api.massive.com/vX/reference/tickers/BBG000MM2P62/events",
+        params={"types": "ticker_change"},
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": {
+                    "events": [
+                        {
+                            "date": "2022-06-09",
+                            "ticker_change": {"ticker": "META"},
+                            "type": "ticker_change",
+                        }
+                    ]
+                }
+            },
+        )
+    )
+    settings = Settings(
+        massive_api_key="secret",
+        massive_requests_per_minute=10000,
+        sec_user_agent="Test test@example.com",
+    )
+
+    with MassiveClient(settings) as client:
+        splits = list(
+            client.iter_splits(date(2021, 7, 30), date(2026, 7, 30))
+        )
+        dividends = list(
+            client.iter_dividends(date(2021, 7, 30), date(2026, 7, 30))
+        )
+        events = client.get_ticker_events("BBG000MM2P62")
+
+    assert splits[0]["id"] == "split-1"
+    assert dividends[0]["id"] == "dividend-1"
+    assert events["results"]["events"][0]["ticker_change"]["ticker"] == "META"
+    assert split_route.called
+    assert dividend_route.called
+    assert event_route.called
 
 
 def test_duplicate_tickers_are_removed_before_upsert() -> None:

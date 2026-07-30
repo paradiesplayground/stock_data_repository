@@ -16,6 +16,7 @@ from app.models import (
     Security,
     SecurityDailyFeature,
     SecurityReferenceHistory,
+    SecurityReferenceSnapshot,
 )
 from app.services.massive_ingestion import local_today, market_target_date
 from app.services.runs import RunTracker
@@ -790,6 +791,26 @@ def _reference_history_statement(as_of_date: date):
     )
 
 
+def _dated_reference_statement(as_of_date: date):
+    return (
+        select(SecurityReferenceSnapshot)
+        .join(
+            DailyPriceBar,
+            DailyPriceBar.ticker == SecurityReferenceSnapshot.ticker,
+        )
+        .where(
+            DailyPriceBar.trade_date == as_of_date,
+            SecurityReferenceSnapshot.as_of_date <= as_of_date,
+        )
+        .distinct(SecurityReferenceSnapshot.ticker)
+        .order_by(
+            SecurityReferenceSnapshot.ticker,
+            SecurityReferenceSnapshot.as_of_date.desc(),
+            SecurityReferenceSnapshot.id.desc(),
+        )
+    )
+
+
 def _security_reference_values(security: Security) -> dict[str, Any]:
     return {field: getattr(security, field, None) for field in REFERENCE_FIELDS}
 
@@ -797,11 +818,13 @@ def _security_reference_values(security: Security) -> dict[str, Any]:
 def _resolve_feature_securities(
     securities: Iterable[Security],
     history_rows: Iterable[SecurityReferenceHistory],
+    dated_rows: Iterable[SecurityReferenceSnapshot] = (),
 ) -> list[FeatureSecurity]:
     """Resolve reference metadata without using today's active flag as eligibility."""
     history_by_ticker: dict[str, list[SecurityReferenceHistory]] = defaultdict(list)
     for row in history_rows:
         history_by_ticker[row.ticker].append(row)
+    dated_by_ticker = {row.ticker: row for row in dated_rows}
 
     resolved: list[FeatureSecurity] = []
     for security in securities:
@@ -816,18 +839,35 @@ def _resolve_feature_securities(
                     historical[field] = value
             observed_at = row.observed_at_utc
 
+        dated_snapshot = dated_by_ticker.get(security.ticker)
+        dated: dict[str, Any] = {}
+        if dated_snapshot is not None:
+            snapshot = dated_snapshot.snapshot or {}
+            dated = {
+                field: snapshot.get(field)
+                for field in REFERENCE_FIELDS
+                if snapshot.get(field) is not None
+            }
+            observed_at = datetime.combine(
+                dated_snapshot.as_of_date,
+                time.max,
+                tzinfo=timezone.utc,
+            )
+
         missing_from_history = {
             field
             for field in REFERENCE_FIELDS
-            if historical.get(field) is None and current.get(field) is not None
+            if dated.get(field) is None
+            and historical.get(field) is None
+            and current.get(field) is not None
         }
-        values = {**current, **historical}
+        values = {**current, **historical, **dated}
 
         # A session price bar is the durable evidence that the symbol was
         # tradable on this date. Current inactive status must not remove it
         # from a historical feature universe.
         values["active"] = True
-        imputed = not historical or bool(missing_from_history)
+        imputed = (not historical and not dated) or bool(missing_from_history)
 
         if (
             values.get("market") != "stocks"
@@ -864,7 +904,8 @@ def _resolve_feature_securities(
 def _feature_universe(session: Session, as_of_date: date) -> list[FeatureSecurity]:
     securities = session.scalars(_feature_universe_statement(as_of_date)).all()
     history_rows = session.scalars(_reference_history_statement(as_of_date)).all()
-    return _resolve_feature_securities(securities, history_rows)
+    dated_rows = session.scalars(_dated_reference_statement(as_of_date)).all()
+    return _resolve_feature_securities(securities, history_rows, dated_rows)
 
 
 def _feature_date_is_complete(session: Session, as_of_date: date) -> bool:

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.industry_taxonomy import classify_sic
 from app.mcp_queries import (
+    get_corporate_actions as query_corporate_actions,
     get_data_freshness as query_data_freshness,
     get_industry_hierarchy as query_industry_hierarchy,
     get_price_revisions as query_price_revisions,
@@ -19,6 +20,7 @@ from app.models import (
     DailyPriceBar,
     Filing,
     FinancialFact,
+    RawDailyPriceBar,
     Security,
 )
 from app.security import require_api_token, require_configured_api_token
@@ -186,6 +188,8 @@ def get_security(ticker: str, session: DbSession) -> dict[str, object]:
         "cik": row.cik,
         "composite_figi": row.composite_figi,
         "share_class_figi": row.share_class_figi,
+        "list_date": row.list_date,
+        "delisted_date": row.delisted_date,
         "sic_code": row.sic_code,
         "sic_description": row.sic_description,
         "fiscal_year_end": row.fiscal_year_end,
@@ -202,15 +206,17 @@ def get_prices(
     start: date | None = None,
     end: date | None = None,
     limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+    adjusted: bool = True,
 ) -> dict[str, object]:
     security = _security_or_404(session, ticker)
-    statement = select(DailyPriceBar).where(DailyPriceBar.ticker == security.ticker)
+    price_model = DailyPriceBar if adjusted else RawDailyPriceBar
+    statement = select(price_model).where(price_model.ticker == security.ticker)
     if start:
-        statement = statement.where(DailyPriceBar.trade_date >= start)
+        statement = statement.where(price_model.trade_date >= start)
     if end:
-        statement = statement.where(DailyPriceBar.trade_date <= end)
+        statement = statement.where(price_model.trade_date <= end)
     rows = session.scalars(
-        statement.order_by(desc(DailyPriceBar.trade_date)).limit(limit)
+        statement.order_by(desc(price_model.trade_date)).limit(limit)
     ).all()
     return {
         "ticker": security.ticker,
@@ -225,12 +231,29 @@ def get_prices(
                 "volume": row.volume,
                 "vwap": row.vwap,
                 "transactions": row.transactions,
-                "adjusted": row.adjusted,
+                "adjusted": adjusted,
                 "ingested_at_utc": row.ingested_at_utc,
             }
             for row in rows
         ],
     }
+
+
+@router.get("/securities/{ticker}/corporate-actions")
+def get_corporate_actions(
+    ticker: str,
+    session: DbSession,
+    start: date | None = None,
+    end: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> dict[str, object]:
+    return query_corporate_actions(
+        session,
+        ticker,
+        start.isoformat() if start else None,
+        end.isoformat() if end else None,
+        limit,
+    )
 
 
 @router.get("/securities/{ticker}/price-revisions")

@@ -32,8 +32,10 @@ PostgreSQL stores normalized data. Original SEC ZIP archives are retained under 
 
 | Dataset | Source | Stored fields |
 |---|---|---|
-| Security reference | Massive + SEC | Ticker, exchange, type, CIK, FIGI, SIC/industry, active status |
-| Daily prices | Massive | Adjusted OHLC, volume, VWAP, transactions, source timestamp |
+| Security reference | Massive + SEC | Ticker, exchange, type, CIK, FIGI, SIC/industry, active status, listing/delisting dates |
+| Historical reference | Massive | Point-in-time active/inactive ticker states, retained only when a state changes |
+| Daily prices | Massive | Adjusted and unadjusted OHLC, volume, VWAP, transactions, source timestamp |
+| Corporate actions | Massive | Splits, dividends, adjustment factors, and ticker-change timelines |
 | Financial facts | SEC EDGAR | Taxonomy, concept, unit, value, reporting period, form, filing date, accession |
 | Filing metadata | SEC EDGAR | Form, dates, document, items, XBRL flags, canonical SEC URL |
 | Reference history | Massive + SEC | Distinct observed ticker, listing, identifier, and SIC metadata snapshots |
@@ -128,10 +130,20 @@ Populate ticker/CIK reference data first:
 docker compose exec worker python -m app.cli sync-reference
 ```
 
-Backfill the fixed price-history baseline used for reproducible screening and backtests:
+`sync-reference` includes active and inactive securities by default. Use `--active-only` only for
+an intentionally incomplete operational refresh.
+
+Backfill the fixed price-history baseline used for reproducible screening and backtests. Each
+market request stores both adjusted and unadjusted daily bars:
 
 ```bash
 docker compose exec worker python -m app.cli backfill-market --start 2022-01-01
+```
+
+Store corporate actions for the same period:
+
+```bash
+docker compose exec worker python -m app.cli sync-corporate-actions --start 2022-01-01
 ```
 
 Download SEC company facts filed since the fixed `2020-01-01` fundamentals baseline and recent
@@ -162,6 +174,27 @@ already-complete CIK prefix, checkpoints it, and continues at the first incomple
 of rewriting the stored facts. Logs report companies completed, percent, throughput, and ETA every
 25 companies. Do not run `sync-features` until the Company Facts command reports success.
 
+### One-month Massive historical extraction
+
+Deploy and migrate this release before upgrading a Massive subscription. For a five-year pull,
+set `MASSIVE_REQUESTS_PER_MINUTE` to the throughput supported by the paid plan, rebuild the worker,
+and run the jobs in this order:
+
+```bash
+python -m app.cli sync-reference
+python -m app.cli backfill-market --start 2021-07-30 --end 2026-07-29
+python -m app.cli sync-corporate-actions --start 2021-07-30 --end 2026-07-29
+python -m app.cli backfill-reference --start 2021-07-30 --end 2026-07-29 --resume
+python -m app.cli sync-ticker-events --resume
+python -m app.cli backfill-features --start 2022-08-01 --end 2026-07-29
+```
+
+Use the actual earliest date allowed on the upgrade day; the dates above document the July 30,
+2026 extraction. `backfill-market` intentionally reloads dates already present because the new
+unadjusted table must be populated too. Reference backfills use stored QQQ sessions, include
+inactive securities, checkpoint every completed session, and store only changed ticker states.
+Ticker events checkpoint every asset and can safely resume after interruption.
+
 ## Schedule
 
 Defaults use `America/Chicago`:
@@ -169,6 +202,7 @@ Defaults use `America/Chicago`:
 | Job | Default | Reason |
 |---|---:|---|
 | Massive reference | 2:30 AM weekdays | Refresh ticker and CIK mappings |
+| Massive corporate actions | 3:00 AM Saturday | Refresh recent splits and dividends |
 | SEC incremental data | 4:30 AM Tuesday-Saturday | Resume from the last completed SEC index |
 | Massive daily bars | 4:30 PM weekdays | Request the current session's EOD bars after the close |
 | Derived daily fields | 5:00 PM weekdays | Runs after the market job and bounded publication retries |
@@ -223,6 +257,7 @@ GET /v1/securities/{ticker}
 GET /v1/securities/{ticker}/features
 GET /v1/securities/{ticker}/history
 GET /v1/securities/{ticker}/prices
+GET /v1/securities/{ticker}/corporate-actions
 GET /v1/securities/{ticker}/price-revisions
 GET /v1/securities/{ticker}/facts
 GET /v1/securities/{ticker}/filings
@@ -253,6 +288,7 @@ It uses stateless Streamable HTTP and exposes:
 search_securities
 lookup_security
 get_price_history
+get_corporate_actions
 get_financial_facts
 get_filings
 get_data_freshness
@@ -352,7 +388,7 @@ SEC Company Facts uses a three-layer contract:
 3. **Screener policy**: thresholds, scoring, exclusions, and trade rules remain downstream and
    configurable; they never control which SEC facts are retained.
 
-Version `0.4.15` establishes a bounded operational history: fundamentals filed from `2020-01-01`
+Version `0.4.16` establishes a bounded operational history: fundamentals filed from `2020-01-01`
 and prices from `2022-01-01`. Future normalized metrics can be added and rebuilt with
 `sync-features` from every numeric fact retained inside that window. The nightly incremental job
 applies the same cutoff to newly changed filers.
@@ -361,10 +397,13 @@ applies the same cutoff to newly changed filers.
 
 ```bash
 python -m app.cli sync-reference
-python -m app.cli sync-reference --include-inactive
+python -m app.cli sync-reference --active-only
 python -m app.cli sync-market
 python -m app.cli sync-market --date 2026-07-17
 python -m app.cli backfill-market --start 2025-06-01 --end 2026-07-17
+python -m app.cli sync-corporate-actions --start 2025-06-01 --end 2026-07-17
+python -m app.cli backfill-reference --start 2025-06-01 --end 2026-07-17 --resume
+python -m app.cli sync-ticker-events --resume
 python -m app.cli sync-features
 python -m app.cli sync-features --date 2026-07-17
 python -m app.cli backfill-features --start 2026-01-20 --end 2026-07-20 --resume

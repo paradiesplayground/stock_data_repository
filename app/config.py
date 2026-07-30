@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     timezone: str = "America/Chicago"
     market_sync_cron: str = "30 16 * * 1-5"
     reference_sync_cron: str = "30 2 * * 1-5"
+    corporate_actions_sync_cron: str = "0 3 * * 6"
     sec_sync_cron: str = "30 4 * * 1-6"
     feature_sync_cron: str = "0 17 * * 1-5"
     log_level: str = "INFO"

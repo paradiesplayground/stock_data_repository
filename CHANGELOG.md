@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.16
+
+- Store unadjusted daily OHLCV beside the existing provider-adjusted bars so historical price,
+  liquidity, and sizing rules can use the values actually traded on each session.
+- Store split and dividend events with Massive adjustment factors and expose them through HTTP
+  and MCP reads.
+- Add resumable ticker-change ingestion keyed by Composite FIGI to preserve company continuity
+  across symbols.
+- Make active and inactive securities part of every scheduled reference reconciliation.
+- Add resumable point-in-time reference backfills that retain only changed states rather than
+  duplicating every unchanged ticker on every market session.
+- Resolve historical feature metadata from the latest dated reference state available on or
+  before the feature session.
+
 ## 0.4.15
 
 - Bound the operational SEC Company Facts layer to filings submitted on or after

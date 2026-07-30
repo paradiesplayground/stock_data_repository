@@ -37,6 +37,8 @@ class Security(Base):
     cik: Mapped[str | None] = mapped_column(String(10), index=True)
     composite_figi: Mapped[str | None] = mapped_column(String(32))
     share_class_figi: Mapped[str | None] = mapped_column(String(32))
+    list_date: Mapped[date | None] = mapped_column(Date)
+    delisted_date: Mapped[date | None] = mapped_column(Date)
     sic_code: Mapped[str | None] = mapped_column(String(8), index=True)
     sic_description: Mapped[str | None] = mapped_column(String(255))
     fiscal_year_end: Mapped[str | None] = mapped_column(String(4))
@@ -63,6 +65,33 @@ class SecurityReferenceHistory(Base):
     record_hash: Mapped[str] = mapped_column(String(64))
     snapshot: Mapped[dict] = mapped_column(JSONB)
     observed_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class SecurityReferenceSnapshot(Base):
+    __tablename__ = "security_reference_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker",
+            "as_of_date",
+            "source",
+            name="uq_security_reference_snapshot",
+        ),
+        Index(
+            "ix_security_reference_snapshot_date_ticker",
+            "as_of_date",
+            "ticker",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String(32))
+    as_of_date: Mapped[date] = mapped_column(Date)
+    source: Mapped[str] = mapped_column(String(32), default="massive")
+    record_hash: Mapped[str] = mapped_column(String(64))
+    snapshot: Mapped[dict] = mapped_column(JSONB)
+    ingested_at_utc: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
@@ -96,6 +125,34 @@ class DailyPriceBar(Base):
     security: Mapped[Security] = relationship(back_populates="price_bars")
 
 
+class RawDailyPriceBar(Base):
+    __tablename__ = "raw_daily_price_bars"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker",
+            "trade_date",
+            name="uq_raw_daily_price_ticker_date",
+        ),
+        Index("ix_raw_daily_price_date", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String(32))
+    trade_date: Mapped[date] = mapped_column(Date)
+    open: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    high: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    low: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    close: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    volume: Mapped[Decimal] = mapped_column(Numeric(24, 4))
+    vwap: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    transactions: Mapped[int | None] = mapped_column(BigInteger)
+    source: Mapped[str] = mapped_column(String(32), default="massive")
+    source_timestamp_ms: Mapped[int | None] = mapped_column(BigInteger)
+    ingested_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class DailyPriceBarRevision(Base):
     __tablename__ = "daily_price_bar_revisions"
     __table_args__ = (
@@ -124,6 +181,75 @@ class DailyPriceBarRevision(Base):
     source_timestamp_ms: Mapped[int | None] = mapped_column(BigInteger)
     record_hash: Mapped[str] = mapped_column(String(64))
     observed_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class StockSplit(Base):
+    __tablename__ = "stock_splits"
+    __table_args__ = (
+        Index("ix_stock_splits_ticker_date", "ticker", "execution_date"),
+    )
+
+    provider_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(32))
+    execution_date: Mapped[date] = mapped_column(Date)
+    split_from: Mapped[Decimal | None] = mapped_column(Numeric(28, 10))
+    split_to: Mapped[Decimal | None] = mapped_column(Numeric(28, 10))
+    adjustment_type: Mapped[str | None] = mapped_column(String(32))
+    historical_adjustment_factor: Mapped[Decimal | None] = mapped_column(
+        Numeric(28, 14)
+    )
+    source: Mapped[str] = mapped_column(String(32), default="massive")
+    ingested_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CashDividend(Base):
+    __tablename__ = "cash_dividends"
+    __table_args__ = (
+        Index("ix_cash_dividends_ticker_date", "ticker", "ex_dividend_date"),
+    )
+
+    provider_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(32))
+    ex_dividend_date: Mapped[date] = mapped_column(Date)
+    cash_amount: Mapped[Decimal | None] = mapped_column(Numeric(28, 10))
+    split_adjusted_cash_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(28, 10)
+    )
+    currency: Mapped[str | None] = mapped_column(String(16))
+    declaration_date: Mapped[date | None] = mapped_column(Date)
+    record_date: Mapped[date | None] = mapped_column(Date)
+    pay_date: Mapped[date | None] = mapped_column(Date)
+    frequency: Mapped[int | None] = mapped_column(Integer)
+    distribution_type: Mapped[str | None] = mapped_column(String(32))
+    historical_adjustment_factor: Mapped[Decimal | None] = mapped_column(
+        Numeric(28, 14)
+    )
+    source: Mapped[str] = mapped_column(String(32), default="massive")
+    ingested_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class TickerEvent(Base):
+    __tablename__ = "ticker_events"
+    __table_args__ = (
+        Index("ix_ticker_events_ticker_date", "ticker", "event_date"),
+        Index("ix_ticker_events_identifier", "identifier"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    identifier: Mapped[str] = mapped_column(String(64))
+    entity_name: Mapped[str | None] = mapped_column(String(512))
+    event_type: Mapped[str] = mapped_column(String(64))
+    event_date: Mapped[date] = mapped_column(Date)
+    ticker: Mapped[str | None] = mapped_column(String(32))
+    details: Mapped[dict] = mapped_column(JSONB)
+    source: Mapped[str] = mapped_column(String(32), default="massive")
+    ingested_at_utc: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 

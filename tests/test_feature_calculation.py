@@ -107,6 +107,49 @@ def test_reference_snapshot_overrides_later_current_metadata() -> None:
     assert resolved[0].reference_observed_at_utc == history.observed_at_utc
 
 
+def test_dated_reference_snapshot_wins_for_exact_historical_session() -> None:
+    observed_date = date(2022, 10, 27)
+    historical_values = {
+        key: value
+        for key, value in vars(_security(active=True)).items()
+        if key != "ticker"
+    }
+    history = SimpleNamespace(
+        ticker="TWTR",
+        snapshot={
+            "ticker": "TWTR",
+            **historical_values,
+            "name": "Later reference name",
+        },
+        observed_at_utc=datetime(2026, 7, 30, tzinfo=timezone.utc),
+    )
+    dated = SimpleNamespace(
+        ticker="TWTR",
+        as_of_date=observed_date,
+        snapshot={
+            "ticker": "TWTR",
+            **historical_values,
+            "name": "Twitter, Inc.",
+            "primary_exchange": "XNYS",
+            "active": True,
+        },
+    )
+    current = _security(
+        ticker="TWTR",
+        name="Delisted",
+        primary_exchange=None,
+        active=False,
+    )
+
+    resolved = _resolve_feature_securities([current], [history], [dated])
+
+    assert resolved[0].name == "Twitter, Inc."
+    assert resolved[0].primary_exchange == "XNYS"
+    assert resolved[0].active is True
+    assert resolved[0].current_active is False
+    assert resolved[0].reference_observed_at_utc.date() == observed_date
+
+
 def test_non_common_stock_is_excluded_from_feature_universe() -> None:
     assert _resolve_feature_securities([_security(security_type="ETF")], []) == []
 

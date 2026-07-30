@@ -2,6 +2,7 @@ import logging
 import time
 from datetime import date
 from typing import Any, Iterator
+from urllib.parse import quote
 
 import httpx
 
@@ -58,28 +59,85 @@ class MassiveClient:
             return response.json()
         raise RuntimeError("Massive request failed after retries")
 
-    def iter_stock_tickers(self, active: bool = True) -> Iterator[dict[str, Any]]:
+    def _iter_results(
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        while url:
+            payload = self._get(url, params=params)
+            yield from payload.get("results", [])
+            url = payload.get("next_url") or ""
+            params = None
+
+    def iter_stock_tickers(
+        self,
+        active: bool = True,
+        as_of_date: date | None = None,
+    ) -> Iterator[dict[str, Any]]:
         url = f"{self.base_url}/v3/reference/tickers"
-        params: dict[str, Any] | None = {
+        params: dict[str, Any] = {
             "market": "stocks",
             "active": "true" if active else "false",
             "limit": 1000,
             "sort": "ticker",
             "order": "asc",
         }
-        while url:
-            payload = self._get(url, params=params)
-            yield from payload.get("results", [])
-            next_url = payload.get("next_url")
-            url = next_url or ""
-            params = None
+        if as_of_date is not None:
+            params["date"] = as_of_date.isoformat()
+        yield from self._iter_results(url, params)
 
     def iter_active_stock_tickers(self) -> Iterator[dict[str, Any]]:
         """Backward-compatible active-only reference iterator."""
         yield from self.iter_stock_tickers(active=True)
 
-    def get_grouped_daily(self, trade_date: date) -> dict[str, Any]:
+    def get_grouped_daily(
+        self,
+        trade_date: date,
+        *,
+        adjusted: bool = True,
+    ) -> dict[str, Any]:
         return self._get(
             f"{self.base_url}/v2/aggs/grouped/locale/us/market/stocks/{trade_date.isoformat()}",
-            params={"adjusted": "true", "include_otc": "false"},
+            params={
+                "adjusted": "true" if adjusted else "false",
+                "include_otc": "false",
+            },
+        )
+
+    def iter_splits(
+        self,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "limit": 5000,
+            "sort": "execution_date.asc",
+        }
+        if start_date is not None:
+            params["execution_date.gte"] = start_date.isoformat()
+        if end_date is not None:
+            params["execution_date.lte"] = end_date.isoformat()
+        yield from self._iter_results(f"{self.base_url}/stocks/v1/splits", params)
+
+    def iter_dividends(
+        self,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "limit": 5000,
+            "sort": "ex_dividend_date.asc",
+        }
+        if start_date is not None:
+            params["ex_dividend_date.gte"] = start_date.isoformat()
+        if end_date is not None:
+            params["ex_dividend_date.lte"] = end_date.isoformat()
+        yield from self._iter_results(f"{self.base_url}/stocks/v1/dividends", params)
+
+    def get_ticker_events(self, identifier: str) -> dict[str, Any]:
+        encoded_identifier = quote(identifier, safe="")
+        return self._get(
+            f"{self.base_url}/vX/reference/tickers/{encoded_identifier}/events",
+            params={"types": "ticker_change"},
         )

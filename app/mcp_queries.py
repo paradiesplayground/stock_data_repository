@@ -14,15 +14,19 @@ from app.industry_taxonomy import (
     resolve_industry_groups,
 )
 from app.models import (
+    CashDividend,
     DailyPriceBar,
     DailyPriceBarRevision,
     Filing,
     FinancialFact,
     IngestionCheckpoint,
     IngestionRun,
+    RawDailyPriceBar,
     Security,
     SecurityDailyFeature,
     SecurityReferenceHistory,
+    StockSplit,
+    TickerEvent,
 )
 from app.services.massive_ingestion import market_target_date
 
@@ -472,6 +476,8 @@ def lookup_security(session: Session, ticker: str) -> dict[str, Any]:
         "cik": row.cik,
         "composite_figi": row.composite_figi,
         "share_class_figi": row.share_class_figi,
+        "list_date": _json_value(row.list_date),
+        "delisted_date": _json_value(row.delisted_date),
         "sic_code": row.sic_code,
         "sic_description": row.sic_description,
         "industry_classification": classify_sic(row.sic_code),
@@ -494,6 +500,7 @@ def get_price_history(
     start_date: str | None = None,
     end_date: str | None = None,
     limit: int = 500,
+    adjusted: bool = True,
 ) -> dict[str, Any]:
     ticker = ticker.strip().upper()
     limit = _limit(limit, 2000)
@@ -503,20 +510,26 @@ def get_price_history(
         raise ValueError("start_date must be on or before end_date")
     if session.get(Security, ticker) is None:
         return {"ticker": ticker, "found": False, "source": "massive", "items": []}
-    statement = select(DailyPriceBar).where(DailyPriceBar.ticker == ticker)
+    price_model = DailyPriceBar if adjusted else RawDailyPriceBar
+    statement = select(price_model).where(price_model.ticker == ticker)
     if start:
-        statement = statement.where(DailyPriceBar.trade_date >= start)
+        statement = statement.where(price_model.trade_date >= start)
     if end:
-        statement = statement.where(DailyPriceBar.trade_date <= end)
+        statement = statement.where(price_model.trade_date <= end)
     rows = session.scalars(
-        statement.order_by(desc(DailyPriceBar.trade_date)).limit(limit)
+        statement.order_by(desc(price_model.trade_date)).limit(limit)
     ).all()
     rows.reverse()
     return {
         "ticker": ticker,
         "found": True,
         "source": "massive",
-        "adjustment": "provider-adjusted when adjusted=true",
+        "adjusted": adjusted,
+        "adjustment": (
+            "provider split-adjusted"
+            if adjusted
+            else "unadjusted as traded on the historical session"
+        ),
         "items": [
             {
                 "trade_date": _json_value(row.trade_date),
@@ -527,10 +540,109 @@ def get_price_history(
                 "volume": _json_value(row.volume),
                 "vwap": _json_value(row.vwap),
                 "transactions": row.transactions,
-                "adjusted": row.adjusted,
+                "adjusted": adjusted,
                 "ingested_at_utc": _json_value(row.ingested_at_utc),
             }
             for row in rows
+        ],
+    }
+
+
+def get_corporate_actions(
+    session: Session,
+    ticker: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    ticker = ticker.strip().upper()
+    limit = _limit(limit, 2000)
+    start = _date_value(start_date, "start_date")
+    end = _date_value(end_date, "end_date")
+    if start and end and start > end:
+        raise ValueError("start_date must be on or before end_date")
+    security = session.get(Security, ticker)
+    if security is None:
+        return {"ticker": ticker, "found": False, "source": "massive"}
+
+    split_statement = select(StockSplit).where(StockSplit.ticker == ticker)
+    dividend_statement = select(CashDividend).where(CashDividend.ticker == ticker)
+    event_statement = select(TickerEvent).where(TickerEvent.ticker == ticker)
+    if security.composite_figi:
+        event_statement = select(TickerEvent).where(
+            (TickerEvent.ticker == ticker)
+            | (TickerEvent.identifier == security.composite_figi)
+        )
+    if start:
+        split_statement = split_statement.where(StockSplit.execution_date >= start)
+        dividend_statement = dividend_statement.where(
+            CashDividend.ex_dividend_date >= start
+        )
+        event_statement = event_statement.where(TickerEvent.event_date >= start)
+    if end:
+        split_statement = split_statement.where(StockSplit.execution_date <= end)
+        dividend_statement = dividend_statement.where(
+            CashDividend.ex_dividend_date <= end
+        )
+        event_statement = event_statement.where(TickerEvent.event_date <= end)
+
+    splits = session.scalars(
+        split_statement.order_by(StockSplit.execution_date).limit(limit)
+    ).all()
+    dividends = session.scalars(
+        dividend_statement.order_by(CashDividend.ex_dividend_date).limit(limit)
+    ).all()
+    events = session.scalars(
+        event_statement.order_by(TickerEvent.event_date).limit(limit)
+    ).all()
+    return {
+        "ticker": ticker,
+        "found": True,
+        "source": "massive",
+        "splits": [
+            {
+                "provider_id": row.provider_id,
+                "execution_date": _json_value(row.execution_date),
+                "split_from": _json_value(row.split_from),
+                "split_to": _json_value(row.split_to),
+                "adjustment_type": row.adjustment_type,
+                "historical_adjustment_factor": _json_value(
+                    row.historical_adjustment_factor
+                ),
+            }
+            for row in splits
+        ],
+        "dividends": [
+            {
+                "provider_id": row.provider_id,
+                "ex_dividend_date": _json_value(row.ex_dividend_date),
+                "cash_amount": _json_value(row.cash_amount),
+                "split_adjusted_cash_amount": _json_value(
+                    row.split_adjusted_cash_amount
+                ),
+                "currency": row.currency,
+                "declaration_date": _json_value(row.declaration_date),
+                "record_date": _json_value(row.record_date),
+                "pay_date": _json_value(row.pay_date),
+                "frequency": row.frequency,
+                "distribution_type": row.distribution_type,
+                "historical_adjustment_factor": _json_value(
+                    row.historical_adjustment_factor
+                ),
+            }
+            for row in dividends
+        ],
+        "ticker_events": [
+            {
+                "event_id": row.event_id,
+                "identifier": row.identifier,
+                "entity_name": row.entity_name,
+                "event_type": row.event_type,
+                "event_date": _json_value(row.event_date),
+                "ticker": row.ticker,
+                "details": row.details,
+            }
+            for row in events
         ],
     }
 

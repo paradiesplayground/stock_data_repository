@@ -7,6 +7,7 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
 from app.mcp_queries import (
+    get_corporate_actions as query_corporate_actions,
     get_data_freshness as query_data_freshness,
     get_filings as query_filings,
     get_financial_facts as query_financial_facts,
@@ -80,10 +81,36 @@ def get_price_history(
     start_date: str | None = None,
     end_date: str | None = None,
     limit: int = 500,
+    adjusted: bool = True,
 ) -> dict[str, Any]:
-    """Return chronological provider-adjusted daily OHLCV bars for a ticker and optional date range."""
+    """Return adjusted or as-traded daily OHLCV bars for a ticker and optional date range."""
     with SessionLocal() as session:
-        return query_price_history(session, ticker, start_date, end_date, limit)
+        return query_price_history(
+            session,
+            ticker,
+            start_date,
+            end_date,
+            limit,
+            adjusted,
+        )
+
+
+@mcp.tool()
+def get_corporate_actions(
+    ticker: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Return stored splits, dividends, and ticker-change history for a security."""
+    with SessionLocal() as session:
+        return query_corporate_actions(
+            session,
+            ticker,
+            start_date,
+            end_date,
+            limit,
+        )
 
 
 @mcp.tool()
