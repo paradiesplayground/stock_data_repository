@@ -5,6 +5,7 @@ services:
     image: postgres:16-alpine
     container_name: stock-data-postgres
     restart: unless-stopped
+    shm_size: 1gb
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-stockdata}
       POSTGRES_USER: ${POSTGRES_USER:-stockdata}
