@@ -244,12 +244,22 @@ def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
         allowed_ciks = _known_ciks(session)
         checkpoint = session.get(IngestionCheckpoint, COMPANYFACTS_CHECKPOINT_JOB)
         checkpoint_details = checkpoint.details or {} if checkpoint else {}
+        matching_archive = checkpoint_details.get("archive_sha256") == archive_sha256
+        if matching_archive and checkpoint_details.get("complete"):
+            logger.info("SEC Company Facts archive is already fully loaded")
+            tracker.succeed(
+                0,
+                0,
+                {
+                    "already_complete": True,
+                    "archive_sha256": archive_sha256,
+                },
+            )
+            return 0, 0
         resume_member = (
-            checkpoint_details.get("last_member")
-            if checkpoint_details.get("archive_sha256") == archive_sha256
-            and not checkpoint_details.get("complete")
-            else None
+            checkpoint_details.get("last_member") if matching_archive else None
         )
+        bootstrap_detection = not bool(resume_member)
 
         with zipfile.ZipFile(archive) as source:
             members = []
@@ -291,7 +301,7 @@ def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
                 # Bootstrap interrupted runs created before checkpoint support. Because
                 # each company was loaded as a unit, a CIK with at least the archive's
                 # unique row count is already complete and can be skipped safely.
-                if not resume_member:
+                if bootstrap_detection:
                     existing = session.scalar(
                         select(func.count())
                         .select_from(FinancialFact)
@@ -314,6 +324,10 @@ def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
                                 index, len(members), seen, written, started_at
                             )
                         continue
+                    # The loader writes companies in archive order. The first
+                    # incomplete CIK is the interrupted boundary; everything after
+                    # it must be processed without thousands of redundant counts.
+                    bootstrap_detection = False
 
                 seen += len(unique_rows)
                 written += _upsert_fact_rows(session, unique_rows)
