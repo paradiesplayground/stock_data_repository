@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.15
+
+- Bound the operational SEC Company Facts layer to filings submitted on or after
+  `2020-01-01`, while retaining older comparative periods reported by those filings.
+- Make the fixed filing cutoff part of the resumable-load checkpoint identity.
+- Apply the same cutoff to bulk and incremental Company Facts ingestion.
+- Treat raw facts as immutable insert-or-skip records and skip unchanged availability updates to
+  avoid dead tuples on repeated syncs.
+- Remove redundant standalone CIK and unused concept indexes; company/concept/date and accession
+  indexes remain.
+- Establish `2022-01-01` as the documented price and backtest baseline.
+
 ## 0.4.14
 
 - Retain every numeric SEC Company Fact across standard and registrant-defined taxonomies.

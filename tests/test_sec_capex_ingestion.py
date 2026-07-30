@@ -1,4 +1,5 @@
 import hashlib
+from datetime import date
 
 from app.services.sec_ingestion import _archive_sha256, _iter_company_fact_rows
 
@@ -73,3 +74,35 @@ def test_companyfacts_archive_fingerprint_is_stable(tmp_path) -> None:
     assert _archive_sha256(archive) == hashlib.sha256(
         b"company-facts-test"
     ).hexdigest()
+
+
+def test_companyfacts_cutoff_uses_filing_date_and_keeps_comparatives() -> None:
+    payload = _payload(
+        "Research and development",
+        "ResearchAndDevelopmentExpense",
+    )
+    facts = payload["facts"]["cls"]["ResearchAndDevelopmentExpense"]["units"][
+        "USD"
+    ]
+    facts[0]["start"] = "2019-01-01"
+    facts[0]["end"] = "2019-12-31"
+    facts[0]["filed"] = "2020-02-15"
+
+    rows = list(_iter_company_fact_rows(payload, date(2020, 1, 1)))
+
+    assert len(rows) == 1
+    assert rows[0]["period_end"] == date(2019, 12, 31)
+    assert rows[0]["filed_date"] == date(2020, 2, 15)
+
+
+def test_companyfacts_cutoff_drops_older_filings() -> None:
+    payload = _payload(
+        "Research and development",
+        "ResearchAndDevelopmentExpense",
+    )
+    facts = payload["facts"]["cls"]["ResearchAndDevelopmentExpense"]["units"][
+        "USD"
+    ]
+    facts[0]["filed"] = "2019-12-31"
+
+    assert list(_iter_company_fact_rows(payload, date(2020, 1, 1))) == []

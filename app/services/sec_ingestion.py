@@ -85,13 +85,21 @@ def _known_ciks(session: Session) -> set[str]:
     }
 
 
-def _iter_company_fact_rows(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
+def _iter_company_fact_rows(
+    payload: dict[str, Any],
+    filed_on_or_after: date | None = None,
+) -> Iterator[dict[str, Any]]:
     cik = str(payload.get("cik", "")).zfill(10)
     for taxonomy, concepts in payload.get("facts", {}).items():
         for concept, metadata in concepts.items():
             for unit, facts in metadata.get("units", {}).items():
                 for fact in facts:
                     period_end = _parse_date(fact.get("end"))
+                    filed_date = _parse_date(fact.get("filed"))
+                    if filed_on_or_after and (
+                        filed_date is None or filed_date < filed_on_or_after
+                    ):
+                        continue
                     try:
                         value = Decimal(str(fact.get("val")))
                     except (InvalidOperation, TypeError, ValueError):
@@ -109,7 +117,7 @@ def _iter_company_fact_rows(payload: dict[str, Any]) -> Iterator[dict[str, Any]]
                         "value": value,
                         "period_start": _parse_date(fact.get("start")),
                         "period_end": period_end,
-                        "filed_date": _parse_date(fact.get("filed")),
+                        "filed_date": filed_date,
                         "form": fact.get("form"),
                         "fiscal_year": fact.get("fy"),
                         "fiscal_period": fact.get("fp"),
@@ -127,23 +135,12 @@ def _upsert_fact_rows(session: Session, rows: list[dict[str, Any]]) -> int:
         if not batch:
             continue
         statement = insert(FinancialFact).values(batch)
-        excluded = statement.excluded
-        statement = statement.on_conflict_do_update(
+        statement = statement.on_conflict_do_nothing(
             index_elements=[FinancialFact.fact_id],
-            set_={
-                "value": excluded.value,
-                "filed_date": excluded.filed_date,
-                "form": excluded.form,
-                "fiscal_year": excluded.fiscal_year,
-                "fiscal_period": excluded.fiscal_period,
-                "frame": excluded.frame,
-                "label": excluded.label,
-                "description": excluded.description,
-            },
-        )
-        session.execute(statement)
+        ).returning(FinancialFact.fact_id)
+        inserted = session.scalars(statement).all()
         session.commit()
-        written += len(batch)
+        written += len(inserted)
     _refresh_fact_availability(
         session,
         {str(row["accession_number"]) for row in rows if row.get("accession_number")},
@@ -163,6 +160,7 @@ def _refresh_fact_availability(session: Session, accession_numbers: set[str]) ->
         session.execute(
             update(FinancialFact)
             .where(FinancialFact.accession_number.in_(batch))
+            .where(FinancialFact.available_at_utc.is_distinct_from(accepted_at))
             .values(available_at_utc=accepted_at)
         )
     if values:
@@ -180,6 +178,7 @@ def _archive_sha256(path: Path) -> str:
 def _save_companyfacts_checkpoint(
     session: Session,
     archive_sha256: str,
+    filed_on_or_after: date,
     member_name: str | None,
     position: int,
     total: int,
@@ -190,6 +189,7 @@ def _save_companyfacts_checkpoint(
 ) -> None:
     details = {
         "archive_sha256": archive_sha256,
+        "filed_on_or_after": filed_on_or_after.isoformat(),
         "last_member": member_name,
         "position": position,
         "total_members": total,
@@ -244,8 +244,12 @@ def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
         allowed_ciks = _known_ciks(session)
         checkpoint = session.get(IngestionCheckpoint, COMPANYFACTS_CHECKPOINT_JOB)
         checkpoint_details = checkpoint.details or {} if checkpoint else {}
-        matching_archive = checkpoint_details.get("archive_sha256") == archive_sha256
-        if matching_archive and checkpoint_details.get("complete"):
+        matching_configuration = (
+            checkpoint_details.get("archive_sha256") == archive_sha256
+            and checkpoint_details.get("filed_on_or_after")
+            == settings.sec_companyfacts_filed_on_or_after.isoformat()
+        )
+        if matching_configuration and checkpoint_details.get("complete"):
             logger.info("SEC Company Facts archive is already fully loaded")
             tracker.succeed(
                 0,
@@ -253,11 +257,14 @@ def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
                 {
                     "already_complete": True,
                     "archive_sha256": archive_sha256,
+                    "filed_on_or_after": (
+                        settings.sec_companyfacts_filed_on_or_after.isoformat()
+                    ),
                 },
             )
             return 0, 0
         resume_member = (
-            checkpoint_details.get("last_member") if matching_archive else None
+            checkpoint_details.get("last_member") if matching_configuration else None
         )
         bootstrap_detection = not bool(resume_member)
 
@@ -293,7 +300,12 @@ def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
                     continue
                 with source.open(member) as handle:
                     payload = json.load(handle)
-                rows = list(_iter_company_fact_rows(payload))
+                rows = list(
+                    _iter_company_fact_rows(
+                        payload,
+                        settings.sec_companyfacts_filed_on_or_after,
+                    )
+                )
                 unique_rows = list(
                     {str(row["fact_id"]): row for row in rows}.values()
                 )
@@ -313,6 +325,7 @@ def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
                         _save_companyfacts_checkpoint(
                             session,
                             archive_sha256,
+                            settings.sec_companyfacts_filed_on_or_after,
                             member.filename,
                             index,
                             len(members),
@@ -334,6 +347,7 @@ def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
                 _save_companyfacts_checkpoint(
                     session,
                     archive_sha256,
+                    settings.sec_companyfacts_filed_on_or_after,
                     member.filename,
                     index,
                     len(members),
@@ -346,6 +360,7 @@ def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
         _save_companyfacts_checkpoint(
             session,
             archive_sha256,
+            settings.sec_companyfacts_filed_on_or_after,
             members[-1][0].filename if members else None,
             len(members),
             len(members),
@@ -363,6 +378,9 @@ def sync_companyfacts(session: Session, settings: Settings) -> tuple[int, int]:
                 "companies_processed": len(members),
                 "companies_skipped_as_complete": skipped_companies,
                 "archive_sha256": archive_sha256,
+                "filed_on_or_after": (
+                    settings.sec_companyfacts_filed_on_or_after.isoformat()
+                ),
             },
         )
         return seen, written
@@ -627,7 +645,12 @@ def sync_sec_incremental(session: Session, settings: Settings) -> tuple[int, int
                 if any(form.startswith(FINANCIAL_FORMS) for form in forms):
                     companyfacts = client.get_companyfacts(cik)
                     if companyfacts:
-                        fact_rows = list(_iter_company_fact_rows(companyfacts))
+                        fact_rows = list(
+                            _iter_company_fact_rows(
+                                companyfacts,
+                                settings.sec_companyfacts_filed_on_or_after,
+                            )
+                        )
                         seen += len(fact_rows)
                         written += _upsert_fact_rows(session, fact_rows)
 

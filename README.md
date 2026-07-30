@@ -128,13 +128,14 @@ Populate ticker/CIK reference data first:
 docker compose exec worker python -m app.cli sync-reference
 ```
 
-Backfill approximately 400 calendar days of daily prices. This supplies enough history for 12-week movement and 52-week-high calculations downstream:
+Backfill the fixed price-history baseline used for reproducible screening and backtests:
 
 ```bash
-docker compose exec worker python -m app.cli backfill-market
+docker compose exec worker python -m app.cli backfill-market --start 2022-01-01
 ```
 
-Download and normalize SEC company facts and recent filing history:
+Download SEC company facts filed since the fixed `2020-01-01` fundamentals baseline and recent
+filing history:
 
 ```bash
 docker compose exec worker python -m app.cli sync-sec
@@ -148,8 +149,14 @@ docker compose exec worker python -m app.cli sync-features
 
 SEC bulk archives are large. The first SEC import and first price backfill can take a while; subsequent scheduled updates are incremental database upserts.
 
-`sync-companyfacts` fingerprints the downloaded archive and checkpoints the last completed
-company after every member. If interrupted, rerunning the same command resumes at the next member.
+`sync-companyfacts` retains facts from filings submitted on or after
+`SEC_COMPANYFACTS_FILED_ON_OR_AFTER` (`2020-01-01` by default). Those filings may contain older
+comparative periods, which remain available for YoY and TTM calculations. The fixed filing cutoff
+is part of the checkpoint identity, preserving reproducible history rather than silently advancing
+the baseline every year.
+
+The job fingerprints the downloaded archive and checkpoints the last completed company after every
+member. If interrupted, rerunning the same command resumes at the next member.
 For an interrupted load created before checkpoint support, the first upgraded run detects the
 already-complete CIK prefix, checkpoints it, and continues at the first incomplete company instead
 of rewriting the stored facts. Logs report companies completed, percent, throughput, and ETA every
@@ -337,17 +344,18 @@ v0.4.x deployment so ChatGPT can see the tools listed above.
 
 SEC Company Facts uses a three-layer contract:
 
-1. **Raw facts**: `financial_facts` retains every numeric fact for matched companies exactly as
-   reported, including taxonomy, concept, label, unit, period, filing, accession, and value.
+1. **Raw facts**: `financial_facts` retains every numeric fact filed on or after the configured
+   fixed baseline for matched companies exactly as reported, including taxonomy, concept, label,
+   unit, period, filing, accession, and value. Retained bulk archives preserve the complete source.
 2. **Normalized features**: versioned feature calculations select and reconcile the source concepts
    required for standard metrics while preserving nulls when a mapping is not defensible.
 3. **Screener policy**: thresholds, scoring, exclusions, and trade rules remain downstream and
    configurable; they never control which SEC facts are retained.
 
-After upgrading to v0.4.14, run `sync-companyfacts` once to backfill facts discarded by older
-allowlists. Future normalized metrics can then be added and rebuilt with `sync-features` without
-another SEC Company Facts download. The nightly incremental job automatically retains all numeric
-facts for newly changed filers.
+Version `0.4.15` establishes a bounded operational history: fundamentals filed from `2020-01-01`
+and prices from `2022-01-01`. Future normalized metrics can be added and rebuilt with
+`sync-features` from every numeric fact retained inside that window. The nightly incremental job
+applies the same cutoff to newly changed filers.
 
 ## Manual jobs
 

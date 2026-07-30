@@ -223,9 +223,9 @@ class FinancialFact(Base):
     )
 
     fact_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    cik: Mapped[str] = mapped_column(String(10), index=True)
+    cik: Mapped[str] = mapped_column(String(10))
     taxonomy: Mapped[str] = mapped_column(String(64))
-    concept: Mapped[str] = mapped_column(String(255), index=True)
+    concept: Mapped[str] = mapped_column(String(255))
     label: Mapped[str | None] = mapped_column(String(512))
     description: Mapped[str | None] = mapped_column(Text)
     unit: Mapped[str] = mapped_column(String(64))

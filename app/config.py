@@ -1,3 +1,4 @@
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
@@ -27,6 +28,7 @@ class Settings(BaseSettings):
     sec_data_base_url: str = "https://data.sec.gov"
     sec_requests_per_second: int = Field(default=5, ge=1, le=10)
     sec_keep_archives: bool = True
+    sec_companyfacts_filed_on_or_after: date = date(2020, 1, 1)
     sec_incremental_lookback_days: int = Field(default=7, ge=1, le=31)
     sec_incremental_overlap_indexes: int = Field(default=2, ge=0, le=10)
 
