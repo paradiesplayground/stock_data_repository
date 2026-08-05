@@ -1,7 +1,8 @@
 from datetime import date
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from app.config import get_settings
 from app.db import SessionLocal
@@ -351,8 +352,18 @@ if settings.mcp_enable_strategy_writes:
         configuration: dict[str, Any],
         filters: dict[str, Any],
         candidates: list[dict[str, Any]],
-        summary: dict[str, Any] | None = None,
-        report_markdown: str | None = None,
+        summary: Annotated[
+            dict[str, Any] | None,
+            Field(description="Machine-readable run summary; do not place report_markdown here."),
+        ] = None,
+        report_markdown: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Exact completed alert Markdown stored and delivered as a top-level field."
+                )
+            ),
+        ] = None,
         evidence: list[dict[str, Any]] | None = None,
         strategy_name: str | None = None,
         skill_fingerprint: str | None = None,
