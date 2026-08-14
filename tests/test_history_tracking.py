@@ -8,6 +8,7 @@ from app.services.strategy_tracking import (
     _canonical_hash,
     _datetime,
     _identifier,
+    get_strategy_run,
     record_strategy_run,
 )
 from app.models import (
@@ -86,6 +87,64 @@ def test_strategy_identifiers_and_timestamps_are_strict() -> None:
     )
     with pytest.raises(ValueError, match="lowercase letters"):
         _identifier("not allowed!", "strategy", 64)
+
+
+def test_get_strategy_run_sorts_candidates_by_score_descending() -> None:
+    run = type(
+        "Run",
+        (),
+        {
+            "run_id": "run-1",
+            "as_of_date": datetime(2026, 8, 14).date(),
+            "run_type": "as_run",
+            "feature_calculation_version": "1.5.0",
+            "data_cutoff_at_utc": None,
+            "filters": {},
+            "summary": {},
+            "report_markdown": None,
+            "payload_hash": "hash",
+            "generated_at_utc": datetime(2026, 8, 14, tzinfo=timezone.utc),
+        },
+    )()
+    definition = type(
+        "Definition",
+        (),
+        {
+            "strategy_key": "fallen-growth-swing",
+            "version": "1.3.1",
+            "name": "Fallen growth swing",
+            "configuration": {},
+            "skill_fingerprint": None,
+        },
+    )()
+
+    class RowResult:
+        def one_or_none(self):
+            return run, definition
+
+    class ScalarResult:
+        def all(self):
+            return []
+
+    class CapturingSession:
+        def __init__(self) -> None:
+            self.scalar_statements = []
+
+        def execute(self, _statement):
+            return RowResult()
+
+        def scalars(self, statement):
+            self.scalar_statements.append(statement)
+            return ScalarResult()
+
+    session = CapturingSession()
+    get_strategy_run(session, "run-1")
+
+    candidate_query = str(session.scalar_statements[0])
+    assert "strategy_candidates.score DESC NULLS LAST" in candidate_query
+    assert candidate_query.index("strategy_candidates.score DESC NULLS LAST") < (
+        candidate_query.index("strategy_candidates.ticker")
+    )
 
 
 def test_complete_strategy_run_is_normalized_and_committed() -> None:

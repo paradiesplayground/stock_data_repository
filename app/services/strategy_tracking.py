@@ -467,7 +467,10 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
     candidates = session.scalars(
         select(StrategyCandidate)
         .where(StrategyCandidate.run_id == run_id)
-        .order_by(StrategyCandidate.ticker)
+        .order_by(
+            desc(StrategyCandidate.score).nulls_last(),
+            StrategyCandidate.ticker,
+        )
     ).all()
     evidence = session.scalars(
         select(StrategyEvidence)
