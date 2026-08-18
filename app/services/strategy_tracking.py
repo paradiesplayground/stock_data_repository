@@ -173,28 +173,26 @@ def record_strategy_run(
             if action_value
             else None
         )
+        normalized_candidate = {
+            "ticker": ticker,
+            "stage": stage,
+            "action": action,
+            "score": str(_decimal(item.get("score"), "candidate score"))
+            if item.get("score") is not None
+            else None,
+            "score_components": item.get("score_components"),
+            "metrics": item.get("metrics"),
+            "reasons": item.get("reasons"),
+            "trade_plan": item.get("trade_plan"),
+            "payload": item.get("payload"),
+        }
         decision = normalize_candidate_decision(item)
-        normalized_candidates.append(
-            {
-                "ticker": ticker,
-                "stage": stage,
-                "action": action,
-                "score": str(_decimal(item.get("score"), "candidate score"))
-                if item.get("score") is not None
-                else None,
-                "score_components": item.get("score_components"),
-                "metrics": item.get("metrics"),
-                "reasons": item.get("reasons"),
-                "trade_plan": item.get("trade_plan"),
-                "payload": item.get("payload"),
-                "decision": {
-                    key: str(value) if isinstance(value, Decimal) else value
-                    for key, value in decision.items()
-                }
-                if decision
-                else None,
+        if decision:
+            normalized_candidate["decision"] = {
+                key: str(value) if isinstance(value, Decimal) else value
+                for key, value in decision.items()
             }
-        )
+        normalized_candidates.append(normalized_candidate)
 
     normalized_evidence: list[dict[str, Any]] = []
     for item in evidence:
@@ -294,7 +292,7 @@ def record_strategy_run(
                 payload=item["payload"],
             )
         )
-        decision = item["decision"]
+        decision = item.get("decision")
         if decision:
             session.add(
                 StrategyCandidateDecision(
