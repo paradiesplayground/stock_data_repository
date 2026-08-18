@@ -17,6 +17,7 @@ from app.models import (
     StrategyEvidence,
     StrategyRun,
 )
+from app.strategy_decisions import StrategyCandidateDecision
 
 
 def test_history_hash_is_stable_across_key_order_and_exact_numeric_values() -> None:
@@ -89,13 +90,13 @@ def test_strategy_identifiers_and_timestamps_are_strict() -> None:
         _identifier("not allowed!", "strategy", 64)
 
 
-def test_get_strategy_run_sorts_candidates_by_score_descending() -> None:
+def test_get_strategy_run_orders_decision_status_before_score() -> None:
     run = type(
         "Run",
         (),
         {
             "run_id": "run-1",
-            "as_of_date": datetime(2026, 8, 14).date(),
+            "as_of_date": datetime(2026, 8, 18).date(),
             "run_type": "as_run",
             "feature_calculation_version": "1.5.0",
             "data_cutoff_at_utc": None,
@@ -103,7 +104,7 @@ def test_get_strategy_run_sorts_candidates_by_score_descending() -> None:
             "summary": {},
             "report_markdown": None,
             "payload_hash": "hash",
-            "generated_at_utc": datetime(2026, 8, 14, tzinfo=timezone.utc),
+            "generated_at_utc": datetime(2026, 8, 18, tzinfo=timezone.utc),
         },
     )()
     definition = type(
@@ -111,40 +112,107 @@ def test_get_strategy_run_sorts_candidates_by_score_descending() -> None:
         (),
         {
             "strategy_key": "fallen-growth-swing",
-            "version": "1.3.1",
+            "version": "0.7.0",
             "name": "Fallen growth swing",
             "configuration": {},
             "skill_fingerprint": None,
         },
     )()
+    candidates = [
+        type(
+            "Candidate",
+            (),
+            {
+                "ticker": "WATCH",
+                "stage": "watch",
+                "action": "wait",
+                "score": Decimal("99"),
+                "score_components": None,
+                "metrics": None,
+                "reasons": None,
+                "trade_plan": None,
+                "payload": None,
+            },
+        )(),
+        type(
+            "Candidate",
+            (),
+            {
+                "ticker": "BUY",
+                "stage": "confirmed",
+                "action": "buy",
+                "score": Decimal("80"),
+                "score_components": None,
+                "metrics": None,
+                "reasons": None,
+                "trade_plan": None,
+                "payload": None,
+            },
+        )(),
+    ]
+    decisions = [
+        type(
+            "Decision",
+            (),
+            {
+                "ticker": "WATCH",
+                "decision_status": "WATCH",
+                "status_reason": "Still developing",
+                "next_condition": "Reclaim trigger",
+                "current_entry": None,
+                "pct_above_trigger": None,
+                "t1_r": None,
+                "t2_r": None,
+                "technical_gate_passed": False,
+                "market_regime_gate_passed": True,
+            },
+        )(),
+        type(
+            "Decision",
+            (),
+            {
+                "ticker": "BUY",
+                "decision_status": "BUY_SETUP",
+                "status_reason": "All entry gates passed",
+                "next_condition": "Enter only inside the stated buy zone",
+                "current_entry": Decimal("10"),
+                "pct_above_trigger": Decimal("2"),
+                "t1_r": Decimal("1.2"),
+                "t2_r": Decimal("2"),
+                "technical_gate_passed": True,
+                "market_regime_gate_passed": True,
+            },
+        )(),
+    ]
 
     class RowResult:
         def one_or_none(self):
             return run, definition
 
     class ScalarResult:
+        def __init__(self, rows):
+            self.rows = rows
+
         def all(self):
-            return []
+            return self.rows
 
     class CapturingSession:
         def __init__(self) -> None:
-            self.scalar_statements = []
+            self.scalar_call = 0
 
         def execute(self, _statement):
             return RowResult()
 
-        def scalars(self, statement):
-            self.scalar_statements.append(statement)
-            return ScalarResult()
+        def scalars(self, _statement):
+            self.scalar_call += 1
+            rows = {1: candidates, 2: decisions, 3: [], 4: []}[self.scalar_call]
+            return ScalarResult(rows)
 
-    session = CapturingSession()
-    get_strategy_run(session, "run-1")
+    result = get_strategy_run(CapturingSession(), "run-1")
 
-    candidate_query = str(session.scalar_statements[0])
-    assert "strategy_candidates.score DESC NULLS LAST" in candidate_query
-    assert candidate_query.index("strategy_candidates.score DESC NULLS LAST") < (
-        candidate_query.index("strategy_candidates.ticker")
-    )
+    assert [item["ticker"] for item in result["candidates"]] == ["BUY", "WATCH"]
+    assert result["candidates"][0]["decision_status"] == "BUY_SETUP"
+    assert result["candidates"][0]["status_reason"] == "All entry gates passed"
 
 
 def test_complete_strategy_run_is_normalized_and_committed() -> None:
@@ -171,35 +239,44 @@ def test_complete_strategy_run_is_normalized_and_committed() -> None:
     result = record_strategy_run(
         session,
         strategy_key="Fallen-Growth-Swing",
-        strategy_version="1.0.0",
+        strategy_version="0.7.0",
         strategy_name="Fallen growth swing",
-        as_of_date="2026-07-17",
+        as_of_date="2026-08-18",
         run_type="as_run",
-        idempotency_key="fallen-growth-swing:1.0.0:2026-07-17:as-run",
+        idempotency_key="fallen-growth-swing:0.7.0:2026-08-18:as-run",
         configuration={"min_revenue_growth_pct": 40},
         filters={"exclude_industry_groups": ["Healthcare"]},
-        summary={"candidate_count": 1},
-        report_markdown="# Daily alert\n\nNo actionable entries.",
+        summary={"buy_setup_count": 1},
+        report_markdown="# Decision Summary / Best Setups\n\nAAPL is a BUY_SETUP.",
         candidates=[
             {
                 "ticker": "aapl",
-                "stage": "New",
-                "action": "Watch",
-                "score": "7.25",
+                "stage": "confirmed",
+                "action": "buy",
+                "score": "87.25",
                 "metrics": {"price": "210.00"},
-                "reasons": ["newly passed liquidity threshold"],
+                "reasons": ["technical confirmation complete"],
+                "decision_status": "BUY_SETUP",
+                "status_reason": "All entry and risk gates passed.",
+                "next_condition": "Enter only while price remains inside the planned buy zone.",
+                "current_entry": "210.00",
+                "pct_above_trigger": "3.25",
+                "t1_r": "1.20",
+                "t2_r": "2.10",
+                "technical_gate_passed": True,
+                "market_regime_gate_passed": True,
             }
         ],
         evidence=[
             {
                 "ticker": "AAPL",
                 "evidence_type": "sec-filing",
-                "accepted_at_utc": "2026-07-17T20:00:00Z",
+                "accepted_at_utc": "2026-08-18T20:00:00Z",
                 "accession_number": "0000000000-26-000001",
             }
         ],
-        feature_calculation_version="1.2.0",
-        data_cutoff_at_utc="2026-07-17T23:00:00Z",
+        feature_calculation_version="1.5.0",
+        data_cutoff_at_utc="2026-08-18T23:00:00Z",
     )
 
     assert result["recorded"] is True
@@ -213,15 +290,24 @@ def test_complete_strategy_run_is_normalized_and_committed() -> None:
     candidate = next(
         item for item in session.added if isinstance(item, StrategyCandidate)
     )
+    decision = next(
+        item for item in session.added if isinstance(item, StrategyCandidateDecision)
+    )
     evidence = next(
         item for item in session.added if isinstance(item, StrategyEvidence)
     )
     assert definition.strategy_key == "fallen-growth-swing"
-    assert definition.version == "1.0.0"
-    assert run.as_of_date.isoformat() == "2026-07-17"
-    assert run.summary == {"candidate_count": 1}
+    assert definition.version == "0.7.0"
+    assert run.as_of_date.isoformat() == "2026-08-18"
+    assert run.summary == {"buy_setup_count": 1}
     assert "report_markdown" not in run.summary
-    assert run.report_markdown.startswith("# Daily alert")
+    assert run.report_markdown.startswith("# Decision Summary / Best Setups")
     assert candidate.ticker == "AAPL"
-    assert candidate.score == Decimal("7.25")
-    assert evidence.accepted_at_utc == datetime(2026, 7, 17, 20, 0, tzinfo=timezone.utc)
+    assert candidate.score == Decimal("87.25")
+    assert decision.decision_status == "BUY_SETUP"
+    assert decision.status_reason == "All entry and risk gates passed."
+    assert decision.t1_r == Decimal("1.20")
+    assert decision.t2_r == Decimal("2.10")
+    assert decision.technical_gate_passed is True
+    assert decision.market_regime_gate_passed is True
+    assert evidence.accepted_at_utc == datetime(2026, 8, 18, 20, 0, tzinfo=timezone.utc)
