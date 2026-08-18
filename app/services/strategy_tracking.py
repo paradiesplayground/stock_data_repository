@@ -17,6 +17,11 @@ from app.models import (
     StrategyOutcomeObservation,
     StrategyRun,
 )
+from app.strategy_decisions import (
+    StrategyCandidateDecision,
+    decision_sort_key,
+    normalize_candidate_decision,
+)
 
 RUN_TYPES = {"as_run", "replay", "backtest"}
 IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -168,6 +173,7 @@ def record_strategy_run(
             if action_value
             else None
         )
+        decision = normalize_candidate_decision(item)
         normalized_candidates.append(
             {
                 "ticker": ticker,
@@ -181,6 +187,12 @@ def record_strategy_run(
                 "reasons": item.get("reasons"),
                 "trade_plan": item.get("trade_plan"),
                 "payload": item.get("payload"),
+                "decision": {
+                    key: str(value) if isinstance(value, Decimal) else value
+                    for key, value in decision.items()
+                }
+                if decision
+                else None,
             }
         )
 
@@ -282,6 +294,25 @@ def record_strategy_run(
                 payload=item["payload"],
             )
         )
+        decision = item["decision"]
+        if decision:
+            session.add(
+                StrategyCandidateDecision(
+                    run_id=run.run_id,
+                    ticker=item["ticker"],
+                    decision_status=decision["decision_status"],
+                    status_reason=decision["status_reason"],
+                    next_condition=decision["next_condition"],
+                    current_entry=_decimal(decision["current_entry"], "current_entry"),
+                    pct_above_trigger=_decimal(
+                        decision["pct_above_trigger"], "pct_above_trigger"
+                    ),
+                    t1_r=_decimal(decision["t1_r"], "t1_r"),
+                    t2_r=_decimal(decision["t2_r"], "t2_r"),
+                    technical_gate_passed=decision["technical_gate_passed"],
+                    market_regime_gate_passed=decision["market_regime_gate_passed"],
+                )
+            )
     for item in normalized_evidence:
         session.add(
             StrategyEvidence(
@@ -465,13 +496,24 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
         return {"run_id": run_id, "found": False}
     run, definition = row
     candidates = session.scalars(
-        select(StrategyCandidate)
-        .where(StrategyCandidate.run_id == run_id)
-        .order_by(
-            desc(StrategyCandidate.score).nulls_last(),
-            StrategyCandidate.ticker,
+        select(StrategyCandidate).where(StrategyCandidate.run_id == run_id)
+    ).all()
+    decisions = session.scalars(
+        select(StrategyCandidateDecision).where(
+            StrategyCandidateDecision.run_id == run_id
         )
     ).all()
+    decisions_by_ticker = {item.ticker: item for item in decisions}
+    candidates = sorted(
+        candidates,
+        key=lambda item: decision_sort_key(
+            decisions_by_ticker.get(item.ticker).decision_status
+            if item.ticker in decisions_by_ticker
+            else None,
+            item.score,
+            item.ticker,
+        ),
+    )
     evidence = session.scalars(
         select(StrategyEvidence)
         .where(StrategyEvidence.run_id == run_id)
@@ -485,12 +527,11 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
             StrategyOutcomeObservation.ticker,
         )
     ).all()
-    return {
-        "found": True,
-        **_run_item(run, definition),
-        "strategy_configuration": definition.configuration,
-        "skill_fingerprint": definition.skill_fingerprint,
-        "candidates": [
+
+    candidate_items = []
+    for item in candidates:
+        decision = decisions_by_ticker.get(item.ticker)
+        candidate_items.append(
             {
                 "ticker": item.ticker,
                 "stage": item.stage,
@@ -501,9 +542,36 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
                 "reasons": item.reasons,
                 "trade_plan": item.trade_plan,
                 "payload": item.payload,
+                "decision_status": decision.decision_status if decision else None,
+                "status_reason": decision.status_reason if decision else None,
+                "next_condition": decision.next_condition if decision else None,
+                "current_entry": str(decision.current_entry)
+                if decision and decision.current_entry is not None
+                else None,
+                "pct_above_trigger": str(decision.pct_above_trigger)
+                if decision and decision.pct_above_trigger is not None
+                else None,
+                "t1_r": str(decision.t1_r)
+                if decision and decision.t1_r is not None
+                else None,
+                "t2_r": str(decision.t2_r)
+                if decision and decision.t2_r is not None
+                else None,
+                "technical_gate_passed": decision.technical_gate_passed
+                if decision
+                else None,
+                "market_regime_gate_passed": decision.market_regime_gate_passed
+                if decision
+                else None,
             }
-            for item in candidates
-        ],
+        )
+
+    return {
+        "found": True,
+        **_run_item(run, definition),
+        "strategy_configuration": definition.configuration,
+        "skill_fingerprint": definition.skill_fingerprint,
+        "candidates": candidate_items,
         "evidence": [
             {
                 "ticker": item.ticker,
