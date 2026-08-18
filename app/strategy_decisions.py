@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models import Base
@@ -26,6 +26,16 @@ DECISION_PRIORITY = {
     "INVALIDATED": 6,
 }
 
+DECISION_STATUS_DEFINITIONS = {
+    "BUY_SETUP": "Tradeable now: every required entry, reward/risk, technical, extension, and market-regime gate passes.",
+    "CONFIRMED_WAIT_FOR_ENTRY": "Technically confirmed, but at least one entry-quality gate is not currently acceptable; wait rather than chase.",
+    "NEAR_TRIGGER": "Setup is close to the technical entry trigger but confirmation is not complete.",
+    "WATCH": "Valid developing candidate that is not yet close enough to an entry trigger to treat as imminent.",
+    "RESEARCH": "Potential setup cannot be classified confidently until specified evidence or data is verified.",
+    "AVOID": "Known risk/reward or quality issue makes the setup unattractive under the current thesis.",
+    "INVALIDATED": "The prior setup or thesis has broken its stated invalidation condition and is no longer eligible without a new thesis.",
+}
+
 BUY_SETUP_MIN_T1_R = Decimal("1.00")
 BUY_SETUP_MIN_T2_R = Decimal("1.75")
 BUY_SETUP_MAX_PCT_ABOVE_TRIGGER = Decimal("5.00")
@@ -34,11 +44,15 @@ BUY_SETUP_MAX_PCT_ABOVE_TRIGGER = Decimal("5.00")
 class StrategyCandidateDecision(Base):
     __tablename__ = "strategy_candidate_decisions"
     __table_args__ = (
-        UniqueConstraint("run_id", "ticker", name="uq_strategy_candidate_decision_run_ticker"),
+        UniqueConstraint(
+            "run_id",
+            "ticker",
+            name="uq_strategy_candidate_decision_run_ticker",
+        ),
         {"schema": "strategy_tracking"},
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(
         ForeignKey("strategy_tracking.strategy_runs.run_id", ondelete="CASCADE"),
         index=True,
@@ -100,7 +114,9 @@ def normalize_candidate_decision(item: dict[str, Any]) -> dict[str, Any] | None:
         "status_reason": _required_text(item.get("status_reason"), "status_reason"),
         "next_condition": _required_text(item.get("next_condition"), "next_condition"),
         "current_entry": _decimal(item.get("current_entry"), "current_entry"),
-        "pct_above_trigger": _decimal(item.get("pct_above_trigger"), "pct_above_trigger"),
+        "pct_above_trigger": _decimal(
+            item.get("pct_above_trigger"), "pct_above_trigger"
+        ),
         "t1_r": _decimal(item.get("t1_r"), "t1_r"),
         "t2_r": _decimal(item.get("t2_r"), "t2_r"),
         "technical_gate_passed": item.get("technical_gate_passed"),
@@ -125,7 +141,8 @@ def normalize_candidate_decision(item: dict[str, Any]) -> dict[str, Any] | None:
         ]
         if missing:
             raise ValueError(
-                "BUY_SETUP requires explicit entry-quality gates: " + ", ".join(missing)
+                "BUY_SETUP requires explicit entry-quality gates: "
+                + ", ".join(missing)
             )
         if decision["t1_r"] < BUY_SETUP_MIN_T1_R:
             raise ValueError("BUY_SETUP requires t1_r >= 1.00")
@@ -141,6 +158,10 @@ def normalize_candidate_decision(item: dict[str, Any]) -> dict[str, Any] | None:
     return decision
 
 
-def decision_sort_key(status: str | None, score: Decimal | None, ticker: str) -> tuple[int, Decimal, str]:
+def decision_sort_key(
+    status: str | None,
+    score: Decimal | None,
+    ticker: str,
+) -> tuple[int, Decimal, str]:
     priority = DECISION_PRIORITY.get(status or "", len(DECISION_PRIORITY) + 1)
     return priority, -(score or Decimal("-999999")), ticker
