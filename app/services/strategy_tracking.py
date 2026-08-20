@@ -196,6 +196,8 @@ def record_strategy_run(
         else:
             stage = _identifier(str(item.get("stage", "")), "candidate stage", 32)
         action_value = item.get("action")
+        if contract_required and action_value is not None:
+            raise ValueError("v0.8 candidates must not emit the legacy action field")
         action = (
             _identifier(str(action_value), "candidate action", 32)
             if action_value
@@ -215,7 +217,9 @@ def record_strategy_run(
             "payload": item.get("payload"),
         }
         decision = normalize_candidate_decision(
-            item, contract_required=contract_required
+            item,
+            contract_version=decision_contract_version,
+            contract_required=contract_required,
         )
         if decision:
             normalized_candidate["decision"] = {
@@ -331,18 +335,25 @@ def record_strategy_run(
                 StrategyCandidateDecision(
                     run_id=run.run_id,
                     ticker=item["ticker"],
-                    decision_status=decision["decision_status"],
+                    decision_status=decision.get("decision_status") or decision.get("buyability_status"),
                     status_reason=decision["status_reason"],
-                    next_condition=decision["next_condition"],
+                    next_condition=decision.get("next_condition") or "; ".join(decision.get("buy_conditions", [])),
                     technical_state=decision["technical_state"],
-                    current_entry=_decimal(decision["current_entry"], "current_entry"),
+                    current_entry=_decimal(decision.get("current_entry"), "current_entry"),
                     pct_above_trigger=_decimal(
-                        decision["pct_above_trigger"], "pct_above_trigger"
+                        decision.get("pct_above_trigger"), "pct_above_trigger"
                     ),
-                    t1_r=_decimal(decision["t1_r"], "t1_r"),
-                    t2_r=_decimal(decision["t2_r"], "t2_r"),
+                    t1_r=_decimal(decision.get("t1_r"), "t1_r"),
+                    t2_r=_decimal(decision.get("t2_r"), "t2_r"),
                     technical_gate_passed=decision["technical_gate_passed"],
                     market_regime_gate_passed=decision["market_regime_gate_passed"],
+                    buyability_status=decision.get("buyability_status"),
+                    buy_conditions=decision.get("buy_conditions"),
+                    remaining_gate_count=decision.get("remaining_gate_count"),
+                    current_price=_decimal(decision.get("current_price"), "current_price"),
+                    trigger_price=_decimal(decision.get("trigger_price"), "trigger_price"),
+                    distance_to_trigger_pct=_decimal(decision.get("distance_to_trigger_pct"), "distance_to_trigger_pct"),
+                    invalidation_price=_decimal(decision.get("invalidation_price"), "invalidation_price"),
                 )
             )
     for item in normalized_evidence:
@@ -545,6 +556,7 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
             else None,
             item.score,
             item.ticker,
+            getattr(run, "decision_contract_version", None),
         ),
     )
     evidence = session.scalars(
@@ -564,8 +576,7 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
     candidate_items = []
     for item in candidates:
         decision = decisions_by_ticker.get(item.ticker)
-        candidate_items.append(
-            {
+        candidate_item = {
                 "ticker": item.ticker,
                 "stage": item.stage,
                 "screen_bucket": item.stage,
@@ -601,7 +612,26 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
                 if decision
                 else None,
             }
-        )
+        if getattr(run, "decision_contract_version", None) == DECISION_CONTRACT_VERSION:
+            candidate_item.pop("action", None)
+            candidate_item.pop("decision_status", None)
+            candidate_item.pop("next_condition", None)
+            candidate_item.pop("current_entry", None)
+            candidate_item.pop("pct_above_trigger", None)
+            candidate_item.pop("t1_r", None)
+            candidate_item.pop("t2_r", None)
+            candidate_item.update(
+                {
+                    "buyability_status": decision.buyability_status if decision else None,
+                    "buy_conditions": decision.buy_conditions if decision else None,
+                    "remaining_gate_count": decision.remaining_gate_count if decision else None,
+                    "current_price": str(decision.current_price) if decision and decision.current_price is not None else None,
+                    "trigger_price": str(decision.trigger_price) if decision and decision.trigger_price is not None else None,
+                    "distance_to_trigger_pct": str(decision.distance_to_trigger_pct) if decision and decision.distance_to_trigger_pct is not None else None,
+                    "invalidation_price": str(decision.invalidation_price) if decision and decision.invalidation_price is not None else None,
+                }
+            )
+        candidate_items.append(candidate_item)
 
     return {
         "found": True,
