@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -783,6 +783,7 @@ def get_data_freshness(
     )
     job_names = session.scalars(select(IngestionRun.job_name).distinct()).all()
     jobs: list[dict[str, Any]] = []
+    stale_cutoff = local_time.astimezone(ZoneInfo("UTC")) - timedelta(hours=6)
     for job_name in sorted(job_names):
         run = session.scalar(
             select(IngestionRun)
@@ -791,11 +792,18 @@ def get_data_freshness(
             .limit(1)
         )
         if run:
+            started = run.started_at_utc
+            if started is not None and started.tzinfo is None:
+                started = started.replace(tzinfo=ZoneInfo("UTC"))
+            is_stale = bool(
+                run.status == "running" and started is not None and started < stale_cutoff
+            )
             jobs.append(
                 {
                     "job_name": run.job_name,
                     "source": run.source,
                     "status": run.status,
+                    "is_stale": is_stale,
                     "started_at_utc": _json_value(run.started_at_utc),
                     "completed_at_utc": _json_value(run.completed_at_utc),
                     "records_seen": run.records_seen,
@@ -817,6 +825,23 @@ def get_data_freshness(
         and feature_job is not None
         and feature_job["status"] == "succeeded"
     )
+    critical_jobs = {
+        "massive_reference",
+        "massive_daily_prices",
+        "massive_corporate_actions",
+        "sec_incremental",
+        "derived_features",
+    }
+    freshness_issues = [
+        f"{job['job_name']} has been running for more than six hours"
+        for job in jobs
+        if job["job_name"] in critical_jobs and job["is_stale"]
+    ]
+    freshness_issues.extend(
+        f"{job['job_name']} latest run failed: {job['error_message'] or 'unknown error'}"
+        for job in jobs
+        if job["job_name"] in critical_jobs and job["status"] == "failed"
+    )
     return {
         "checked_at_local": local_time.isoformat(),
         "timezone": settings.timezone,
@@ -826,7 +851,8 @@ def get_data_freshness(
         "latest_feature_date": _json_value(latest_feature_date),
         "market_is_current": market_is_current,
         "features_are_current": features_are_current,
-        "ready_for_screening": market_is_current and features_are_current,
+        "ready_for_screening": market_is_current and features_are_current and not freshness_issues,
+        "freshness_issues": freshness_issues,
         "schedules": {
             "market_sync_cron": settings.market_sync_cron,
             "feature_sync_cron": settings.feature_sync_cron,
