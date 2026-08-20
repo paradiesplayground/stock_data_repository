@@ -27,7 +27,10 @@ from app.services.strategy_tracking import (
     record_strategy_outcomes as save_strategy_outcomes,
     record_strategy_run as save_strategy_run,
 )
-from app.services.stock_alert_delivery import publish_strategy_run as deliver_strategy_run
+from app.services.stock_alert_delivery import (
+    publish_strategy_run as deliver_strategy_run,
+    resend_strategy_run_email as resend_strategy_run_delivery,
+)
 from app.services.strategy_simulation import (
     get_simulation as query_strategy_simulation,
     list_simulations as query_strategy_simulations,
@@ -413,6 +416,12 @@ if settings.mcp_enable_strategy_writes:
         """Publish a retrieved and verified canonical run to the website and email."""
         with SessionLocal() as session:
             return deliver_strategy_run(session, get_settings(), run_id)
+
+    @mcp.tool()
+    def resend_strategy_run_email(run_id: str) -> dict[str, Any]:
+        """Explicitly resend email for a stored canonical run without creating a new run."""
+        with SessionLocal() as session:
+            return resend_strategy_run_delivery(session, get_settings(), run_id)
 
     @mcp.tool()
     def record_strategy_outcomes(
