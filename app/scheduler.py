@@ -16,6 +16,7 @@ from app.services.massive_ingestion import (
     sync_reference_data,
 )
 from app.services.sec_ingestion import sync_sec_incremental
+from app.services.runs import recover_stale_ingestion_runs
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,13 @@ def _run_features() -> None:
 def main() -> None:
     configure_logging()
     settings = get_settings()
+    with SessionLocal() as session:
+        recovered = recover_stale_ingestion_runs(session)
+        if recovered:
+            logger.warning("Recovered stale ingestion job(s) at startup: %s", sorted(recovered))
+    if "massive_corporate_actions" in recovered:
+        logger.warning("Immediately rerunning recovered corporate-actions sync")
+        _run_corporate_actions()
     scheduler = BlockingScheduler(timezone=settings.timezone)
     common = {"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600}
     scheduler.add_job(
