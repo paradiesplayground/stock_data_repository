@@ -321,8 +321,12 @@ facts, prices, filings, reference data, or derived fields. After changing this s
 the MCP container and refresh the ChatGPT app's tool discovery.
 
 Every production `record_strategy_run` call with `run_type="as_run"` must declare
-`decision_contract_version="0.7"`. Every candidate in that run must separately provide a
-`screen_bucket`, `technical_state`, `decision_status`, `status_reason`, and `next_condition`.
+`decision_contract_version="0.8"`. Every candidate in that run must provide internal
+`screen_bucket` and `technical_state` audit fields plus one public `buyability_status`,
+`status_reason`, `buy_conditions`, `remaining_gate_count`, and `current_price`. `BUY_NOW` and
+`ALMOST_READY` also require structured trigger, distance-to-trigger, and invalidation prices.
+New v0.8 alerts must not emit legacy `action` or `decision_status` fields. Stored v0.7 alerts remain
+readable and resendable as legacy contract runs.
 Incomplete production alerts are rejected before persistence and checked again before webhook
 delivery; historical replays and backtests remain readable without retroactive rewriting. MCP
 callers must retrieve and compare the stored run after `record_strategy_run`, then call
