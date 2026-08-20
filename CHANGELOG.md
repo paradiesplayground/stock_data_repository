@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-20
+
+- Add decision contract v0.8 with one public buyability result: `BUY_NOW`, `ALMOST_READY`,
+  `RADAR`, or `NOT_ELIGIBLE`.
+- Require structured current, trigger, distance, invalidation, and buy-condition data when a setup
+  is presented as buyable or almost ready, while preserving v0.7 delivery compatibility.
+- Recover orphaned ingestion runs at worker startup, immediately rerun recovered corporate-action
+  syncs, and block screening while a critical ingestion job is stale or failed.
+
 ## 0.4.19
 
 - Enforce complete v0.7 decision evidence before persistence, including current price, relative
