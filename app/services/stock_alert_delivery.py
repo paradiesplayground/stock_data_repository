@@ -37,10 +37,12 @@ def validate_strategy_run_for_delivery(run: dict[str, Any]) -> None:
         )
 
 
-def publish_strategy_run(
+def _deliver_strategy_run(
     session: Session,
     settings: Settings,
     run_id: str,
+    *,
+    resend_email: bool,
 ) -> dict[str, Any]:
     if not settings.stock_alert_webhook_url or not settings.stock_alert_webhook_token:
         return {"status": "disabled", "run_id": run_id}
@@ -52,13 +54,17 @@ def publish_strategy_run(
         return {"status": "skipped", "reason": "not_as_run", "run_id": run_id}
     validate_strategy_run_for_delivery(run)
 
+    payload = dict(run)
+    if resend_email:
+        payload["delivery_request"] = "resend_email"
+
     response = httpx.post(
         settings.stock_alert_webhook_url,
         headers={
             "Authorization": f"Bearer {settings.stock_alert_webhook_token}",
             "Content-Type": "application/json",
         },
-        json=run,
+        json=payload,
         timeout=settings.stock_alert_webhook_timeout_seconds,
         follow_redirects=True,
     )
@@ -74,12 +80,48 @@ def publish_strategy_run(
         raise RuntimeError(
             "website did not confirm email delivery: " + str(email_delivery or "missing")
         )
+    receipt = result.get("email_receipt")
+    if not isinstance(receipt, dict):
+        raise RuntimeError("website did not return an email delivery receipt")
+    if not receipt.get("message_id"):
+        raise RuntimeError("email delivery receipt did not include message_id")
+    if int(receipt.get("accepted_count") or 0) < 1:
+        raise RuntimeError("email delivery receipt did not confirm an accepted recipient")
+
     return {
-        "status": "published",
+        "status": "resent" if resend_email else "published",
         "run_id": run_id,
-        "website_delivery": "published",
-        "email_delivery": "sent",
+        "website_delivery": result.get("publication") or "published",
+        "email_delivery": "smtp_accepted",
+        "email_receipt": receipt,
     }
+
+
+def publish_strategy_run(
+    session: Session,
+    settings: Settings,
+    run_id: str,
+) -> dict[str, Any]:
+    return _deliver_strategy_run(
+        session,
+        settings,
+        run_id,
+        resend_email=False,
+    )
+
+
+def resend_strategy_run_email(
+    session: Session,
+    settings: Settings,
+    run_id: str,
+) -> dict[str, Any]:
+    """Explicitly resend email for a stored canonical run without creating another run."""
+    return _deliver_strategy_run(
+        session,
+        settings,
+        run_id,
+        resend_email=True,
+    )
 
 
 def publish_latest_strategy_run(
