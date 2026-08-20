@@ -1,11 +1,16 @@
 import importlib
+import json
 import sys
 from contextlib import contextmanager
+from pathlib import Path
+
+import pytest
 
 from app.config import Settings, get_settings
 from app.services.stock_alert_delivery import (
     publish_strategy_run,
     resend_strategy_run_email,
+    validate_strategy_run_for_delivery,
 )
 
 
@@ -228,3 +233,14 @@ def test_explicit_resend_preserves_run_and_requests_email_retry(monkeypatch) -> 
             "rejected_count": 0,
         },
     }
+
+
+def test_delivery_revalidates_august_19_trade_plan_math() -> None:
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "august_19_v07.json").read_text()
+    )
+    validate_strategy_run_for_delivery(fixture)
+    fixture["candidates"][0]["trade_plan"]["planned_risk"] = 1
+
+    with pytest.raises(ValueError, match="planned_risk.*inconsistent"):
+        validate_strategy_run_for_delivery(fixture)

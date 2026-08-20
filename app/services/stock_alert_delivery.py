@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.models import StrategyDefinition, StrategyRun
 from app.services.strategy_tracking import get_strategy_run
-from app.strategy_decisions import DECISION_CONTRACT_VERSION
+from app.strategy_decisions import (
+    DECISION_CONTRACT_VERSION,
+    normalize_candidate_decision,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,22 +22,14 @@ def validate_strategy_run_for_delivery(run: dict[str, Any]) -> None:
             "production alerts require decision_contract_version="
             + DECISION_CONTRACT_VERSION
         )
-    missing: list[str] = []
     for candidate in run.get("candidates") or []:
         ticker = candidate.get("ticker") or "<unknown>"
-        for field in (
-            "screen_bucket",
-            "technical_state",
-            "decision_status",
-            "status_reason",
-            "next_condition",
-        ):
-            if candidate.get(field) in (None, ""):
-                missing.append(f"{ticker}.{field}")
-    if missing:
-        raise ValueError(
-            "decision contract validation failed before delivery: " + ", ".join(missing)
-        )
+        try:
+            normalize_candidate_decision(candidate, contract_required=True)
+        except ValueError as error:
+            raise ValueError(
+                f"decision contract validation failed before delivery for {ticker}: {error}"
+            ) from error
 
 
 def _deliver_strategy_run(

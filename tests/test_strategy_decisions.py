@@ -1,4 +1,6 @@
+import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -94,3 +96,38 @@ def test_v07_contract_requires_separate_screen_and_technical_states() -> None:
             },
             contract_required=True,
         )
+
+
+def test_august_19_fixture_passes_full_v07_evidence_validation() -> None:
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "august_19_v07.json").read_text()
+    )
+
+    assert fixture["run_id"] == "cceea193-6617-47a1-8605-a17a1ccc57df"
+    assert fixture["summary"]["buy_setup_count"] == 0
+    for candidate in fixture["candidates"]:
+        normalize_candidate_decision(candidate, contract_required=True)
+
+
+def test_v07_rejects_inconsistent_trade_plan_math() -> None:
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "august_19_v07.json").read_text()
+    )
+    fly = next(item for item in fixture["candidates"] if item["ticker"] == "FLY")
+    fly["trade_plan"]["potential_rewards"][0] = 999
+
+    with pytest.raises(ValueError, match=r"potential_rewards\[0\].*inconsistent"):
+        normalize_candidate_decision(fly, contract_required=True)
+
+
+def test_v07_rejects_missing_price_relative_strength_and_volume() -> None:
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "august_19_v07.json").read_text()
+    )
+    fly = next(item for item in fixture["candidates"] if item["ticker"] == "FLY")
+
+    for field in ("close", "relative_return_20d_vs_qqq_pct", "relative_volume_20d"):
+        candidate = {**fly, "metrics": {**fly["metrics"]}}
+        candidate["metrics"].pop(field)
+        with pytest.raises(ValueError, match=field):
+            normalize_candidate_decision(candidate, contract_required=True)

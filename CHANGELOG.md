@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.19
+
+- Enforce complete v0.7 decision evidence before persistence, including current price, relative
+  strength, relative volume, market and technical gates, trade trigger, stop, sizing, and reward
+  calculations.
+- Reject status/bucket contradictions and inconsistent trade-plan math instead of publishing a
+  plausible-looking but malformed alert.
+- Add the contract-corrected August 19 run as a regression fixture.
+
 ## 0.4.18
 
 - Add an explicit `resend_strategy_run_email` MCP tool that reuses a stored immutable run.

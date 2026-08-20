@@ -32,6 +32,9 @@ New production `as_run` records must declare `decision_contract_version: "0.7"`.
 
 `BUY_SETUP` is rejected at write time unless all of the following are explicitly true:
 
+- current price is at or above the trigger and inside the 5% entry zone
+- 20-session relative strength versus QQQ is positive
+- constructive relative volume meets the trade plan's required-volume threshold
 - T1 reward/risk is at least `1.00R`
 - T2 reward/risk is at least `1.75R`
 - current price is no more than `5.00%` above the trigger
@@ -46,6 +49,12 @@ The persisted fields are:
 - `t2_r`
 - `technical_gate_passed`
 - `market_regime_gate_passed`
+
+Every v0.7 candidate must also carry `metrics.close`,
+`metrics.relative_return_20d_vs_qqq_pct`, `metrics.relative_volume_20d`, and explicit technical and
+market gate results. Candidates with a trade plan must provide entry, trigger, stop, two targets,
+two R multiples, whole shares, planned risk, two potential rewards, and required volume. The
+repository recalculates trigger distance, risk, R multiples, and potential rewards before saving.
 
 If technical confirmation exists but one of the entry-quality gates fails, the candidate belongs in `CONFIRMED_WAIT_FOR_ENTRY`, not `BUY_SETUP`.
 
