@@ -27,6 +27,7 @@ from app.services.strategy_tracking import (
     record_strategy_outcomes as save_strategy_outcomes,
     record_strategy_run as save_strategy_run,
 )
+from app.services.stock_alert_delivery import publish_strategy_run as deliver_strategy_run
 from app.services.strategy_simulation import (
     get_simulation as query_strategy_simulation,
     list_simulations as query_strategy_simulations,
@@ -404,7 +405,14 @@ if settings.mcp_enable_strategy_writes:
                 decision_contract_version=decision_contract_version,
                 data_cutoff_at_utc=data_cutoff_at_utc,
                 notes=notes,
+                publish=False,
             )
+
+    @mcp.tool()
+    def publish_strategy_run(run_id: str) -> dict[str, Any]:
+        """Publish a retrieved and verified canonical run to the website and email."""
+        with SessionLocal() as session:
+            return deliver_strategy_run(session, get_settings(), run_id)
 
     @mcp.tool()
     def record_strategy_outcomes(

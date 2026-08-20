@@ -64,9 +64,22 @@ def publish_strategy_run(
     )
     response.raise_for_status()
     result = response.json()
-    if result.get("email") == "failed":
-        raise RuntimeError("website published the alert but email delivery failed")
-    return {"status": result.get("status", "published"), "run_id": run_id}
+    website_delivery = result.get("status")
+    email_delivery = result.get("email")
+    if website_delivery != "published":
+        raise RuntimeError(
+            "website did not confirm publication: " + str(website_delivery or "missing")
+        )
+    if email_delivery != "sent":
+        raise RuntimeError(
+            "website did not confirm email delivery: " + str(email_delivery or "missing")
+        )
+    return {
+        "status": "published",
+        "run_id": run_id,
+        "website_delivery": "published",
+        "email_delivery": "sent",
+    }
 
 
 def publish_latest_strategy_run(
