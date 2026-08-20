@@ -309,6 +309,7 @@ Set `MCP_ENABLE_STRATEGY_WRITES=true` to additionally expose:
 
 ```text
 record_strategy_run
+publish_strategy_run
 record_strategy_outcomes
 preview_strategy_scenario
 run_strategy_scenario
@@ -323,7 +324,10 @@ Every production `record_strategy_run` call with `run_type="as_run"` must declar
 `decision_contract_version="0.7"`. Every candidate in that run must separately provide a
 `screen_bucket`, `technical_state`, `decision_status`, `status_reason`, and `next_condition`.
 Incomplete production alerts are rejected before persistence and checked again before webhook
-delivery; historical replays and backtests remain readable without retroactive rewriting.
+delivery; historical replays and backtests remain readable without retroactive rewriting. MCP
+callers must retrieve and compare the stored run after `record_strategy_run`, then call
+`publish_strategy_run`. Delivery succeeds only when the website confirms both publication and
+email delivery.
 
 `run_strategy_scenario` accepts a bundled base profile, a new immutable strategy version, nested
 strategy overrides, nested portfolio overrides, and a date range. It validates the resolved
