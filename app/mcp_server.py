@@ -354,7 +354,9 @@ if settings.mcp_enable_strategy_writes:
         candidates: list[dict[str, Any]],
         summary: Annotated[
             dict[str, Any] | None,
-            Field(description="Machine-readable run summary; do not place report_markdown here."),
+            Field(
+                description="Machine-readable run summary; do not place report_markdown here."
+            ),
         ] = None,
         report_markdown: Annotated[
             str | None,
@@ -368,6 +370,16 @@ if settings.mcp_enable_strategy_writes:
         strategy_name: str | None = None,
         skill_fingerprint: str | None = None,
         feature_calculation_version: str | None = None,
+        decision_contract_version: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Canonical candidate decision contract. Use 0.7 for all new production alerts; "
+                    "every candidate must then include screen_bucket, technical_state, "
+                    "decision_status, status_reason, and next_condition."
+                )
+            ),
+        ] = None,
         data_cutoff_at_utc: str | None = None,
         notes: str | None = None,
     ) -> dict[str, Any]:
@@ -389,6 +401,7 @@ if settings.mcp_enable_strategy_writes:
                 strategy_name=strategy_name,
                 skill_fingerprint=skill_fingerprint,
                 feature_calculation_version=feature_calculation_version,
+                decision_contract_version=decision_contract_version,
                 data_cutoff_at_utc=data_cutoff_at_utc,
                 notes=notes,
             )

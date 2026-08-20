@@ -319,6 +319,12 @@ later outcome observations to the isolated `strategy_tracking` schema. They cann
 facts, prices, filings, reference data, or derived fields. After changing this setting, recreate
 the MCP container and refresh the ChatGPT app's tool discovery.
 
+Every production `record_strategy_run` call with `run_type="as_run"` must declare
+`decision_contract_version="0.7"`. Every candidate in that run must separately provide a
+`screen_bucket`, `technical_state`, `decision_status`, `status_reason`, and `next_condition`.
+Incomplete production alerts are rejected before persistence and checked again before webhook
+delivery; historical replays and backtests remain readable without retroactive rewriting.
+
 `run_strategy_scenario` accepts a bundled base profile, a new immutable strategy version, nested
 strategy overrides, nested portfolio overrides, and a date range. It validates the resolved
 configuration, replays the strategy, runs the portfolio simulation, and returns both summaries in

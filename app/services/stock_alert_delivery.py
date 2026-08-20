@@ -8,8 +8,33 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.models import StrategyDefinition, StrategyRun
 from app.services.strategy_tracking import get_strategy_run
+from app.strategy_decisions import DECISION_CONTRACT_VERSION
 
 logger = logging.getLogger(__name__)
+
+
+def validate_strategy_run_for_delivery(run: dict[str, Any]) -> None:
+    if run.get("decision_contract_version") != DECISION_CONTRACT_VERSION:
+        raise ValueError(
+            "production alerts require decision_contract_version="
+            + DECISION_CONTRACT_VERSION
+        )
+    missing: list[str] = []
+    for candidate in run.get("candidates") or []:
+        ticker = candidate.get("ticker") or "<unknown>"
+        for field in (
+            "screen_bucket",
+            "technical_state",
+            "decision_status",
+            "status_reason",
+            "next_condition",
+        ):
+            if candidate.get(field) in (None, ""):
+                missing.append(f"{ticker}.{field}")
+    if missing:
+        raise ValueError(
+            "decision contract validation failed before delivery: " + ", ".join(missing)
+        )
 
 
 def publish_strategy_run(
@@ -25,6 +50,7 @@ def publish_strategy_run(
         raise ValueError("run_id was not found")
     if run["run_type"] != "as_run":
         return {"status": "skipped", "reason": "not_as_run", "run_id": run_id}
+    validate_strategy_run_for_delivery(run)
 
     response = httpx.post(
         settings.stock_alert_webhook_url,

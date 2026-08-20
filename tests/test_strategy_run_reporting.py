@@ -17,6 +17,7 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
 
     properties = tool.parameters["properties"]
     assert "report_markdown" in properties
+    assert "decision_contract_version" in properties
     assert properties["report_markdown"]["anyOf"][0] == {"type": "string"}
     assert "report_markdown" not in properties["summary"].get("properties", {})
 
@@ -44,6 +45,7 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
         candidates=[],
         summary={"candidate_count": 0},
         report_markdown="# Daily alert\n\nNo actionable entries.",
+        decision_contract_version="0.7",
     )
 
     assert result == {"recorded": True}
@@ -61,8 +63,10 @@ def test_website_delivery_sends_report_markdown_at_top_level(monkeypatch) -> Non
         "found": True,
         "run_id": "run-1",
         "run_type": "as_run",
+        "decision_contract_version": "0.7",
         "summary": {"candidate_count": 0},
         "report_markdown": report,
+        "candidates": [],
     }
     monkeypatch.setattr(
         "app.services.stock_alert_delivery.get_strategy_run",

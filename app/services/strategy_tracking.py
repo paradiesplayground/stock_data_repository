@@ -18,6 +18,8 @@ from app.models import (
     StrategyRun,
 )
 from app.strategy_decisions import (
+    DECISION_CONTRACT_VERSION,
+    SCREEN_BUCKETS,
     StrategyCandidateDecision,
     decision_sort_key,
     normalize_candidate_decision,
@@ -133,6 +135,7 @@ def record_strategy_run(
     strategy_name: str | None = None,
     skill_fingerprint: str | None = None,
     feature_calculation_version: str | None = None,
+    decision_contract_version: str | None = None,
     data_cutoff_at_utc: str | None = None,
     notes: str | None = None,
 ) -> dict[str, Any]:
@@ -145,6 +148,18 @@ def record_strategy_run(
         raise ValueError("idempotency_key must be between 1 and 255 characters")
     if len(candidates) > 1000:
         raise ValueError("at most 1000 candidates may be recorded in one run")
+    if normalized_run_type == "as_run" and decision_contract_version is None:
+        raise ValueError(
+            "as_run alerts require decision_contract_version="
+            + DECISION_CONTRACT_VERSION
+        )
+    if decision_contract_version is not None:
+        decision_contract_version = str(decision_contract_version).strip()
+        if decision_contract_version != DECISION_CONTRACT_VERSION:
+            raise ValueError(
+                f"decision_contract_version must be {DECISION_CONTRACT_VERSION}"
+            )
+    contract_required = decision_contract_version == DECISION_CONTRACT_VERSION
     evidence = list(evidence or [])
     if report_markdown is not None:
         report_markdown = report_markdown.strip()
@@ -166,7 +181,19 @@ def record_strategy_run(
         if ticker in seen_tickers:
             raise ValueError(f"candidate ticker appears more than once: {ticker}")
         seen_tickers.add(ticker)
-        stage = _identifier(str(item.get("stage", "")), "candidate stage", 32)
+        if contract_required:
+            stage = _identifier(str(item.get("screen_bucket", "")), "screen_bucket", 32)
+            if stage not in SCREEN_BUCKETS:
+                raise ValueError(
+                    "screen_bucket must be one of: " + ", ".join(sorted(SCREEN_BUCKETS))
+                )
+            legacy_stage = item.get("stage")
+            if legacy_stage is not None and str(legacy_stage).strip().lower() != stage:
+                raise ValueError(
+                    "stage and screen_bucket must match when both are supplied"
+                )
+        else:
+            stage = _identifier(str(item.get("stage", "")), "candidate stage", 32)
         action_value = item.get("action")
         action = (
             _identifier(str(action_value), "candidate action", 32)
@@ -186,7 +213,9 @@ def record_strategy_run(
             "trade_plan": item.get("trade_plan"),
             "payload": item.get("payload"),
         }
-        decision = normalize_candidate_decision(item)
+        decision = normalize_candidate_decision(
+            item, contract_required=contract_required
+        )
         if decision:
             normalized_candidate["decision"] = {
                 key: str(value) if isinstance(value, Decimal) else value
@@ -231,6 +260,8 @@ def record_strategy_run(
         "data_cutoff_at_utc": data_cutoff_at_utc,
         "skill_fingerprint": skill_fingerprint,
     }
+    if decision_contract_version is not None:
+        payload["decision_contract_version"] = decision_contract_version
     payload_hash = _canonical_hash(payload)
     existing = session.scalar(
         select(StrategyRun).where(StrategyRun.idempotency_key == idempotency_key)
@@ -269,6 +300,7 @@ def record_strategy_run(
         as_of_date=_date(as_of_date, "as_of_date"),
         run_type=normalized_run_type,
         feature_calculation_version=feature_calculation_version,
+        decision_contract_version=decision_contract_version,
         data_cutoff_at_utc=_datetime(data_cutoff_at_utc, "data_cutoff_at_utc"),
         filters=filters,
         summary=summary,
@@ -301,6 +333,7 @@ def record_strategy_run(
                     decision_status=decision["decision_status"],
                     status_reason=decision["status_reason"],
                     next_condition=decision["next_condition"],
+                    technical_state=decision["technical_state"],
                     current_entry=_decimal(decision["current_entry"], "current_entry"),
                     pct_above_trigger=_decimal(
                         decision["pct_above_trigger"], "pct_above_trigger"
@@ -427,6 +460,7 @@ def _run_item(run: StrategyRun, definition: StrategyDefinition) -> dict[str, Any
         "as_of_date": run.as_of_date.isoformat(),
         "run_type": run.run_type,
         "feature_calculation_version": run.feature_calculation_version,
+        "decision_contract_version": getattr(run, "decision_contract_version", None),
         "data_cutoff_at_utc": run.data_cutoff_at_utc.isoformat()
         if run.data_cutoff_at_utc
         else None,
@@ -533,6 +567,7 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
             {
                 "ticker": item.ticker,
                 "stage": item.stage,
+                "screen_bucket": item.stage,
                 "action": item.action,
                 "score": str(item.score) if item.score is not None else None,
                 "score_components": item.score_components,
@@ -543,6 +578,9 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
                 "decision_status": decision.decision_status if decision else None,
                 "status_reason": decision.status_reason if decision else None,
                 "next_condition": decision.next_condition if decision else None,
+                "technical_state": getattr(decision, "technical_state", None)
+                if decision
+                else None,
                 "current_entry": str(decision.current_entry)
                 if decision and decision.current_entry is not None
                 else None,

@@ -1,4 +1,5 @@
 from app.services.strategy_tracking import _canonical_hash, record_strategy_run
+import pytest
 
 
 def test_legacy_candidate_payload_hash_remains_unchanged() -> None:
@@ -66,3 +67,18 @@ def test_legacy_candidate_payload_hash_remains_unchanged() -> None:
     assert result["recorded"] is False
     assert result["idempotent_replay"] is True
     assert result["payload_hash"] == expected_hash
+
+
+def test_new_as_run_cannot_silently_use_legacy_candidates() -> None:
+    with pytest.raises(ValueError, match="decision_contract_version=0.7"):
+        record_strategy_run(
+            object(),
+            strategy_key="dynamic_swing_buy_alerts",
+            strategy_version="0.6",
+            as_of_date="2026-08-20",
+            run_type="as_run",
+            idempotency_key="dynamic_swing_buy_alerts-0.6-2026-08-20",
+            configuration={},
+            filters={},
+            candidates=[{"ticker": "AAPL", "stage": "qualified"}],
+        )
