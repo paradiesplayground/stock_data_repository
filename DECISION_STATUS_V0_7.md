@@ -18,11 +18,15 @@ This contract removes the old ambiguity where a candidate could look actionable 
 
 Every candidate using the v0.7 decision contract must include:
 
+- `screen_bucket` — screening membership only: `qualified`, `speculative`, `cooldown`, `rejected`, `dropped`, or `incomplete`
+- `technical_state` — chart state only: `no_setup`, `developing`, `near_trigger`, `confirmed`, `extended`, `invalidated`, or `unknown`
 - `decision_status`
 - `status_reason` — plain-language explanation of exactly why the candidate is in that status now
 - `next_condition` — the specific condition that would change the decision or the next thing to wait for
 
-The stored status is the authoritative decision label. Older `stage` and `action` fields remain for backward compatibility and technical-state history; they must not be interpreted as permission to trade.
+The stored status is the authoritative decision label. `screen_bucket`, `technical_state`, and `decision_status` describe separate concerns and must not be derived from one another. Older `stage` and `action` fields remain readable for historical compatibility; renderers must not interpret them as permission to trade.
+
+New production `as_run` records must declare `decision_contract_version: "0.7"`. The repository rejects the entire run before persistence if any candidate omits a required contract field. It validates the same contract again before website delivery. Replays and backtests may omit the version only when preserving a historical payload.
 
 ## BUY_SETUP hard gates
 
@@ -62,4 +66,4 @@ The downstream report renderer should put **Decision Summary / Best Setups** fir
 
 ## Compatibility
 
-Existing historical runs are not rewritten. A candidate with no decision-status fields remains a legacy record and sorts after v0.7 candidates. New v0.7 callers should send the decision fields as top-level keys inside each candidate object passed to `record_strategy_run`.
+Existing historical runs are not rewritten. A candidate with no decision-status fields remains a legacy record and sorts after v0.7 candidates. Downstream renderers must label that data as legacy rather than guessing a decision from `stage` or `action`. New production callers send `decision_contract_version: "0.7"` at run level and the required contract fields as top-level keys inside every candidate passed to `record_strategy_run`.

@@ -70,3 +70,27 @@ def test_decision_sorting_puts_buy_setup_before_higher_scoring_watch() -> None:
     watch = decision_sort_key("WATCH", Decimal("99"), "WATCH")
 
     assert buy < watch
+
+
+def test_v07_contract_requires_separate_screen_and_technical_states() -> None:
+    with pytest.raises(ValueError, match="screen_bucket"):
+        normalize_candidate_decision(
+            {
+                "decision_status": "WATCH",
+                "status_reason": "The base is still developing.",
+                "next_condition": "Reclaim both short EMAs.",
+                "technical_state": "developing",
+            },
+            contract_required=True,
+        )
+
+    with pytest.raises(ValueError, match="technical_state"):
+        normalize_candidate_decision(
+            {
+                "screen_bucket": "qualified",
+                "decision_status": "WATCH",
+                "status_reason": "The base is still developing.",
+                "next_condition": "Reclaim both short EMAs.",
+            },
+            contract_required=True,
+        )

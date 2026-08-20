@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.17
+
+- Make decision contract `0.7` mandatory for every new production `as_run` alert.
+- Persist explicit screen bucket, technical state, and final decision as separate concerns.
+- Reject incomplete candidate contracts before persistence and validate them again before website
+  delivery, while retaining read compatibility for historical replays and backtests.
+
 ## 0.4.16
 
 - Store unadjusted daily OHLCV beside the existing provider-adjusted bars so historical price,

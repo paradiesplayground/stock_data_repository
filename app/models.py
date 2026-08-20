@@ -187,9 +187,7 @@ class DailyPriceBarRevision(Base):
 
 class StockSplit(Base):
     __tablename__ = "stock_splits"
-    __table_args__ = (
-        Index("ix_stock_splits_ticker_date", "ticker", "execution_date"),
-    )
+    __table_args__ = (Index("ix_stock_splits_ticker_date", "ticker", "execution_date"),)
 
     provider_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     ticker: Mapped[str] = mapped_column(String(32))
@@ -216,9 +214,7 @@ class CashDividend(Base):
     ticker: Mapped[str] = mapped_column(String(32))
     ex_dividend_date: Mapped[date] = mapped_column(Date)
     cash_amount: Mapped[Decimal | None] = mapped_column(Numeric(28, 10))
-    split_adjusted_cash_amount: Mapped[Decimal | None] = mapped_column(
-        Numeric(28, 10)
-    )
+    split_adjusted_cash_amount: Mapped[Decimal | None] = mapped_column(Numeric(28, 10))
     currency: Mapped[str | None] = mapped_column(String(16))
     declaration_date: Mapped[date | None] = mapped_column(Date)
     record_date: Mapped[date | None] = mapped_column(Date)
@@ -462,6 +458,7 @@ class StrategyRun(Base):
     as_of_date: Mapped[date] = mapped_column(Date)
     run_type: Mapped[str] = mapped_column(String(32), index=True)
     feature_calculation_version: Mapped[str | None] = mapped_column(String(32))
+    decision_contract_version: Mapped[str | None] = mapped_column(String(32))
     data_cutoff_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     filters: Mapped[dict] = mapped_column(JSONB)
     summary: Mapped[dict | None] = mapped_column(JSONB)

@@ -139,7 +139,7 @@ def test_get_strategy_run_orders_decision_status_before_score() -> None:
             (),
             {
                 "ticker": "BUY",
-                "stage": "confirmed",
+                "stage": "qualified",
                 "action": "buy",
                 "score": Decimal("80"),
                 "score_components": None,
@@ -243,6 +243,7 @@ def test_complete_strategy_run_is_normalized_and_committed() -> None:
         strategy_name="Fallen growth swing",
         as_of_date="2026-08-18",
         run_type="as_run",
+        decision_contract_version="0.7",
         idempotency_key="fallen-growth-swing:0.7.0:2026-08-18:as-run",
         configuration={"min_revenue_growth_pct": 40},
         filters={"exclude_industry_groups": ["Healthcare"]},
@@ -251,7 +252,8 @@ def test_complete_strategy_run_is_normalized_and_committed() -> None:
         candidates=[
             {
                 "ticker": "aapl",
-                "stage": "confirmed",
+                "stage": "qualified",
+                "screen_bucket": "qualified",
                 "action": "buy",
                 "score": "87.25",
                 "metrics": {"price": "210.00"},
@@ -259,6 +261,7 @@ def test_complete_strategy_run_is_normalized_and_committed() -> None:
                 "decision_status": "BUY_SETUP",
                 "status_reason": "All entry and risk gates passed.",
                 "next_condition": "Enter only while price remains inside the planned buy zone.",
+                "technical_state": "confirmed",
                 "current_entry": "210.00",
                 "pct_above_trigger": "3.25",
                 "t1_r": "1.20",
