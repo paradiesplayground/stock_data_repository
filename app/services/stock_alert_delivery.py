@@ -7,25 +7,27 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import StrategyDefinition, StrategyRun
+from app.decision_contract import SUPPORTED_DECISION_CONTRACT_VERSIONS
 from app.services.strategy_tracking import get_strategy_run
-from app.strategy_decisions import (
-    DECISION_CONTRACT_VERSION,
-    normalize_candidate_decision,
-)
+from app.strategy_decisions import normalize_candidate_decision
 
 logger = logging.getLogger(__name__)
 
 
 def validate_strategy_run_for_delivery(run: dict[str, Any]) -> None:
-    if run.get("decision_contract_version") != DECISION_CONTRACT_VERSION:
+    contract_version = str(run.get("decision_contract_version") or "")
+    if contract_version not in SUPPORTED_DECISION_CONTRACT_VERSIONS:
         raise ValueError(
-            "production alerts require decision_contract_version="
-            + DECISION_CONTRACT_VERSION
+            "production alerts require a supported decision_contract_version"
         )
     for candidate in run.get("candidates") or []:
         ticker = candidate.get("ticker") or "<unknown>"
         try:
-            normalize_candidate_decision(candidate, contract_required=True)
+            normalize_candidate_decision(
+                candidate,
+                contract_version=contract_version,
+                contract_required=True,
+            )
         except ValueError as error:
             raise ValueError(
                 f"decision contract validation failed before delivery for {ticker}: {error}"
