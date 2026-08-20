@@ -380,9 +380,10 @@ if settings.mcp_enable_strategy_writes:
             str | None,
             Field(
                 description=(
-                    "Canonical candidate decision contract. Use 0.7 for all new production alerts; "
+                    "Canonical candidate decision contract. Use 0.8 for all new production alerts; "
                     "every candidate must then include screen_bucket, technical_state, "
-                    "decision_status, status_reason, and next_condition."
+                    "buyability_status, status_reason, buy_conditions, remaining_gate_count, "
+                    "and current_price. Do not emit legacy action or decision_status fields."
                 )
             ),
         ] = None,
