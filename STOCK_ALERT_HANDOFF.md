@@ -25,17 +25,24 @@ summary appeared actionable while the detailed evidence said not to trade.
 - Explicit resend preserves the immutable source run, uses a unique resend subject, and records
   SMTP message ID, accepted/rejected recipients, and server response.
 - Python and website regression tests use the contract-corrected August 19 fixture.
+- The canonical JSON schema is owned by this repository and vendored by the website with an
+  automated drift check.
+- Rendering revisions are append-only records linked to the immutable source run and are displayed
+  on the signal page.
+- CI and Docker deployment builds run the contract regressions before activation.
+- Optional TLS IMAP verification records whether an accepted SMTP message appears in the configured
+  destination mailbox.
 
 ## Verification
 
 Repository checks:
 
 ```bash
-PYTHONPATH=. pytest -q
+python -m pytest -q
 ruff check app tests
 ```
 
-Expected repository result at this cutoff: `109 passed` and no Ruff errors.
+Expected repository result at this cutoff: `113 passed` and no Ruff errors.
 
 Website checks:
 
@@ -44,8 +51,9 @@ npm run test:unit
 npm run build
 ```
 
-The focused stock-alert suite contains eight tests covering legacy behavior, no-trade layout,
-three-watch selection, malformed payload rejection, the August 19 fixture, and SMTP receipts.
+The focused stock-alert suite contains nine tests covering legacy behavior, no-trade layout,
+three-watch selection, malformed payload rejection, the August 19 fixture, SMTP receipts, and
+mailbox-verification parsing.
 
 ## Deployment
 
@@ -61,7 +69,7 @@ Stock repository:
 ```bash
 cd /mnt/user/appdata/stock-data-repository/compose
 git pull --ff-only
-docker compose -p stock_data_repo build migrate
+docker compose -p stock_data_repo build contract-test migrate
 docker compose -p stock_data_repo up -d --force-recreate migrate api worker mcp
 docker compose -p stock_data_repo restart tunnel
 ```
@@ -90,16 +98,9 @@ PY
 Treat `email_delivery: smtp_accepted` as proof that the SMTP server accepted the message, not proof
 that it reached the inbox.
 
-## Remaining work
+## Architectural cutoff
 
-1. Move the structural portion of decision contract `0.7` into one generated/shared schema package
-   so Python and TypeScript do not maintain mirrored field definitions by hand.
-2. Add a formal content-revision record linking a corrected rendering to its immutable source run;
-   `corrected_from_run_id` currently exists only as run metadata.
-3. Add a real deployment pipeline for ParadiesWeb that runs the full unit suite and production build
-   before activation. GitHub currently reports no CI checks for these commits.
-4. Add downstream mailbox verification only if inbox arrival—not merely SMTP acceptance—must become
-   machine-verifiable.
-
-These are the remaining architectural improvements. They do not change the current screening
-strategy or require historical data to be recalculated.
+The four previously listed architectural improvements are complete. Remaining work is operational:
+deploy both repositories, configure optional IMAP verification if desired, and run one production
+alert through publication, SMTP acceptance, and mailbox verification. No historical market, SEC, or
+feature data needs recalculation.
