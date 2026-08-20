@@ -17,6 +17,7 @@ COPY alembic.ini ./
 COPY migrations ./migrations
 COPY app ./app
 COPY config ./config
+COPY contracts ./contracts
 
 FROM base AS test
 
