@@ -28,8 +28,10 @@ from app.services.strategy_tracking import (
     record_strategy_run as save_strategy_run,
 )
 from app.services.stock_alert_delivery import (
+    publish_strategy_run_revision as publish_strategy_run_rendering_revision,
     publish_strategy_run as deliver_strategy_run,
     resend_strategy_run_email as resend_strategy_run_delivery,
+    verify_strategy_run_email as verify_strategy_run_delivery,
 )
 from app.services.strategy_simulation import (
     get_simulation as query_strategy_simulation,
@@ -422,6 +424,30 @@ if settings.mcp_enable_strategy_writes:
         """Explicitly resend email for a stored canonical run without creating a new run."""
         with SessionLocal() as session:
             return resend_strategy_run_delivery(session, get_settings(), run_id)
+
+    @mcp.tool()
+    def publish_strategy_run_revision(
+        run_id: str,
+        renderer_version: str,
+        reason: str,
+        resend_email: bool = False,
+    ) -> dict[str, Any]:
+        """Append a website rendering revision while preserving the source run."""
+        with SessionLocal() as session:
+            return publish_strategy_run_rendering_revision(
+                session,
+                get_settings(),
+                run_id,
+                renderer_version,
+                reason,
+                resend_email=resend_email,
+            )
+
+    @mcp.tool()
+    def verify_strategy_run_email(run_id: str) -> dict[str, Any]:
+        """Verify the last accepted alert message in the configured destination mailbox."""
+        with SessionLocal() as session:
+            return verify_strategy_run_delivery(session, get_settings(), run_id)
 
     @mcp.tool()
     def record_strategy_outcomes(

@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -17,6 +17,16 @@ COPY alembic.ini ./
 COPY migrations ./migrations
 COPY app ./app
 COPY config ./config
+
+FROM base AS test
+
+USER root
+COPY requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
+COPY tests ./tests
+RUN python -m pytest -q && ruff check app tests
+
+FROM base AS runtime
 
 RUN mkdir -p /data/raw /data/tmp \
     && chown -R 99:100 /app /data

@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/paradiesplayground/stock_data_repository/main/contracts/stock-alert-decision-v0.7.schema.json",
+  "title": "Stock Alert Candidate Decision Contract",
+  "contract_version": "0.7",
+  "type": "object",
+  "required": [
+    "ticker",
+    "screen_bucket",
+    "technical_state",
+    "decision_status",
+    "status_reason",
+    "next_condition",
+    "metrics",
+    "technical_gate_passed",
+    "market_regime_gate_passed"
+  ],
+  "properties": {
+    "ticker": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "screen_bucket": {
+      "type": "string",
+      "enum": [
+        "qualified",
+        "speculative",
+        "cooldown",
+        "rejected",
+        "dropped",
+        "incomplete"
+      ]
+    },
+    "technical_state": {
+      "type": "string",
+      "enum": [
+        "no_setup",
+        "developing",
+        "near_trigger",
+        "confirmed",
+        "extended",
+        "invalidated",
+        "unknown"
+      ]
+    },
+    "decision_status": {
+      "type": "string",
+      "enum": [
+        "BUY_SETUP",
+        "CONFIRMED_WAIT_FOR_ENTRY",
+        "NEAR_TRIGGER",
+        "WATCH",
+        "RESEARCH",
+        "AVOID",
+        "INVALIDATED"
+      ]
+    },
+    "status_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "next_condition": {
+      "type": "string",
+      "minLength": 1
+    },
+    "current_entry": {
+      "type": [
+        "number",
+        "string",
+        "null"
+      ]
+    },
+    "pct_above_trigger": {
+      "type": [
+        "number",
+        "string",
+        "null"
+      ]
+    },
+    "t1_r": {
+      "type": [
+        "number",
+        "string",
+        "null"
+      ]
+    },
+    "t2_r": {
+      "type": [
+        "number",
+        "string",
+        "null"
+      ]
+    },
+    "technical_gate_passed": {
+      "type": "boolean"
+    },
+    "market_regime_gate_passed": {
+      "type": "boolean"
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "close",
+        "relative_return_20d_vs_qqq_pct",
+        "relative_volume_20d"
+      ],
+      "properties": {
+        "close": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "relative_return_20d_vs_qqq_pct": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "relative_volume_20d": {
+          "type": [
+            "number",
+            "string"
+          ]
+        }
+      }
+    },
+    "trade_plan": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "entry": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "trigger": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "stop": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": [
+              "number",
+              "string"
+            ]
+          }
+        },
+        "r_multiples": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": [
+              "number",
+              "string"
+            ]
+          }
+        },
+        "whole_shares": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "planned_risk": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "potential_rewards": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": [
+              "number",
+              "string"
+            ]
+          }
+        },
+        "required_volume": {
+          "type": [
+            "number",
+            "string"
+          ]
+        }
+      },
+      "required": [
+        "entry",
+        "trigger",
+        "stop",
+        "targets",
+        "r_multiples",
+        "whole_shares",
+        "planned_risk",
+        "potential_rewards",
+        "required_volume"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision_status": {
+            "enum": [
+              "BUY_SETUP",
+              "CONFIRMED_WAIT_FOR_ENTRY",
+              "NEAR_TRIGGER"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "trade_plan",
+          "current_entry",
+          "pct_above_trigger",
+          "t1_r",
+          "t2_r"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_status": {
+            "const": "BUY_SETUP"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "technical_state": {
+            "const": "confirmed"
+          },
+          "technical_gate_passed": {
+            "const": true
+          },
+          "market_regime_gate_passed": {
+            "const": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_status": {
+            "const": "NEAR_TRIGGER"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "technical_state": {
+            "const": "near_trigger"
+          },
+          "technical_gate_passed": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_status": {
+            "const": "INVALIDATED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "technical_state": {
+            "const": "invalidated"
+          },
+          "screen_bucket": {
+            "enum": [
+              "rejected",
+              "dropped"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_status": {
+            "const": "RESEARCH"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "screen_bucket": {
+            "const": "incomplete"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_status": {
+            "const": "AVOID"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "screen_bucket": {
+            "enum": [
+              "rejected",
+              "dropped"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "x-semantic-rules": {
+    "buy_setup_min_t1_r": "1.00",
+    "buy_setup_min_t2_r": "1.75",
+    "buy_setup_max_pct_above_trigger": "5.00",
+    "calculation_tolerance": "0.02"
+  },
+  "x-decision-statuses": [
+    {
+      "status": "BUY_SETUP",
+      "label": "Buy setup",
+      "priority": 0,
+      "meaning": "Every required technical, market, entry-zone, volume, relative-strength, and reward gate passes.",
+      "response": "Review the verified trade plan and event risk; do not chase above the entry zone."
+    },
+    {
+      "status": "CONFIRMED_WAIT_FOR_ENTRY",
+      "label": "Wait for entry",
+      "priority": 1,
+      "meaning": "Technical confirmation exists, but at least one entry-quality gate still fails.",
+      "response": "Wait for the stated failed gate to clear before considering an entry."
+    },
+    {
+      "status": "NEAR_TRIGGER",
+      "label": "Near trigger",
+      "priority": 2,
+      "meaning": "The setup is close to its trigger but technical confirmation is incomplete.",
+      "response": "Wait for the stated closing-price and volume confirmation."
+    },
+    {
+      "status": "WATCH",
+      "label": "Watch",
+      "priority": 3,
+      "meaning": "A valid developing candidate is not yet close enough to an entry.",
+      "response": "Track the stated next condition; this is research, not permission to trade."
+    },
+    {
+      "status": "RESEARCH",
+      "label": "Research",
+      "priority": 4,
+      "meaning": "Missing or unresolved evidence prevents a reliable decision.",
+      "response": "Resolve the named evidence before promoting the candidate."
+    },
+    {
+      "status": "AVOID",
+      "label": "Avoid",
+      "priority": 5,
+      "meaning": "A known risk, reward, or quality problem makes the setup unattractive.",
+      "response": "Do not enter under the current thesis."
+    },
+    {
+      "status": "INVALIDATED",
+      "label": "Invalidated",
+      "priority": 6,
+      "meaning": "The prior setup broke its stated failure condition.",
+      "response": "Remove it unless a genuinely new thesis and trade plan form."
+    }
+  ]
+}
+

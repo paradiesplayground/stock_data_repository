@@ -92,6 +92,49 @@ def _deliver_strategy_run(
     }
 
 
+def _request_strategy_run_delivery(
+    session: Session,
+    settings: Settings,
+    run_id: str,
+    *,
+    delivery_request: str,
+    rendering_revision: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not settings.stock_alert_webhook_url or not settings.stock_alert_webhook_token:
+        return {"status": "disabled", "run_id": run_id}
+
+    run = get_strategy_run(session, run_id)
+    if not run.get("found"):
+        raise ValueError("run_id was not found")
+    if run["run_type"] != "as_run":
+        return {"status": "skipped", "reason": "not_as_run", "run_id": run_id}
+    validate_strategy_run_for_delivery(run)
+
+    payload = dict(run)
+    payload["delivery_request"] = delivery_request
+    if rendering_revision is not None:
+        payload["rendering_revision"] = rendering_revision
+
+    response = httpx.post(
+        settings.stock_alert_webhook_url,
+        headers={
+            "Authorization": f"Bearer {settings.stock_alert_webhook_token}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=settings.stock_alert_webhook_timeout_seconds,
+        follow_redirects=True,
+    )
+    response.raise_for_status()
+    result = response.json()
+    if result.get("status") != "published":
+        raise RuntimeError(
+            "website did not confirm publication: "
+            + str(result.get("status") or "missing")
+        )
+    return result
+
+
 def publish_strategy_run(
     session: Session,
     settings: Settings,
@@ -117,6 +160,67 @@ def resend_strategy_run_email(
         run_id,
         resend_email=True,
     )
+
+
+def publish_strategy_run_revision(
+    session: Session,
+    settings: Settings,
+    run_id: str,
+    renderer_version: str,
+    reason: str,
+    *,
+    resend_email: bool = False,
+) -> dict[str, Any]:
+    """Append a rendering revision without changing the immutable source run."""
+    renderer_version = renderer_version.strip()
+    reason = reason.strip()
+    if not renderer_version:
+        raise ValueError("renderer_version is required")
+    if not reason:
+        raise ValueError("reason is required")
+    result = _request_strategy_run_delivery(
+        session,
+        settings,
+        run_id,
+        delivery_request="publish_revision",
+        rendering_revision={
+            "renderer_version": renderer_version,
+            "reason": reason,
+            "resend_email": resend_email,
+        },
+    )
+    revision = result.get("rendering_revision")
+    if result.get("publication") != "revised" or not isinstance(revision, dict):
+        raise RuntimeError("website did not confirm the rendering revision")
+    return {
+        "status": "revised",
+        "run_id": run_id,
+        "rendering_revision": revision,
+        "email": result.get("email", "not_requested"),
+        "email_receipt": result.get("email_receipt"),
+    }
+
+
+def verify_strategy_run_email(
+    session: Session,
+    settings: Settings,
+    run_id: str,
+) -> dict[str, Any]:
+    """Ask the website to verify the accepted message in the configured mailbox."""
+    result = _request_strategy_run_delivery(
+        session,
+        settings,
+        run_id,
+        delivery_request="verify_email",
+    )
+    verification = result.get("mailbox_verification")
+    if not isinstance(verification, dict) or not verification.get("status"):
+        raise RuntimeError("website did not return mailbox verification status")
+    return {
+        "status": verification["status"],
+        "run_id": run_id,
+        "mailbox_verification": verification,
+    }
 
 
 def publish_latest_strategy_run(

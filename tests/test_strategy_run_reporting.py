@@ -8,9 +8,11 @@ import pytest
 
 from app.config import Settings, get_settings
 from app.services.stock_alert_delivery import (
+    publish_strategy_run_revision,
     publish_strategy_run,
     resend_strategy_run_email,
     validate_strategy_run_for_delivery,
+    verify_strategy_run_email,
 )
 
 
@@ -24,6 +26,8 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     tool = mcp_server.mcp._tool_manager._tools["record_strategy_run"]
     publish_tool = mcp_server.mcp._tool_manager._tools["publish_strategy_run"]
     resend_tool = mcp_server.mcp._tool_manager._tools["resend_strategy_run_email"]
+    revision_tool = mcp_server.mcp._tool_manager._tools["publish_strategy_run_revision"]
+    verify_tool = mcp_server.mcp._tool_manager._tools["verify_strategy_run_email"]
 
     properties = tool.parameters["properties"]
     assert "report_markdown" in properties
@@ -32,6 +36,12 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     assert "report_markdown" not in properties["summary"].get("properties", {})
     assert publish_tool.parameters["required"] == ["run_id"]
     assert resend_tool.parameters["required"] == ["run_id"]
+    assert revision_tool.parameters["required"] == [
+        "run_id",
+        "renderer_version",
+        "reason",
+    ]
+    assert verify_tool.parameters["required"] == ["run_id"]
 
     captured = {}
 
@@ -244,3 +254,98 @@ def test_delivery_revalidates_august_19_trade_plan_math() -> None:
 
     with pytest.raises(ValueError, match="planned_risk.*inconsistent"):
         validate_strategy_run_for_delivery(fixture)
+
+
+def test_rendering_revision_preserves_source_and_records_reason(monkeypatch) -> None:
+    run = {
+        "found": True,
+        "run_id": "run-1",
+        "run_type": "as_run",
+        "decision_contract_version": "0.7",
+        "candidates": [],
+    }
+    monkeypatch.setattr(
+        "app.services.stock_alert_delivery.get_strategy_run",
+        lambda _session, _run_id: run,
+    )
+    captured = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "status": "published",
+                "publication": "revised",
+                "rendering_revision": {"revision_number": 2},
+            }
+
+    def fake_post(_url, **kwargs):
+        captured.update(kwargs["json"])
+        return Response()
+
+    monkeypatch.setattr("app.services.stock_alert_delivery.httpx.post", fake_post)
+    result = publish_strategy_run_revision(
+        object(),
+        Settings(
+            stock_alert_webhook_url="https://example.test/stock-alert",
+            stock_alert_webhook_token="secret",
+        ),
+        "run-1",
+        "0.7.2",
+        "Correct presentation labels",
+    )
+
+    assert captured["delivery_request"] == "publish_revision"
+    assert captured["rendering_revision"] == {
+        "renderer_version": "0.7.2",
+        "reason": "Correct presentation labels",
+        "resend_email": False,
+    }
+    assert result["status"] == "revised"
+
+
+def test_mailbox_verification_returns_auditable_status(monkeypatch) -> None:
+    run = {
+        "found": True,
+        "run_id": "run-1",
+        "run_type": "as_run",
+        "decision_contract_version": "0.7",
+        "candidates": [],
+    }
+    monkeypatch.setattr(
+        "app.services.stock_alert_delivery.get_strategy_run",
+        lambda _session, _run_id: run,
+    )
+    captured = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "status": "published",
+                "mailbox_verification": {
+                    "status": "verified",
+                    "checked_at": "2026-08-20T12:00:00Z",
+                },
+            }
+
+    def fake_post(_url, **kwargs):
+        captured.update(kwargs["json"])
+        return Response()
+
+    monkeypatch.setattr("app.services.stock_alert_delivery.httpx.post", fake_post)
+    result = verify_strategy_run_email(
+        object(),
+        Settings(
+            stock_alert_webhook_url="https://example.test/stock-alert",
+            stock_alert_webhook_token="secret",
+        ),
+        "run-1",
+    )
+
+    assert captured["delivery_request"] == "verify_email"
+    assert result["status"] == "verified"

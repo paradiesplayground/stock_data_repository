@@ -12,63 +12,27 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.decision_contract import (
+    BUY_SETUP_MAX_PCT_ABOVE_TRIGGER,
+    BUY_SETUP_MIN_T1_R,
+    BUY_SETUP_MIN_T2_R,
+    CALCULATION_TOLERANCE,
+    DECISION_CONTRACT_VERSION,
+    DECISION_PRIORITY,
+    DECISION_STATUSES,
+    DECISION_STATUS_DEFINITIONS,
+    SCREEN_BUCKETS,
+    TECHNICAL_STATES,
+)
 from app.models import Base
 
-DECISION_STATUSES = {
-    "BUY_SETUP",
-    "CONFIRMED_WAIT_FOR_ENTRY",
-    "NEAR_TRIGGER",
-    "WATCH",
-    "AVOID",
-    "INVALIDATED",
-    "RESEARCH",
-}
-
-DECISION_CONTRACT_VERSION = "0.7"
-
-SCREEN_BUCKETS = {
-    "qualified",
-    "speculative",
-    "cooldown",
-    "rejected",
-    "dropped",
-    "incomplete",
-}
-
-TECHNICAL_STATES = {
-    "no_setup",
-    "developing",
-    "near_trigger",
-    "confirmed",
-    "extended",
-    "invalidated",
-    "unknown",
-}
-
-DECISION_PRIORITY = {
-    "BUY_SETUP": 0,
-    "CONFIRMED_WAIT_FOR_ENTRY": 1,
-    "NEAR_TRIGGER": 2,
-    "WATCH": 3,
-    "RESEARCH": 4,
-    "AVOID": 5,
-    "INVALIDATED": 6,
-}
-
-DECISION_STATUS_DEFINITIONS = {
-    "BUY_SETUP": "Tradeable now: every required entry, reward/risk, technical, extension, and market-regime gate passes.",
-    "CONFIRMED_WAIT_FOR_ENTRY": "Technically confirmed, but at least one entry-quality gate is not currently acceptable; wait rather than chase.",
-    "NEAR_TRIGGER": "Setup is close to the technical entry trigger but confirmation is not complete.",
-    "WATCH": "Valid developing candidate that is not yet close enough to an entry trigger to treat as imminent.",
-    "RESEARCH": "Potential setup cannot be classified confidently until specified evidence or data is verified.",
-    "AVOID": "Known risk/reward or quality issue makes the setup unattractive under the current thesis.",
-    "INVALIDATED": "The prior setup or thesis has broken its stated invalidation condition and is no longer eligible without a new thesis.",
-}
-
-BUY_SETUP_MIN_T1_R = Decimal("1.00")
-BUY_SETUP_MIN_T2_R = Decimal("1.75")
-BUY_SETUP_MAX_PCT_ABOVE_TRIGGER = Decimal("5.00")
-CALCULATION_TOLERANCE = Decimal("0.02")
+__all__ = [
+    "DECISION_CONTRACT_VERSION",
+    "DECISION_STATUS_DEFINITIONS",
+    "StrategyCandidateDecision",
+    "decision_sort_key",
+    "normalize_candidate_decision",
+]
 
 
 class StrategyCandidateDecision(Base):

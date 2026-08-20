@@ -1,0 +1,40 @@
+import json
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+
+CONTRACT_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "contracts"
+    / "stock-alert-decision-v0.7.schema.json"
+)
+
+
+def _load_contract() -> dict[str, Any]:
+    return json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+
+
+DECISION_CONTRACT = _load_contract()
+DECISION_CONTRACT_VERSION = str(DECISION_CONTRACT["contract_version"])
+DECISION_STATUS_GUIDE = tuple(DECISION_CONTRACT["x-decision-statuses"])
+DECISION_STATUSES = {item["status"] for item in DECISION_STATUS_GUIDE}
+DECISION_PRIORITY = {
+    item["status"]: int(item["priority"]) for item in DECISION_STATUS_GUIDE
+}
+DECISION_STATUS_DEFINITIONS = {
+    item["status"]: item["meaning"] for item in DECISION_STATUS_GUIDE
+}
+SCREEN_BUCKETS = set(
+    DECISION_CONTRACT["properties"]["screen_bucket"]["enum"]
+)
+TECHNICAL_STATES = set(
+    DECISION_CONTRACT["properties"]["technical_state"]["enum"]
+)
+SEMANTIC_RULES = DECISION_CONTRACT["x-semantic-rules"]
+BUY_SETUP_MIN_T1_R = Decimal(SEMANTIC_RULES["buy_setup_min_t1_r"])
+BUY_SETUP_MIN_T2_R = Decimal(SEMANTIC_RULES["buy_setup_min_t2_r"])
+BUY_SETUP_MAX_PCT_ABOVE_TRIGGER = Decimal(
+    SEMANTIC_RULES["buy_setup_max_pct_above_trigger"]
+)
+CALCULATION_TOLERANCE = Decimal(SEMANTIC_RULES["calculation_tolerance"])
