@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import Settings
+from app.models import IngestionRun
 from app.mcp_queries import (
     _date_value,
     _json_value,
@@ -177,3 +178,51 @@ def test_freshness_reports_expected_session_and_screening_readiness() -> None:
     assert result["features_are_current"] is True
     assert result["ready_for_screening"] is True
     assert result["schedules"]["market_lag_days"] == 0
+
+
+def test_freshness_blocks_screening_for_stale_critical_job() -> None:
+    class Rows:
+        def __init__(self, values):
+            self.values = values
+
+        def all(self):
+            return self.values
+
+    feature_run = IngestionRun(
+        job_name="derived_features", source="massive+sec-edgar", status="succeeded",
+            started_at_utc=datetime(2026, 8, 20, 22, tzinfo=timezone.utc),
+            completed_at_utc=datetime(2026, 8, 20, 22, 5, tzinfo=timezone.utc),
+    )
+    zombie = IngestionRun(
+        job_name="massive_corporate_actions", source="massive", status="running",
+        started_at_utc=datetime(2026, 8, 16, 8, tzinfo=timezone.utc),
+    )
+
+    class StaleSession:
+        def __init__(self):
+            self.scalar_values = iter([
+                date(2026, 8, 20), date(2026, 8, 20), date(2026, 8, 20),
+                feature_run, zombie,
+            ])
+            self.scalars_calls = 0
+
+        def scalar(self, _statement):
+            return next(self.scalar_values)
+
+        def scalars(self, _statement):
+            self.scalars_calls += 1
+            return Rows(
+                ["derived_features", "massive_corporate_actions"]
+                if self.scalars_calls == 1 else []
+            )
+
+    result = get_data_freshness(
+        StaleSession(), Settings(massive_market_lag_days=0, timezone="America/Chicago"),
+        datetime(2026, 8, 20, 13, tzinfo=timezone.utc),
+    )
+    assert result["market_is_current"] is True
+    assert result["features_are_current"] is True
+    assert result["ready_for_screening"] is False
+    assert result["freshness_issues"] == [
+        "massive_corporate_actions has been running for more than six hours"
+    ]
