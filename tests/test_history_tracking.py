@@ -239,22 +239,20 @@ def test_complete_strategy_run_is_normalized_and_committed() -> None:
     result = record_strategy_run(
         session,
         strategy_key="Fallen-Growth-Swing",
-        strategy_version="0.7.0",
+        strategy_version="0.8.0",
         strategy_name="Fallen growth swing",
         as_of_date="2026-08-18",
         run_type="as_run",
-        decision_contract_version="0.7",
-        idempotency_key="fallen-growth-swing:0.7.0:2026-08-18:as-run",
+        decision_contract_version="0.8",
+        idempotency_key="fallen-growth-swing:0.8.0:2026-08-18:as-run",
         configuration={"min_revenue_growth_pct": 40},
         filters={"exclude_industry_groups": ["Healthcare"]},
-        summary={"buy_setup_count": 1},
-        report_markdown="# Decision Summary / Best Setups\n\nAAPL is a BUY_SETUP.",
+        summary={"buy_now_count": 1},
+        report_markdown="# What is buyable?\n\nAAPL is BUY_NOW.",
         candidates=[
             {
                 "ticker": "aapl",
-                "stage": "qualified",
                 "screen_bucket": "qualified",
-                "action": "buy",
                 "score": "87.25",
                 "metrics": {
                     "close": "212.10",
@@ -273,14 +271,15 @@ def test_complete_strategy_run_is_normalized_and_committed() -> None:
                     "required_volume": "1.00",
                 },
                 "reasons": ["technical confirmation complete"],
-                "decision_status": "BUY_SETUP",
+                "buyability_status": "BUY_NOW",
                 "status_reason": "All entry and risk gates passed.",
-                "next_condition": "Enter only while price remains inside the planned buy zone.",
+                "buy_conditions": ["Remain inside the planned buy zone."],
+                "remaining_gate_count": 0,
                 "technical_state": "confirmed",
-                "current_entry": "210.00",
-                "pct_above_trigger": "1.00",
-                "t1_r": "1.20",
-                "t2_r": "2.10",
+                "current_price": "212.10",
+                "trigger_price": "210.00",
+                "distance_to_trigger_pct": "-1.00",
+                "invalidation_price": "200.00",
                 "technical_gate_passed": True,
                 "market_regime_gate_passed": True,
             }
@@ -315,17 +314,18 @@ def test_complete_strategy_run_is_normalized_and_committed() -> None:
         item for item in session.added if isinstance(item, StrategyEvidence)
     )
     assert definition.strategy_key == "fallen-growth-swing"
-    assert definition.version == "0.7.0"
+    assert definition.version == "0.8.0"
     assert run.as_of_date.isoformat() == "2026-08-18"
-    assert run.summary == {"buy_setup_count": 1}
+    assert run.summary == {"buy_now_count": 1}
     assert "report_markdown" not in run.summary
-    assert run.report_markdown.startswith("# Decision Summary / Best Setups")
+    assert run.report_markdown.startswith("# What is buyable?")
     assert candidate.ticker == "AAPL"
     assert candidate.score == Decimal("87.25")
-    assert decision.decision_status == "BUY_SETUP"
+    assert decision.decision_status == "BUY_NOW"
+    assert decision.buyability_status == "BUY_NOW"
     assert decision.status_reason == "All entry and risk gates passed."
-    assert decision.t1_r == Decimal("1.20")
-    assert decision.t2_r == Decimal("2.10")
+    assert decision.current_price == Decimal("212.10")
+    assert decision.trigger_price == Decimal("210.00")
     assert decision.technical_gate_passed is True
     assert decision.market_regime_gate_passed is True
     assert evidence.accepted_at_utc == datetime(2026, 8, 18, 20, 0, tzinfo=timezone.utc)
