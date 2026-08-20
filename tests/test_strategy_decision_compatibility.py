@@ -70,7 +70,7 @@ def test_legacy_candidate_payload_hash_remains_unchanged() -> None:
 
 
 def test_new_as_run_cannot_silently_use_legacy_candidates() -> None:
-    with pytest.raises(ValueError, match="decision_contract_version=0.7"):
+    with pytest.raises(ValueError, match="decision_contract_version=0.8"):
         record_strategy_run(
             object(),
             strategy_key="dynamic_swing_buy_alerts",
