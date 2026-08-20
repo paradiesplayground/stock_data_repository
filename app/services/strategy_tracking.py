@@ -138,6 +138,7 @@ def record_strategy_run(
     decision_contract_version: str | None = None,
     data_cutoff_at_utc: str | None = None,
     notes: str | None = None,
+    publish: bool = True,
 ) -> dict[str, Any]:
     strategy_key = _identifier(strategy_key, "strategy_key", 128)
     strategy_version = _identifier(strategy_version, "strategy_version", 64)
@@ -275,7 +276,7 @@ def record_strategy_run(
             "idempotent_replay": True,
             "payload_hash": existing.payload_hash,
         }
-        if existing.run_type == "as_run":
+        if existing.run_type == "as_run" and publish:
             from app.config import get_settings
             from app.services.stock_alert_delivery import publish_strategy_run_safely
 
@@ -372,7 +373,7 @@ def record_strategy_run(
         "candidate_count": len(normalized_candidates),
         "evidence_count": len(normalized_evidence),
     }
-    if normalized_run_type == "as_run":
+    if normalized_run_type == "as_run" and publish:
         from app.config import get_settings
         from app.services.stock_alert_delivery import publish_strategy_run_safely
 
