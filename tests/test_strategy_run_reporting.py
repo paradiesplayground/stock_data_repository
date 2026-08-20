@@ -3,7 +3,10 @@ import sys
 from contextlib import contextmanager
 
 from app.config import Settings, get_settings
-from app.services.stock_alert_delivery import publish_strategy_run
+from app.services.stock_alert_delivery import (
+    publish_strategy_run,
+    resend_strategy_run_email,
+)
 
 
 def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
@@ -15,6 +18,7 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     mcp_server = importlib.import_module("app.mcp_server")
     tool = mcp_server.mcp._tool_manager._tools["record_strategy_run"]
     publish_tool = mcp_server.mcp._tool_manager._tools["publish_strategy_run"]
+    resend_tool = mcp_server.mcp._tool_manager._tools["resend_strategy_run_email"]
 
     properties = tool.parameters["properties"]
     assert "report_markdown" in properties
@@ -22,6 +26,7 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     assert properties["report_markdown"]["anyOf"][0] == {"type": "string"}
     assert "report_markdown" not in properties["summary"].get("properties", {})
     assert publish_tool.parameters["required"] == ["run_id"]
+    assert resend_tool.parameters["required"] == ["run_id"]
 
     captured = {}
 
@@ -81,8 +86,16 @@ def test_website_delivery_sends_report_markdown_at_top_level(monkeypatch) -> Non
         def raise_for_status(self) -> None:
             return None
 
-        def json(self) -> dict[str, str]:
-            return {"status": "published", "email": "sent"}
+        def json(self) -> dict:
+            return {
+                "status": "published",
+                "email": "sent",
+                "email_receipt": {
+                    "message_id": "message-1",
+                    "accepted_count": 1,
+                    "rejected_count": 0,
+                },
+            }
 
     def fake_post(_url, **kwargs):
         captured.update(kwargs["json"])
@@ -103,7 +116,12 @@ def test_website_delivery_sends_report_markdown_at_top_level(monkeypatch) -> Non
         "status": "published",
         "run_id": "run-1",
         "website_delivery": "published",
-        "email_delivery": "sent",
+        "email_delivery": "smtp_accepted",
+        "email_receipt": {
+            "message_id": "message-1",
+            "accepted_count": 1,
+            "rejected_count": 0,
+        },
     }
     assert captured["report_markdown"] == report
     assert captured["summary"] == {"candidate_count": 0}
@@ -148,3 +166,65 @@ def test_delivery_requires_explicit_email_confirmation(monkeypatch) -> None:
             ),
             "run-1",
         )
+
+
+def test_explicit_resend_preserves_run_and_requests_email_retry(monkeypatch) -> None:
+    run = {
+        "found": True,
+        "run_id": "run-1",
+        "run_type": "as_run",
+        "decision_contract_version": "0.7",
+        "summary": {},
+        "report_markdown": "# Daily alert",
+        "candidates": [],
+    }
+    monkeypatch.setattr(
+        "app.services.stock_alert_delivery.get_strategy_run",
+        lambda _session, _run_id: run,
+    )
+    captured = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "status": "published",
+                "publication": "existing",
+                "email": "sent",
+                "email_receipt": {
+                    "message_id": "resend-2",
+                    "accepted_count": 1,
+                    "rejected_count": 0,
+                },
+            }
+
+    def fake_post(_url, **kwargs):
+        captured.update(kwargs["json"])
+        return Response()
+
+    monkeypatch.setattr("app.services.stock_alert_delivery.httpx.post", fake_post)
+
+    result = resend_strategy_run_email(
+        object(),
+        Settings(
+            stock_alert_webhook_url="https://example.test/stock-alert",
+            stock_alert_webhook_token="secret",
+        ),
+        "run-1",
+    )
+
+    assert captured["run_id"] == "run-1"
+    assert captured["delivery_request"] == "resend_email"
+    assert result == {
+        "status": "resent",
+        "run_id": "run-1",
+        "website_delivery": "existing",
+        "email_delivery": "smtp_accepted",
+        "email_receipt": {
+            "message_id": "resend-2",
+            "accepted_count": 1,
+            "rejected_count": 0,
+        },
+    }
