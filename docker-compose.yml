@@ -32,6 +32,13 @@ services:
     networks:
       - stock-data-backend
 
+  contract-test:
+    build:
+      context: .
+      target: test
+    image: stock-data-repository:test
+    profiles: ["test"]
+
   api:
     image: stock-data-repository:local
     pull_policy: never
