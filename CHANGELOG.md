@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.18
+
+- Separate MCP persistence from stock-alert delivery so callers can retrieve and verify the
+  immutable stored run before publication.
+- Expose `publish_strategy_run` for explicit post-verification website and email delivery.
+- Require affirmative website `published` and email `sent` receipts instead of treating missing
+  delivery fields as success.
+
 ## 0.4.17
 
 - Make decision contract `0.7` mandatory for every new production `as_run` alert.
