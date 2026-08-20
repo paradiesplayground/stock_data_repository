@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/paradiesplayground/stock_data_repository/main/contracts/stock-alert-decision-v0.8.schema.json",
+  "title": "Stock Alert Buyability Contract",
+  "contract_version": "0.8",
+  "type": "object",
+  "required": [
+    "ticker", "screen_bucket", "technical_state", "buyability_status",
+    "status_reason", "buy_conditions", "remaining_gate_count", "current_price",
+    "technical_gate_passed", "market_regime_gate_passed", "metrics"
+  ],
+  "properties": {
+    "ticker": {"type": "string", "minLength": 1, "maxLength": 32},
+    "screen_bucket": {"type": "string", "enum": ["qualified", "speculative", "cooldown", "rejected", "dropped", "incomplete"]},
+    "technical_state": {"type": "string", "enum": ["no_setup", "developing", "near_trigger", "confirmed", "extended", "invalidated", "unknown"]},
+    "buyability_status": {"type": "string", "enum": ["BUY_NOW", "ALMOST_READY", "RADAR", "NOT_ELIGIBLE"]},
+    "status_reason": {"type": "string", "minLength": 1},
+    "buy_conditions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "remaining_gate_count": {"type": "integer", "minimum": 0},
+    "current_price": {"type": ["number", "string"], "exclusiveMinimum": 0},
+    "trigger_price": {"type": ["number", "string", "null"]},
+    "distance_to_trigger_pct": {"type": ["number", "string", "null"]},
+    "invalidation_price": {"type": ["number", "string", "null"]},
+    "technical_gate_passed": {"type": "boolean"},
+    "market_regime_gate_passed": {"type": "boolean"},
+    "metrics": {
+      "type": "object",
+      "required": ["close", "relative_return_20d_vs_qqq_pct", "relative_volume_20d"],
+      "properties": {
+        "close": {"type": ["number", "string"]},
+        "relative_return_20d_vs_qqq_pct": {"type": ["number", "string"]},
+        "relative_volume_20d": {"type": ["number", "string"]}
+      }
+    },
+    "trade_plan": {
+      "type": ["object", "null"],
+      "properties": {
+        "entry": {"type": ["number", "string"]}, "trigger": {"type": ["number", "string"]},
+        "stop": {"type": ["number", "string"]},
+        "targets": {"type": "array", "minItems": 2, "items": {"type": ["number", "string"]}},
+        "r_multiples": {"type": "array", "minItems": 2, "items": {"type": ["number", "string"]}},
+        "whole_shares": {"type": ["number", "string"]}, "planned_risk": {"type": ["number", "string"]},
+        "potential_rewards": {"type": "array", "minItems": 2, "items": {"type": ["number", "string"]}},
+        "required_volume": {"type": ["number", "string"]}
+      },
+      "required": ["entry", "trigger", "stop", "targets", "r_multiples", "whole_shares", "planned_risk", "potential_rewards", "required_volume"]
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"buyability_status": {"const": "BUY_NOW"}}}, "then": {"required": ["trigger_price", "distance_to_trigger_pct", "invalidation_price", "trade_plan"], "properties": {"remaining_gate_count": {"const": 0}, "technical_state": {"const": "confirmed"}, "technical_gate_passed": {"const": true}, "market_regime_gate_passed": {"const": true}}}},
+    {"if": {"properties": {"buyability_status": {"const": "ALMOST_READY"}}}, "then": {"required": ["trigger_price", "distance_to_trigger_pct", "invalidation_price"], "properties": {"remaining_gate_count": {"const": 1}}}},
+    {"if": {"properties": {"buyability_status": {"const": "NOT_ELIGIBLE"}}}, "then": {"properties": {"screen_bucket": {"enum": ["rejected", "dropped", "incomplete"]}}}}
+  ],
+  "x-semantic-rules": {
+    "buy_setup_min_t1_r": "1.00", "buy_setup_min_t2_r": "1.75",
+    "buy_now_max_distance_pct": "5.00", "almost_ready_max_distance_pct": "5.00",
+    "calculation_tolerance": "0.02"
+  },
+  "x-decision-statuses": [
+    {"status": "BUY_NOW", "label": "Buy now", "priority": 0, "meaning": "Every required gate passes and price is inside the valid entry zone.", "response": "Review the complete trade plan and event risk before entering."},
+    {"status": "ALMOST_READY", "label": "Almost ready", "priority": 1, "meaning": "Exactly one explicit gate remains and price is within five percent of a structured trigger.", "response": "Wait for the named condition to clear."},
+    {"status": "RADAR", "label": "Radar", "priority": 2, "meaning": "Potentially interesting, but not close enough to consider buying.", "response": "Keep it on the radar until the stated milestone occurs."},
+    {"status": "NOT_ELIGIBLE", "label": "Not eligible", "priority": 3, "meaning": "It failed a hard screen or lacks the evidence required for evaluation.", "response": "Do not surface it as a buying candidate."}
+  ]
+}
