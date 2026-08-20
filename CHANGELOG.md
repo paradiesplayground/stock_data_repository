@@ -2,6 +2,10 @@
 
 ## 0.4.18
 
+- Add an explicit `resend_strategy_run_email` MCP tool that reuses a stored immutable run.
+- Require website email receipts to include an SMTP message ID and at least one accepted recipient.
+- Return delivery diagnostics without treating an HTTP success alone as inbox delivery proof.
+
 - Separate MCP persistence from stock-alert delivery so callers can retrieve and verify the
   immutable stored run before publication.
 - Expose `publish_strategy_run` for explicit post-verification website and email delivery.
