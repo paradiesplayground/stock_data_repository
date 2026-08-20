@@ -5,14 +5,17 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.decision_contract import (
+    ALMOST_READY_MAX_DISTANCE_PCT,
     BUY_SETUP_MAX_PCT_ABOVE_TRIGGER,
     BUY_SETUP_MIN_T1_R,
     BUY_SETUP_MIN_T2_R,
@@ -21,6 +24,8 @@ from app.decision_contract import (
     DECISION_PRIORITY,
     DECISION_STATUSES,
     DECISION_STATUS_DEFINITIONS,
+    LEGACY_DECISION_STATUSES,
+    LEGACY_DECISION_PRIORITY,
     SCREEN_BUCKETS,
     TECHNICAL_STATES,
 )
@@ -62,6 +67,13 @@ class StrategyCandidateDecision(Base):
     t2_r: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     technical_gate_passed: Mapped[bool | None] = mapped_column(Boolean)
     market_regime_gate_passed: Mapped[bool | None] = mapped_column(Boolean)
+    buyability_status: Mapped[str | None] = mapped_column(String(32), index=True)
+    buy_conditions: Mapped[list[str] | None] = mapped_column(JSONB)
+    remaining_gate_count: Mapped[int | None] = mapped_column(Integer)
+    current_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    trigger_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    distance_to_trigger_pct: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    invalidation_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
 
 
 def _required_text(value: Any, field: str) -> str:
@@ -111,7 +123,7 @@ def _require_close(actual: Decimal, expected: Decimal, field: str) -> None:
         raise ValueError(f"{field} is inconsistent with the canonical trade-plan calculation")
 
 
-def _validate_contract_evidence(
+def _validate_v07_contract_evidence(
     item: dict[str, Any],
     decision: dict[str, Any],
 ) -> None:
@@ -223,7 +235,7 @@ def _validate_contract_evidence(
         raise ValueError(f"{ticker}.NEAR_TRIGGER requires technical_gate_passed=false")
 
 
-def normalize_candidate_decision(
+def _normalize_v07_candidate_decision(
     item: dict[str, Any],
     *,
     contract_required: bool = False,
@@ -249,9 +261,9 @@ def normalize_candidate_decision(
         _choice(item.get("screen_bucket"), "screen_bucket", SCREEN_BUCKETS)
 
     status = str(raw_status or "").strip().upper()
-    if status not in DECISION_STATUSES:
+    if status not in LEGACY_DECISION_STATUSES:
         raise ValueError(
-            "decision_status must be one of: " + ", ".join(sorted(DECISION_STATUSES))
+            "decision_status must be one of: " + ", ".join(sorted(LEGACY_DECISION_STATUSES))
         )
 
     decision = {
@@ -319,15 +331,151 @@ def normalize_candidate_decision(
         raise ValueError("INVALIDATED requires technical_state=invalidated")
 
     if contract_required:
-        _validate_contract_evidence(item, decision)
+        _validate_v07_contract_evidence(item, decision)
 
     return decision
+
+
+def _required_string_list(value: Any, field: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{field} requires at least one explicit condition")
+    result = [str(item).strip() for item in value]
+    if any(not item for item in result):
+        raise ValueError(f"{field} cannot contain an empty condition")
+    return result
+
+
+def _normalize_v08_candidate_decision(item: dict[str, Any]) -> dict[str, Any]:
+    ticker = str(item.get("ticker") or "<unknown>")
+    bucket = _choice(item.get("screen_bucket"), "screen_bucket", SCREEN_BUCKETS)
+    technical_state = _choice(
+        item.get("technical_state"), "technical_state", TECHNICAL_STATES
+    )
+    status = str(item.get("buyability_status") or "").strip().upper()
+    if status not in DECISION_STATUSES:
+        raise ValueError(
+            "buyability_status must be one of: "
+            + ", ".join(sorted(DECISION_STATUSES))
+        )
+    if item.get("action") is not None or item.get("decision_status") is not None:
+        raise ValueError(
+            f"{ticker} v0.8 candidates must not emit action or decision_status"
+        )
+    metrics = _mapping(item.get("metrics"), f"{ticker}.metrics")
+    metric_close = _required_decimal(metrics.get("close"), f"{ticker}.metrics.close")
+    current_price = _required_decimal(item.get("current_price"), f"{ticker}.current_price")
+    if current_price <= 0:
+        raise ValueError(f"{ticker}.current_price must be greater than zero")
+    _require_close(current_price, metric_close, f"{ticker}.current_price")
+    _required_decimal(
+        metrics.get("relative_return_20d_vs_qqq_pct"),
+        f"{ticker}.metrics.relative_return_20d_vs_qqq_pct",
+    )
+    relative_volume = _required_decimal(
+        metrics.get("relative_volume_20d"),
+        f"{ticker}.metrics.relative_volume_20d",
+    )
+    if relative_volume < 0:
+        raise ValueError(f"{ticker}.metrics.relative_volume_20d must not be negative")
+
+    trigger = _decimal(item.get("trigger_price"), "trigger_price")
+    distance = _decimal(item.get("distance_to_trigger_pct"), "distance_to_trigger_pct")
+    invalidation = _decimal(item.get("invalidation_price"), "invalidation_price")
+    remaining = item.get("remaining_gate_count")
+    if isinstance(remaining, bool) or not isinstance(remaining, int) or remaining < 0:
+        raise ValueError("remaining_gate_count must be a non-negative integer")
+    gates = {}
+    for gate in ("technical_gate_passed", "market_regime_gate_passed"):
+        if not isinstance(item.get(gate), bool):
+            raise ValueError(f"{ticker}.{gate} must be true or false")
+        gates[gate] = item[gate]
+    if trigger is not None:
+        if trigger <= 0:
+            raise ValueError(f"{ticker}.trigger_price must be greater than zero")
+        if distance is None:
+            raise ValueError(f"{ticker}.distance_to_trigger_pct is required with trigger_price")
+        expected_distance = ((trigger - current_price) / trigger) * Decimal("100")
+        _require_close(distance, expected_distance, f"{ticker}.distance_to_trigger_pct")
+    elif distance is not None:
+        raise ValueError(f"{ticker}.trigger_price is required with distance_to_trigger_pct")
+    if invalidation is not None and invalidation <= 0:
+        raise ValueError(f"{ticker}.invalidation_price must be greater than zero")
+
+    decision = {
+        "buyability_status": status,
+        "status_reason": _required_text(item.get("status_reason"), "status_reason"),
+        "buy_conditions": _required_string_list(item.get("buy_conditions"), "buy_conditions"),
+        "remaining_gate_count": remaining,
+        "technical_state": technical_state,
+        "current_price": current_price,
+        "trigger_price": trigger,
+        "distance_to_trigger_pct": distance,
+        "invalidation_price": invalidation,
+        **gates,
+    }
+
+    eligible_buckets = {"qualified", "speculative", "cooldown"}
+    if status in {"BUY_NOW", "ALMOST_READY", "RADAR"} and bucket not in eligible_buckets:
+        raise ValueError(f"{ticker}.{status} requires an eligible internal screen bucket")
+    if status == "NOT_ELIGIBLE" and bucket not in {"rejected", "dropped", "incomplete"}:
+        raise ValueError(f"{ticker}.NOT_ELIGIBLE requires a rejected, dropped, or incomplete bucket")
+    if status == "BUY_NOW":
+        if remaining != 0 or not all(gates.values()) or technical_state != "confirmed":
+            raise ValueError(f"{ticker}.BUY_NOW requires zero remaining gates and confirmed market/technical gates")
+        if trigger is None or distance is None or invalidation is None:
+            raise ValueError(f"{ticker}.BUY_NOW requires trigger, distance, and invalidation prices")
+        if distance < Decimal("-5") or distance > Decimal("0"):
+            raise ValueError(f"{ticker}.BUY_NOW price must be at or above trigger and within the five-percent entry zone")
+        legacy = {
+            **item,
+            "decision_status": "BUY_SETUP",
+            "current_entry": item.get("trade_plan", {}).get("entry") if isinstance(item.get("trade_plan"), dict) else None,
+            "pct_above_trigger": -distance,
+            "t1_r": item.get("trade_plan", {}).get("r_multiples", [None, None])[0] if isinstance(item.get("trade_plan"), dict) else None,
+            "t2_r": item.get("trade_plan", {}).get("r_multiples", [None, None])[1] if isinstance(item.get("trade_plan"), dict) else None,
+        }
+        _validate_v07_contract_evidence(legacy, legacy | {
+            "decision_status": "BUY_SETUP",
+            "current_entry": _decimal(legacy["current_entry"], "current_entry"),
+            "pct_above_trigger": _decimal(legacy["pct_above_trigger"], "pct_above_trigger"),
+            "t1_r": _decimal(legacy["t1_r"], "t1_r"),
+            "t2_r": _decimal(legacy["t2_r"], "t2_r"),
+            "technical_state": technical_state,
+            **gates,
+        })
+    elif status == "ALMOST_READY":
+        if remaining != 1 or trigger is None or distance is None or invalidation is None:
+            raise ValueError(f"{ticker}.ALMOST_READY requires exactly one remaining gate plus structured trigger and invalidation prices")
+        if distance < Decimal("0") or distance > ALMOST_READY_MAX_DISTANCE_PCT:
+            raise ValueError(f"{ticker}.ALMOST_READY must be zero to five percent below its trigger")
+    elif status == "RADAR":
+        close_enough = trigger is not None and distance is not None and Decimal("0") <= distance <= ALMOST_READY_MAX_DISTANCE_PCT
+        if remaining <= 1 and close_enough:
+            raise ValueError(f"{ticker}.RADAR is close enough with one gate remaining and must be ALMOST_READY")
+    return decision
+
+
+def normalize_candidate_decision(
+    item: dict[str, Any], *, contract_version: str | None = None,
+    contract_required: bool = False,
+) -> dict[str, Any] | None:
+    if contract_version == DECISION_CONTRACT_VERSION:
+        return _normalize_v08_candidate_decision(item)
+    return _normalize_v07_candidate_decision(
+        item, contract_required=contract_required
+    )
 
 
 def decision_sort_key(
     status: str | None,
     score: Decimal | None,
     ticker: str,
+    contract_version: str | None = None,
 ) -> tuple[int, Decimal, str]:
-    priority = DECISION_PRIORITY.get(status or "", len(DECISION_PRIORITY) + 1)
+    priorities = (
+        DECISION_PRIORITY
+        if contract_version == DECISION_CONTRACT_VERSION
+        else LEGACY_DECISION_PRIORITY
+    )
+    priority = priorities.get(status or "", len(priorities) + 1)
     return priority, -(score or Decimal("-999999")), ticker
