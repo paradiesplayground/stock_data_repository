@@ -445,11 +445,11 @@ python -m app.cli sync-sec
 python -m app.cli sync-sec-incremental
 ```
 
-When both webhook settings are present, every newly stored production `as_run` record is
-published after its database transaction commits. Replay and backtest records are never
-published. Delivery failure is returned and logged without rolling back the strategy run.
-Repeating the same `record_strategy_run` call or using `publish-stock-alert` safely retries the
-same run ID; the website remains responsible for duplicate suppression.
+Recording a strategy run through REST or MCP never publishes it implicitly. Use
+`run_daily_stock_alert` for the preferred one-call production workflow, or retrieve and verify a
+stored run before explicitly calling `publish_strategy_run` or `publish-stock-alert`. Repeating
+the same idempotency key safely reuses the canonical run ID; the website remains responsible for
+duplicate suppression during delivery retries.
 
 Without `--date`, `sync-market` safely catches up every missing weekday through the configured
 market target. Use `--date` only when deliberately reloading or troubleshooting one session.
