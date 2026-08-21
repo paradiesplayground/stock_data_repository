@@ -16,6 +16,9 @@
   and reports final container status.
 - Reject v0.8 buyability statuses whose remaining-gate counts contradict their represented
   technical, market, or trigger gates, with focused status-by-status regression coverage.
+- Add a configuration-driven hybrid alert-preparation tool for production strategy v0.7 that owns
+  deterministic filtering, SPY regime, prior-run comparison, trigger inputs, and qualitative
+  evidence requirements before the existing validated finalize-and-publish call.
 
 ## 0.4.19
 

@@ -28,6 +28,9 @@ from app.services.strategy_tracking import (
     record_strategy_run as save_strategy_run,
 )
 from app.services.daily_stock_alert import run_daily_stock_alert as execute_daily_stock_alert
+from app.services.daily_stock_alert_preparation import (
+    prepare_daily_stock_alert as prepare_daily_stock_alert_workflow,
+)
 from app.services.stock_alert_delivery import (
     publish_strategy_run_revision as publish_strategy_run_rendering_revision,
     publish_strategy_run as deliver_strategy_run,
@@ -413,6 +416,22 @@ if settings.mcp_enable_strategy_writes:
                 data_cutoff_at_utc=data_cutoff_at_utc,
                 notes=notes,
                 publish=False,
+            )
+
+    @mcp.tool()
+    def prepare_daily_stock_alert(
+        as_of_date: str,
+        limit: int = 100,
+        exclude_industry_groups: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Prepare deterministic candidates and evidence gaps for a hybrid daily alert."""
+        with SessionLocal() as session:
+            return prepare_daily_stock_alert_workflow(
+                session,
+                get_settings(),
+                as_of_date=as_of_date,
+                limit=limit,
+                exclude_industry_groups=exclude_industry_groups,
             )
 
     @mcp.tool()

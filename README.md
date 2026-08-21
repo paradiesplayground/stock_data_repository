@@ -320,20 +320,29 @@ Set `MCP_ENABLE_STRATEGY_WRITES=true` to additionally expose:
 
 ```text
 record_strategy_run
+prepare_daily_stock_alert
 run_daily_stock_alert
 publish_strategy_run
+resend_strategy_run_email
+publish_strategy_run_revision
+verify_strategy_run_email
 record_strategy_outcomes
 preview_strategy_scenario
 run_strategy_scenario
 ```
 
-`run_daily_stock_alert` is the preferred reliability path for a completed production analysis.
-It accepts the prepared v0.8 run payload once, checks freshness, records without implicit
-publication, reads the canonical run back and verifies its hash, publishes the website, requires
-the SMTP acceptance receipt, and optionally requests mailbox verification. Repeating the same
-idempotency key resumes through the existing canonical run and website duplicate suppression.
-The current first phase still receives the completed candidate decisions and `report_markdown`
-from the caller; deterministic date-only production decision generation remains separate.
+Use `prepare_daily_stock_alert` first for recurring production alerts. It freshness-checks the
+requested current date, applies the versioned `dynamic_swing_buy_alerts` v0.7 deterministic
+prefilter, calculates the completed-session SPY 50-day regime, derives trigger and invalidation
+inputs, compares raw membership with the prior stored alert, and returns the qualitative evidence
+still required for each candidate. It does not invent research or final buyability decisions.
+
+After completing the missing qualitative review, fill the returned `run_template` with canonical
+v0.8 candidates, evidence, summary, and `report_markdown`, then pass it once to
+`run_daily_stock_alert`. That call rechecks freshness, records without implicit publication, reads
+the canonical run back and verifies its hash, publishes the website, requires the SMTP acceptance
+receipt, and optionally requests mailbox verification. Repeating the same idempotency key resumes
+through the existing canonical run and website duplicate suppression.
 
 The write tools are disabled by default. They can append complete, versioned strategy runs and
 later outcome observations to the isolated `strategy_tracking` schema. They cannot update source

@@ -14,6 +14,9 @@ summary appeared actionable while the detailed evidence said not to trade.
 - New production runs require decision contract `0.8`; contract `0.7` remains readable and
   deliverable for historical runs.
 - REST and MCP persistence never publish implicitly. Publication is an explicit operation.
+- `prepare_daily_stock_alert` owns the deterministic production prefilter, stored metrics, SPY
+  regime, raw-pool comparison, trigger inputs, and qualitative evidence checklist for strategy
+  `dynamic_swing_buy_alerts` v0.7.
 - `run_daily_stock_alert` completes freshness checking, persistence, canonical read-back,
   validation, publication, email delivery, and optional mailbox verification in one resumable
   server-side call for a prepared production alert.
@@ -102,8 +105,10 @@ that it reached the inbox.
 
 ## Architectural cutoff
 
-The durable prepared-alert workflow is complete. Remaining architecture work is to construct the
-production decision payload entirely server-side from an as-of date and to store ChatGPT commentary
-as append-only enrichment without making it part of deterministic strategy logic. Operationally,
-run one production alert through publication, SMTP acceptance, and mailbox verification. No
-historical market, SEC, or feature data needs recalculation.
+The hybrid preparation and durable finalization workflows are complete. The repository owns
+deterministic filtering and comparisons; ChatGPT supplies only research the repository does not
+store, then the repository validates and finalizes the immutable v0.8 alert. Remaining architecture
+work is to store ChatGPT commentary as append-only enrichment without making it part of
+deterministic strategy logic. Operationally, run one production alert through publication, SMTP
+acceptance, and mailbox verification. No historical market, SEC, or feature data needs
+recalculation.

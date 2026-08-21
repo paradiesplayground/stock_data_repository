@@ -24,6 +24,7 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     sys.modules.pop("app.mcp_server", None)
     mcp_server = importlib.import_module("app.mcp_server")
     tool = mcp_server.mcp._tool_manager._tools["record_strategy_run"]
+    prepare_tool = mcp_server.mcp._tool_manager._tools["prepare_daily_stock_alert"]
     publish_tool = mcp_server.mcp._tool_manager._tools["publish_strategy_run"]
     resend_tool = mcp_server.mcp._tool_manager._tools["resend_strategy_run_email"]
     revision_tool = mcp_server.mcp._tool_manager._tools["publish_strategy_run_revision"]
@@ -34,6 +35,7 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     assert "decision_contract_version" in properties
     assert properties["report_markdown"]["anyOf"][0] == {"type": "string"}
     assert "report_markdown" not in properties["summary"].get("properties", {})
+    assert prepare_tool.parameters["required"] == ["as_of_date"]
     assert publish_tool.parameters["required"] == ["run_id"]
     assert resend_tool.parameters["required"] == ["run_id"]
     assert revision_tool.parameters["required"] == [

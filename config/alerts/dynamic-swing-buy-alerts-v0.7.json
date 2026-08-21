@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "universe": {
+    "exchanges": ["XNAS", "XNYS"],
+    "security_type": "CS",
+    "exclude_otc": true,
+    "minimum_price": 5,
+    "minimum_market_cap": 100000000,
+    "standard_market_cap": 250000000
+  },
+  "hard_thresholds": {
+    "minimum_ttm_revenue_growth_pct": 40,
+    "minimum_quarter_revenue_growth_pct": 40,
+    "maximum_price_change_12w_pct": -20,
+    "minimum_avg_dollar_volume_20d": 30000000,
+    "minimum_cash_runway_months": 12,
+    "reject_going_concern": true
+  },
+  "market_regime": {
+    "benchmark_ticker": "SPY",
+    "moving_average_sessions": 50,
+    "require_close_above_moving_average": true,
+    "require_moving_average_rising": false,
+    "data_timing": "completed_session_only"
+  },
+  "actionable_rules": {
+    "require_positive_relative_return_20d_vs_qqq": true
+  },
+  "scoring_model": "skill-rubric-100-point-v1",
+  "comparison_model": "daily-comparison-v1"
+}
