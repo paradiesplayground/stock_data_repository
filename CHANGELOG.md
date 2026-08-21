@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-08-20
+## 0.4.20 - 2026-08-21
 
 - Add decision contract v0.8 with one public buyability result: `BUY_NOW`, `ALMOST_READY`,
   `RADAR`, or `NOT_ELIGIBLE`.
@@ -8,6 +8,10 @@
   is presented as buyable or almost ready, while preserving v0.7 delivery compatibility.
 - Recover orphaned ingestion runs at worker startup, immediately rerun recovered corporate-action
   syncs, and block screening while a critical ingestion job is stale or failed.
+- Require explicit publication for stored alerts across both REST and MCP entry points.
+- Add a one-call daily alert workflow that freshness-checks, persists, reads back, validates,
+  publishes, emails, and optionally verifies a prepared production alert.
+- Include the test suite in the Docker test-stage build context.
 
 ## 0.4.19
 

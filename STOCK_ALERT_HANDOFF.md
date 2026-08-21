@@ -2,7 +2,7 @@
 
 ## Clean cutoff
 
-The stable cutoff is repository version `0.4.19`, strategy `0.6`, decision contract `0.7`,
+The stable cutoff is repository version `0.4.20`, strategy `0.6`, decision contract `0.8`,
 feature calculation `1.5.0`, and screener skill `1.4.0`.
 
 The August 19, 2026 corrected production run is
@@ -11,7 +11,12 @@ summary appeared actionable while the detailed evidence said not to trade.
 
 ## Completed
 
-- New production runs require decision contract `0.7`.
+- New production runs require decision contract `0.8`; contract `0.7` remains readable and
+  deliverable for historical runs.
+- REST and MCP persistence never publish implicitly. Publication is an explicit operation.
+- `run_daily_stock_alert` completes freshness checking, persistence, canonical read-back,
+  validation, publication, email delivery, and optional mailbox verification in one resumable
+  server-side call for a prepared production alert.
 - Screening bucket, technical state, and final decision are stored separately.
 - The repository validates current price, relative strength, relative volume, technical and
   market gates, trigger, entry, stop, sizing, targets, R multiples, planned risk, and potential
@@ -42,7 +47,7 @@ python -m pytest -q
 ruff check app tests
 ```
 
-Expected repository result at this cutoff: `113 passed` and no Ruff errors.
+Expected repository result at this cutoff: the full test suite passes with no Ruff errors.
 
 Website checks:
 
@@ -74,7 +79,7 @@ docker compose -p stock_data_repo up -d --force-recreate migrate api worker mcp
 docker compose -p stock_data_repo restart tunnel
 ```
 
-No market, SEC, or feature backfill is required for `0.4.19`.
+No market, SEC, or feature backfill is required for `0.4.20`.
 
 ## Explicit resend fallback
 
@@ -100,7 +105,8 @@ that it reached the inbox.
 
 ## Architectural cutoff
 
-The four previously listed architectural improvements are complete. Remaining work is operational:
-deploy both repositories, configure optional IMAP verification if desired, and run one production
-alert through publication, SMTP acceptance, and mailbox verification. No historical market, SEC, or
-feature data needs recalculation.
+The durable prepared-alert workflow is complete. Remaining architecture work is to construct the
+production decision payload entirely server-side from an as-of date and to store ChatGPT commentary
+as append-only enrichment without making it part of deterministic strategy logic. Operationally,
+run one production alert through publication, SMTP acceptance, and mailbox verification. No
+historical market, SEC, or feature data needs recalculation.
