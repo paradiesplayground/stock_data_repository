@@ -309,11 +309,20 @@ Set `MCP_ENABLE_STRATEGY_WRITES=true` to additionally expose:
 
 ```text
 record_strategy_run
+run_daily_stock_alert
 publish_strategy_run
 record_strategy_outcomes
 preview_strategy_scenario
 run_strategy_scenario
 ```
+
+`run_daily_stock_alert` is the preferred reliability path for a completed production analysis.
+It accepts the prepared v0.8 run payload once, checks freshness, records without implicit
+publication, reads the canonical run back and verifies its hash, publishes the website, requires
+the SMTP acceptance receipt, and optionally requests mailbox verification. Repeating the same
+idempotency key resumes through the existing canonical run and website duplicate suppression.
+The current first phase still receives the completed candidate decisions and `report_markdown`
+from the caller; deterministic date-only production decision generation remains separate.
 
 The write tools are disabled by default. They can append complete, versioned strategy runs and
 later outcome observations to the isolated `strategy_tracking` schema. They cannot update source
