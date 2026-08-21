@@ -333,8 +333,13 @@ def create_strategy_run(
     payload: dict[str, Any],
     session: DbSession,
 ) -> dict[str, object]:
+    if "publish" in payload:
+        raise HTTPException(
+            status_code=422,
+            detail="publish is controlled by the server workflow",
+        )
     try:
-        return record_strategy_run(session, **payload)
+        return record_strategy_run(session, **payload, publish=False)
     except (TypeError, ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
