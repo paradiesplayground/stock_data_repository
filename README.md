@@ -347,6 +347,9 @@ v0.8 candidates, evidence, summary, and `report_markdown`, then pass it once to
 the canonical run back and verifies its hash, publishes the website, requires the SMTP acceptance
 receipt, and optionally requests mailbox verification. Repeating the same idempotency key resumes
 through the existing canonical run and website duplicate suppression.
+The template preserves the complete current-plus-dropped ticker scope. Finalization rejects a
+production alert unless every prepared ticker appears exactly once, no unprepared ticker is added,
+and `report_markdown` is complete.
 
 The write tools are disabled by default. They can append complete, versioned strategy runs and
 later outcome observations to the isolated `strategy_tracking` schema. They cannot update source

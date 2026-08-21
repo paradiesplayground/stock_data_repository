@@ -24,6 +24,8 @@
   forward for review.
 - Keep generic repository quality flags visible without treating every flag or a missing prior
   filing date as a high-priority research escalation.
+- Carry the complete prepared current/dropped ticker scope into finalization and reject production
+  alerts with missing, unexpected, or duplicate candidates or an unfinished report.
 
 ## 0.4.19
 

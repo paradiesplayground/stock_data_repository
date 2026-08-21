@@ -105,3 +105,58 @@ def test_daily_alert_rejects_caller_controlled_publish_flag() -> None:
             as_of_date="2026-08-21",
             run_payload=payload,
         )
+
+
+@pytest.mark.parametrize(
+    ("candidates", "expected_error"),
+    [
+        ([{"ticker": "AAPL"}], "missing prepared candidates: MSFT"),
+        (
+            [{"ticker": "AAPL"}, {"ticker": "MSFT"}, {"ticker": "NVDA"}],
+            "unexpected candidates: NVDA",
+        ),
+        (
+            [{"ticker": "AAPL"}, {"ticker": "AAPL"}, {"ticker": "MSFT"}],
+            "duplicate candidates: AAPL",
+        ),
+    ],
+)
+def test_daily_alert_requires_exact_prepared_candidate_scope(
+    candidates, expected_error
+) -> None:
+    payload = _payload()
+    payload.update(
+        strategy_key="dynamic_swing_buy_alerts",
+        strategy_version="0.7",
+        candidates=candidates,
+        summary={
+            "preparation_scope": {
+                "expected_candidate_tickers": ["AAPL", "MSFT"]
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match=expected_error):
+        run_daily_stock_alert(
+            object(),
+            Settings(),
+            as_of_date="2026-08-21",
+            run_payload=payload,
+        )
+
+
+def test_daily_alert_requires_completed_report_for_prepared_strategy() -> None:
+    payload = _payload()
+    payload.update(
+        strategy_key="dynamic_swing_buy_alerts",
+        strategy_version="0.7",
+        report_markdown=None,
+    )
+
+    with pytest.raises(ValueError, match="requires completed report_markdown"):
+        run_daily_stock_alert(
+            object(),
+            Settings(),
+            as_of_date="2026-08-21",
+            run_payload=payload,
+        )

@@ -381,6 +381,13 @@ def prepare_daily_stock_alert(
                 "comparison": comparison,
                 "raw_candidate_count": pool["count"],
                 "market_regime": regime,
+                "preparation_scope": {
+                    "current_raw_tickers": sorted(current_tickers),
+                    "dropped_reassessed_tickers": comparison["dropped_tickers"],
+                    "expected_candidate_tickers": sorted(
+                        current_tickers | prior_raw_tickers
+                    ),
+                },
             },
             "report_markdown": None,
         },

@@ -10,6 +10,51 @@ from app.services.stock_alert_delivery import (
 )
 from app.services.strategy_tracking import get_strategy_run, record_strategy_run
 
+PRODUCTION_STRATEGY_KEY = "dynamic_swing_buy_alerts"
+PRODUCTION_STRATEGY_VERSION = "0.7"
+
+
+def _validate_prepared_scope(payload: dict[str, Any]) -> None:
+    if (
+        payload.get("strategy_key") != PRODUCTION_STRATEGY_KEY
+        or payload.get("strategy_version") != PRODUCTION_STRATEGY_VERSION
+    ):
+        return
+
+    report = payload.get("report_markdown")
+    if not isinstance(report, str) or not report.strip():
+        raise ValueError("prepared production alert requires completed report_markdown")
+
+    summary = payload.get("summary")
+    scope = summary.get("preparation_scope") if isinstance(summary, dict) else None
+    expected = scope.get("expected_candidate_tickers") if isinstance(scope, dict) else None
+    if not isinstance(expected, list) or any(not isinstance(item, str) for item in expected):
+        raise ValueError(
+            "prepared production alert requires summary.preparation_scope."
+            "expected_candidate_tickers"
+        )
+
+    expected_tickers = {item.strip().upper() for item in expected if item.strip()}
+    submitted: list[str] = []
+    for candidate in payload.get("candidates") or []:
+        if not isinstance(candidate, dict) or not str(candidate.get("ticker") or "").strip():
+            raise ValueError("every prepared candidate requires a ticker")
+        submitted.append(str(candidate["ticker"]).strip().upper())
+
+    duplicates = sorted({ticker for ticker in submitted if submitted.count(ticker) > 1})
+    submitted_tickers = set(submitted)
+    missing = sorted(expected_tickers - submitted_tickers)
+    unexpected = sorted(submitted_tickers - expected_tickers)
+    problems = []
+    if missing:
+        problems.append("missing prepared candidates: " + ", ".join(missing))
+    if unexpected:
+        problems.append("unexpected candidates: " + ", ".join(unexpected))
+    if duplicates:
+        problems.append("duplicate candidates: " + ", ".join(duplicates))
+    if problems:
+        raise ValueError("; ".join(problems))
+
 
 def run_daily_stock_alert(
     session: Session,
@@ -27,6 +72,7 @@ def run_daily_stock_alert(
         raise ValueError("run_payload.as_of_date must match as_of_date")
     if "publish" in payload:
         raise ValueError("run_payload must not contain publish")
+    _validate_prepared_scope(payload)
 
     freshness = get_data_freshness(session, settings)
     if freshness.get("expected_market_date") != as_of_date:

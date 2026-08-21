@@ -127,6 +127,11 @@ def test_prepare_daily_alert_builds_deterministic_hybrid_handoff(monkeypatch) ->
     assert template["decision_contract_version"] == "0.8"
     assert template["candidates"] == []
     assert template["report_markdown"] is None
+    assert template["summary"]["preparation_scope"] == {
+        "current_raw_tickers": ["AAPL", "MSFT"],
+        "dropped_reassessed_tickers": ["NVDA"],
+        "expected_candidate_tickers": ["AAPL", "MSFT", "NVDA"],
+    }
 
 
 def test_prepare_daily_alert_rejects_stale_data(monkeypatch) -> None:
