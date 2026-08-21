@@ -25,7 +25,7 @@ def run_daily_stock_alert(
         raise ValueError("run_payload.run_type must be as_run")
     if payload.get("as_of_date") != as_of_date:
         raise ValueError("run_payload.as_of_date must match as_of_date")
-    if payload.get("publish") is not None:
+    if "publish" in payload:
         raise ValueError("run_payload must not contain publish")
 
     freshness = get_data_freshness(session, settings)
