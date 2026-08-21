@@ -206,3 +206,45 @@ def test_research_plan_escalates_material_daily_move() -> None:
 
     assert plan["priority"] == "high"
     assert "material_daily_move" in plan["reasons"]
+
+
+def test_research_plan_does_not_escalate_generic_quality_flag() -> None:
+    feature = _feature("MSFT")
+    feature["quality_flags"] = ["free_cash_flow_annual_only"]
+    candidate = _deterministic_candidate(feature, True)
+    prior = {
+        "ticker": "MSFT",
+        "buyability_status": "RADAR",
+        "metrics": dict(feature),
+    }
+
+    plan = _research_plan(
+        candidate,
+        prior,
+        [{"ticker": "MSFT", "evidence_type": "filing_review"}],
+        is_new=False,
+    )
+
+    assert candidate["deterministic_risk_flags"] == []
+    assert candidate["repository_quality_flags"] == ["free_cash_flow_annual_only"]
+    assert plan["priority"] == "low"
+
+
+def test_research_plan_does_not_invent_fresh_filing_without_prior_date() -> None:
+    feature = _feature("MSFT")
+    candidate = _deterministic_candidate(feature, True)
+    prior = {
+        "ticker": "MSFT",
+        "buyability_status": "RADAR",
+        "metrics": {**feature, "latest_source_filing_date": None},
+    }
+
+    plan = _research_plan(
+        candidate,
+        prior,
+        [{"ticker": "MSFT", "evidence_type": "filing_review"}],
+        is_new=False,
+    )
+
+    assert "fresh_source_filing" not in plan["reasons"]
+    assert plan["priority"] == "low"

@@ -22,6 +22,8 @@
 - Prioritize qualitative research for new names, material moves, fresh filings, prior near-buyable
   candidates, deterministic risk flags, and dropped-name transitions while carrying prior evidence
   forward for review.
+- Keep generic repository quality flags visible without treating every flag or a missing prior
+  filing date as a high-priority research escalation.
 
 ## 0.4.19
 

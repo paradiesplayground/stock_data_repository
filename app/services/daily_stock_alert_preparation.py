@@ -124,7 +124,8 @@ def _deterministic_candidate(item: dict[str, Any], market_gate: bool) -> dict[st
         else None
     )
     relative_strength = _decimal(item.get("relative_return_20d_vs_qqq_pct"))
-    risk_flags = list(item.get("quality_flags") or [])
+    quality_flags = sorted(set(item.get("quality_flags") or []))
+    risk_flags: list[str] = []
     if item.get("sic_code") is None:
         risk_flags.append("unknown_sic_exclusion_status")
     runway = _decimal(item.get("cash_runway_months"))
@@ -155,6 +156,7 @@ def _deterministic_candidate(item: dict[str, Any], market_gate: bool) -> dict[st
             ),
         },
         "deterministic_risk_flags": sorted(set(risk_flags)),
+        "repository_quality_flags": quality_flags,
         "qualitative_evidence_required": list(QUALITATIVE_EVIDENCE_REQUIREMENTS),
     }
 
@@ -196,7 +198,13 @@ def _research_plan(
     if daily_move is not None and abs(daily_move) >= Decimal("5"):
         reasons.append("material_daily_move")
     changes = _metric_changes(candidate["deterministic_metrics"], prior)
-    if "latest_source_filing_date" in changes:
+    filing_change = changes.get("latest_source_filing_date")
+    if (
+        filing_change
+        and filing_change["previous"] is not None
+        and filing_change["current"] is not None
+        and str(filing_change["current"]) > str(filing_change["previous"])
+    ):
         reasons.append("fresh_source_filing")
     if prior and prior.get("buyability_status") in {"BUY_NOW", "ALMOST_READY"}:
         reasons.append("prior_near_buyable_status")
