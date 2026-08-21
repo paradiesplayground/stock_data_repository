@@ -1,5 +1,9 @@
 from app.config import Settings
-from app.services.daily_stock_alert_preparation import prepare_daily_stock_alert
+from app.services.daily_stock_alert_preparation import (
+    _deterministic_candidate,
+    _research_plan,
+    prepare_daily_stock_alert,
+)
 
 
 def _feature(ticker: str) -> dict:
@@ -9,6 +13,7 @@ def _feature(ticker: str) -> dict:
         "sic_code": "3571",
         "close": "95.00",
         "daily_return_pct": "2.41",
+        "latest_source_filing_date": "2026-08-20",
         "high_20d": "100.00",
         "low_20d": "88.00",
         "atr_14": "4.00",
@@ -59,9 +64,32 @@ def test_prepare_daily_alert_builds_deterministic_hybrid_handoff(monkeypatch) ->
             "run_id": "prior-run",
             "as_of_date": "2026-08-20",
             "candidates": [
-                {"ticker": "MSFT", "payload": {"in_raw_pool": True}},
+                {
+                    "ticker": "MSFT",
+                    "buyability_status": "RADAR",
+                    "metrics": {
+                        "close": "94.00",
+                        "latest_source_filing_date": "2026-08-19",
+                    },
+                    "payload": {"in_raw_pool": True},
+                },
                 {"ticker": "NVDA", "payload": {"in_raw_pool": True}},
             ],
+            "evidence": [
+                {
+                    "ticker": "MSFT",
+                    "evidence_type": "filing_review",
+                    "summary": "No going-concern language found.",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.daily_stock_alert_preparation.get_security_features",
+        lambda _session, ticker, **_kwargs: {
+            "ticker": ticker,
+            "found": True,
+            "features_available": True,
         },
     )
 
@@ -74,6 +102,7 @@ def test_prepare_daily_alert_builds_deterministic_hybrid_handoff(monkeypatch) ->
     assert result["comparison"]["new_tickers"] == ["AAPL"]
     assert result["comparison"]["continuing_tickers"] == ["MSFT"]
     assert result["comparison"]["dropped_tickers"] == ["NVDA"]
+    assert result["skill_version"] == "1.5.1"
     assert result["candidates"][0]["suggested_trigger_price"] == "100.10000"
     assert result["candidates"][0]["represented_gates"] == {
         "market_regime_gate_passed": True,
@@ -81,6 +110,18 @@ def test_prepare_daily_alert_builds_deterministic_hybrid_handoff(monkeypatch) ->
         "price_at_or_above_trigger": False,
         "price_within_five_pct_below_trigger": False,
     }
+    queue = {item["ticker"]: item for item in result["research_queue"]}
+    assert queue["AAPL"]["priority"] == "high"
+    assert "new_raw_pool_candidate" in queue["AAPL"]["reasons"]
+    assert queue["MSFT"]["priority"] == "high"
+    assert "fresh_source_filing" in queue["MSFT"]["reasons"]
+    assert queue["MSFT"]["reusable_prior_evidence"][0]["evidence_type"] == (
+        "filing_review"
+    )
+    assert result["dropped_candidate_reviews"][0]["ticker"] == "NVDA"
+    assert result["dropped_candidate_reviews"][0]["current_feature_check"][
+        "features_available"
+    ] is True
     template = result["run_template"]
     assert template["strategy_key"] == "dynamic_swing_buy_alerts"
     assert template["decision_contract_version"] == "0.8"
@@ -133,3 +174,35 @@ def test_prepare_daily_alert_requires_feature_v140_or_later(monkeypatch) -> None
         assert "1.4.0 or later" in str(error)
     else:
         raise AssertionError("old feature versions must fail")
+
+
+def test_research_plan_deprioritizes_unchanged_candidate_with_prior_evidence() -> None:
+    feature = _feature("MSFT")
+    candidate = _deterministic_candidate(feature, True)
+    prior = {
+        "ticker": "MSFT",
+        "buyability_status": "RADAR",
+        "metrics": dict(feature),
+    }
+    evidence = [{"ticker": "MSFT", "evidence_type": "filing_review"}]
+
+    plan = _research_plan(candidate, prior, evidence, is_new=False)
+
+    assert plan["priority"] == "low"
+    assert plan["reasons"] == ["unchanged_candidate_review"]
+
+
+def test_research_plan_escalates_material_daily_move() -> None:
+    feature = _feature("MSFT")
+    feature["daily_return_pct"] = "-7.25"
+    candidate = _deterministic_candidate(feature, True)
+
+    plan = _research_plan(
+        candidate,
+        {"ticker": "MSFT", "buyability_status": "RADAR", "metrics": feature},
+        [{"ticker": "MSFT", "evidence_type": "filing_review"}],
+        is_new=False,
+    )
+
+    assert plan["priority"] == "high"
+    assert "material_daily_move" in plan["reasons"]

@@ -8,13 +8,17 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.mcp_queries import get_data_freshness, query_security_features
+from app.mcp_queries import (
+    get_data_freshness,
+    get_security_features,
+    query_security_features,
+)
 from app.models import DailyPriceBar
 from app.services.strategy_tracking import get_strategy_run, list_strategy_runs
 
 STRATEGY_KEY = "dynamic_swing_buy_alerts"
 STRATEGY_VERSION = "0.7"
-SKILL_VERSION = "1.5.0"
+SKILL_VERSION = "1.5.1"
 DECISION_CONTRACT_VERSION = "0.8"
 MINIMUM_FEATURE_VERSION = (1, 4, 0)
 
@@ -155,6 +159,81 @@ def _deterministic_candidate(item: dict[str, Any], market_gate: bool) -> dict[st
     }
 
 
+def _metric_changes(
+    current: dict[str, Any], prior: dict[str, Any] | None
+) -> dict[str, dict[str, Any]]:
+    if prior is None:
+        return {}
+    prior_metrics = prior.get("metrics") or {}
+    fields = (
+        "close",
+        "price_change_12w_pct",
+        "relative_return_20d_vs_qqq_pct",
+        "revenue_ttm_yoy_pct",
+        "latest_quarter_revenue_yoy_pct",
+        "cash_runway_months",
+        "share_count_yoy_pct",
+        "latest_source_filing_date",
+    )
+    return {
+        field: {"previous": prior_metrics.get(field), "current": current.get(field)}
+        for field in fields
+        if prior_metrics.get(field) != current.get(field)
+    }
+
+
+def _research_plan(
+    candidate: dict[str, Any],
+    prior: dict[str, Any] | None,
+    prior_evidence: list[dict[str, Any]],
+    *,
+    is_new: bool,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    if is_new:
+        reasons.append("new_raw_pool_candidate")
+    daily_move = _decimal(candidate["deterministic_metrics"].get("daily_return_pct"))
+    if daily_move is not None and abs(daily_move) >= Decimal("5"):
+        reasons.append("material_daily_move")
+    changes = _metric_changes(candidate["deterministic_metrics"], prior)
+    if "latest_source_filing_date" in changes:
+        reasons.append("fresh_source_filing")
+    if prior and prior.get("buyability_status") in {"BUY_NOW", "ALMOST_READY"}:
+        reasons.append("prior_near_buyable_status")
+    if candidate["deterministic_risk_flags"]:
+        reasons.append("deterministic_risk_flag")
+    if not prior_evidence:
+        reasons.append("no_reusable_prior_evidence")
+
+    if any(
+        reason
+        in {
+            "new_raw_pool_candidate",
+            "material_daily_move",
+            "fresh_source_filing",
+            "prior_near_buyable_status",
+            "deterministic_risk_flag",
+        }
+        for reason in reasons
+    ):
+        priority = "high"
+    elif not prior_evidence or not prior:
+        priority = "normal"
+    else:
+        priority = "low"
+    return {
+        "ticker": candidate["ticker"],
+        "priority": priority,
+        "reasons": reasons or ["unchanged_candidate_review"],
+        "prior_buyability_status": prior.get("buyability_status") if prior else None,
+        "metric_changes": changes,
+        "reusable_prior_evidence": prior_evidence,
+        "qualitative_evidence_required": candidate[
+            "qualitative_evidence_required"
+        ],
+    }
+
+
 def prepare_daily_stock_alert(
     session: Session,
     settings: Settings,
@@ -213,6 +292,42 @@ def prepare_daily_stock_alert(
         "continuing_tickers": sorted(current_tickers & prior_raw_tickers),
         "dropped_tickers": sorted(prior_raw_tickers - current_tickers),
     }
+    prior_evidence_by_ticker: dict[str, list[dict[str, Any]]] = {}
+    for evidence in (prior or {}).get("evidence") or []:
+        ticker = str(evidence.get("ticker") or "").strip().upper()
+        if ticker:
+            prior_evidence_by_ticker.setdefault(ticker, []).append(evidence)
+    prepared_candidates = [
+        _deterministic_candidate(item, regime["gate_passed"])
+        for item in pool["items"]
+    ]
+    research_queue = [
+        _research_plan(
+            candidate,
+            prior_candidates.get(candidate["ticker"]),
+            prior_evidence_by_ticker.get(candidate["ticker"], []),
+            is_new=candidate["ticker"] in comparison["new_tickers"],
+        )
+        for candidate in prepared_candidates
+    ]
+    priority_order = {"high": 0, "normal": 1, "low": 2}
+    research_queue.sort(key=lambda item: (priority_order[item["priority"]], item["ticker"]))
+    dropped_reviews = [
+        {
+            "ticker": ticker,
+            "priority": "high",
+            "reasons": ["dropped_from_raw_pool"],
+            "prior_candidate": prior_candidates[ticker],
+            "current_feature_check": get_security_features(
+                session,
+                ticker,
+                as_of_date=as_of_date,
+                calculation_version=feature_version,
+            ),
+            "reusable_prior_evidence": prior_evidence_by_ticker.get(ticker, []),
+        }
+        for ticker in comparison["dropped_tickers"]
+    ]
     cutoff = max(
         (item.get("source_data_cutoff_utc") for item in pool["items"] if item.get("source_data_cutoff_utc")),
         default=None,
@@ -235,10 +350,9 @@ def prepare_daily_stock_alert(
         "market_regime": regime,
         "comparison": comparison,
         "raw_candidate_count": pool["count"],
-        "candidates": [
-            _deterministic_candidate(item, regime["gate_passed"])
-            for item in pool["items"]
-        ],
+        "candidates": prepared_candidates,
+        "research_queue": research_queue,
+        "dropped_candidate_reviews": dropped_reviews,
         "run_template": {
             "strategy_key": STRATEGY_KEY,
             "strategy_version": STRATEGY_VERSION,

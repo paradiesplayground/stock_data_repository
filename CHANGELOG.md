@@ -19,6 +19,9 @@
 - Add a configuration-driven hybrid alert-preparation tool for production strategy v0.7 that owns
   deterministic filtering, SPY regime, prior-run comparison, trigger inputs, and qualitative
   evidence requirements before the existing validated finalize-and-publish call.
+- Prioritize qualitative research for new names, material moves, fresh filings, prior near-buyable
+  candidates, deterministic risk flags, and dropped-name transitions while carrying prior evidence
+  forward for review.
 
 ## 0.4.19
 

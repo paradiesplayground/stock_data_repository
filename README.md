@@ -335,7 +335,11 @@ Use `prepare_daily_stock_alert` first for recurring production alerts. It freshn
 requested current date, applies the versioned `dynamic_swing_buy_alerts` v0.7 deterministic
 prefilter, calculates the completed-session SPY 50-day regime, derives trigger and invalidation
 inputs, compares raw membership with the prior stored alert, and returns the qualitative evidence
-still required for each candidate. It does not invent research or final buyability decisions.
+still required for each candidate. Its research queue prioritizes new names, material daily moves,
+fresh filings, prior near-buyable candidates, and deterministic risk flags; unchanged candidates
+with prior evidence are explicitly lower priority. Dropped names include a current source-feature
+check so their exact filter transition can be reviewed. It does not invent research or final
+buyability decisions.
 
 After completing the missing qualitative review, fill the returned `run_template` with canonical
 v0.8 candidates, evidence, summary, and `report_markdown`, then pass it once to
