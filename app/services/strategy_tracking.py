@@ -139,6 +139,7 @@ def record_strategy_run(
     data_cutoff_at_utc: str | None = None,
     notes: str | None = None,
     publish: bool = True,
+    validate_only: bool = False,
 ) -> dict[str, Any]:
     strategy_key = _identifier(strategy_key, "strategy_key", 128)
     strategy_version = _identifier(strategy_version, "strategy_version", 64)
@@ -268,6 +269,18 @@ def record_strategy_run(
     if decision_contract_version is not None:
         payload["decision_contract_version"] = decision_contract_version
     payload_hash = _canonical_hash(payload)
+    _date(as_of_date, "as_of_date")
+    _datetime(data_cutoff_at_utc, "data_cutoff_at_utc")
+    if validate_only:
+        return {
+            "status": "valid",
+            "payload_hash": payload_hash,
+            "candidate_count": len(normalized_candidates),
+            "evidence_count": len(normalized_evidence),
+            "persisted": False,
+            "published": False,
+            "emailed": False,
+        }
     existing = session.scalar(
         select(StrategyRun).where(StrategyRun.idempotency_key == idempotency_key)
     )

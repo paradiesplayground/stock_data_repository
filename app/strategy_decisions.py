@@ -108,7 +108,7 @@ def _required_decimal(value: Any, field: str) -> Decimal:
 
 def _mapping(value: Any, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise ValueError(f"{field} is required for v0.7 decision-status candidates")
+        raise ValueError(f"{field} is required and must be an object")
     return value
 
 

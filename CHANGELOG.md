@@ -26,6 +26,8 @@
   filing date as a high-priority research escalation.
 - Carry the complete prepared current/dropped ticker scope into finalization and reject production
   alerts with missing, unexpected, or duplicate candidates or an unfinished report.
+- Add a side-effect-free daily-alert validator that executes the same normalization and contract
+  checks as persistence, returning the canonical hash before any production call is attempted.
 
 ## 0.4.19
 

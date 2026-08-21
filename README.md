@@ -342,7 +342,10 @@ check so their exact filter transition can be reviewed. It does not invent resea
 buyability decisions.
 
 After completing the missing qualitative review, fill the returned `run_template` with canonical
-v0.8 candidates, evidence, summary, and `report_markdown`, then pass it once to
+v0.8 candidates, evidence, summary, and `report_markdown`, then pass it to
+`validate_daily_stock_alert`. This side-effect-free tool executes the same freshness, preparation
+scope, candidate, evidence, date, and payload normalization checks used by persistence and returns
+the canonical payload hash. Only after it passes should the unchanged payload be sent to
 `run_daily_stock_alert`. That call rechecks freshness, records without implicit publication, reads
 the canonical run back and verifies its hash, publishes the website, requires the SMTP acceptance
 receipt, and optionally requests mailbox verification. Repeating the same idempotency key resumes

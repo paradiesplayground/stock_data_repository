@@ -27,7 +27,10 @@ from app.services.strategy_tracking import (
     record_strategy_outcomes as save_strategy_outcomes,
     record_strategy_run as save_strategy_run,
 )
-from app.services.daily_stock_alert import run_daily_stock_alert as execute_daily_stock_alert
+from app.services.daily_stock_alert import (
+    run_daily_stock_alert as execute_daily_stock_alert,
+    validate_daily_stock_alert as validate_daily_stock_alert_workflow,
+)
 from app.services.daily_stock_alert_preparation import (
     prepare_daily_stock_alert as prepare_daily_stock_alert_workflow,
 )
@@ -432,6 +435,23 @@ if settings.mcp_enable_strategy_writes:
                 as_of_date=as_of_date,
                 limit=limit,
                 exclude_industry_groups=exclude_industry_groups,
+            )
+
+    @mcp.tool()
+    def validate_daily_stock_alert(
+        as_of_date: str,
+        run_payload: Annotated[
+            dict[str, Any],
+            Field(description="Completed production payload to validate without side effects."),
+        ],
+    ) -> dict[str, Any]:
+        """Run the exact production alert contract checks without storing or delivering."""
+        with SessionLocal() as session:
+            return validate_daily_stock_alert_workflow(
+                session,
+                get_settings(),
+                as_of_date=as_of_date,
+                run_payload=run_payload,
             )
 
     @mcp.tool()

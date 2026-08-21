@@ -1,7 +1,10 @@
 import pytest
 
 from app.config import Settings
-from app.services.daily_stock_alert import run_daily_stock_alert
+from app.services.daily_stock_alert import (
+    run_daily_stock_alert,
+    validate_daily_stock_alert,
+)
 
 
 def _payload() -> dict:
@@ -73,6 +76,46 @@ def test_daily_alert_records_verifies_and_delivers_in_one_call(monkeypatch) -> N
     assert result["run_id"] == "run-1"
     assert result["publication"]["email_delivery"] == "smtp_accepted"
     assert result["mailbox_verification"] == {"status": "not_requested"}
+
+
+def test_daily_alert_dry_validation_uses_recording_contract_without_writes(
+    monkeypatch,
+) -> None:
+    calls = []
+    monkeypatch.setattr(
+        "app.services.daily_stock_alert.get_data_freshness",
+        lambda _session, _settings: {
+            "expected_market_date": "2026-08-21",
+            "ready_for_screening": True,
+            "checked_at_local": "2026-08-21T17:00:00-05:00",
+            "latest_trade_date": "2026-08-21",
+            "latest_feature_date": "2026-08-21",
+            "freshness_issues": [],
+        },
+    )
+
+    def validate(_session, **payload):
+        calls.append((payload["publish"], payload["validate_only"]))
+        return {
+            "status": "valid",
+            "payload_hash": "hash-1",
+            "candidate_count": 0,
+            "evidence_count": 0,
+            "persisted": False,
+            "published": False,
+            "emailed": False,
+        }
+
+    monkeypatch.setattr("app.services.daily_stock_alert.record_strategy_run", validate)
+    result = validate_daily_stock_alert(
+        object(), Settings(), as_of_date="2026-08-21", run_payload=_payload()
+    )
+
+    assert calls == [(False, True)]
+    assert result["status"] == "valid"
+    assert result["persisted"] is False
+    assert result["published"] is False
+    assert result["emailed"] is False
 
 
 def test_daily_alert_stops_before_recording_when_data_is_stale(monkeypatch) -> None:

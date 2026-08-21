@@ -56,15 +56,13 @@ def _validate_prepared_scope(payload: dict[str, Any]) -> None:
         raise ValueError("; ".join(problems))
 
 
-def run_daily_stock_alert(
+def _validate_request(
     session: Session,
     settings: Settings,
     *,
     as_of_date: str,
     run_payload: dict[str, Any],
-    verify_mailbox: bool = False,
-) -> dict[str, Any]:
-    """Complete a prepared production alert through one resumable server-side call."""
+) -> tuple[dict[str, Any], dict[str, Any]]:
     payload = dict(run_payload)
     if payload.get("run_type") != "as_run":
         raise ValueError("run_payload.run_type must be as_run")
@@ -84,6 +82,44 @@ def run_daily_stock_alert(
         issues = freshness.get("freshness_issues") or []
         detail = "; ".join(str(item) for item in issues) or "market or features are stale"
         raise RuntimeError("data is not ready for screening: " + detail)
+    return payload, freshness
+
+
+def validate_daily_stock_alert(
+    session: Session,
+    settings: Settings,
+    *,
+    as_of_date: str,
+    run_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Run the complete production validation path without persistence or delivery."""
+    payload, freshness = _validate_request(
+        session, settings, as_of_date=as_of_date, run_payload=run_payload
+    )
+    result = record_strategy_run(
+        session, **payload, publish=False, validate_only=True
+    )
+    result["as_of_date"] = as_of_date
+    result["freshness"] = {
+        "checked_at_local": freshness.get("checked_at_local"),
+        "latest_trade_date": freshness.get("latest_trade_date"),
+        "latest_feature_date": freshness.get("latest_feature_date"),
+    }
+    return result
+
+
+def run_daily_stock_alert(
+    session: Session,
+    settings: Settings,
+    *,
+    as_of_date: str,
+    run_payload: dict[str, Any],
+    verify_mailbox: bool = False,
+) -> dict[str, Any]:
+    """Complete a prepared production alert through one resumable server-side call."""
+    payload, freshness = _validate_request(
+        session, settings, as_of_date=as_of_date, run_payload=run_payload
+    )
 
     recorded = record_strategy_run(session, **payload, publish=False)
     run_id = str(recorded["run_id"])

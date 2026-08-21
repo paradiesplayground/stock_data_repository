@@ -14,6 +14,7 @@ from app.services.stock_alert_delivery import (
     validate_strategy_run_for_delivery,
     verify_strategy_run_email,
 )
+from app.services.strategy_tracking import record_strategy_run
 
 
 def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
@@ -25,6 +26,7 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     mcp_server = importlib.import_module("app.mcp_server")
     tool = mcp_server.mcp._tool_manager._tools["record_strategy_run"]
     prepare_tool = mcp_server.mcp._tool_manager._tools["prepare_daily_stock_alert"]
+    validate_tool = mcp_server.mcp._tool_manager._tools["validate_daily_stock_alert"]
     publish_tool = mcp_server.mcp._tool_manager._tools["publish_strategy_run"]
     resend_tool = mcp_server.mcp._tool_manager._tools["resend_strategy_run_email"]
     revision_tool = mcp_server.mcp._tool_manager._tools["publish_strategy_run_revision"]
@@ -36,6 +38,7 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     assert properties["report_markdown"]["anyOf"][0] == {"type": "string"}
     assert "report_markdown" not in properties["summary"].get("properties", {})
     assert prepare_tool.parameters["required"] == ["as_of_date"]
+    assert validate_tool.parameters["required"] == ["as_of_date", "run_payload"]
     assert publish_tool.parameters["required"] == ["run_id"]
     assert resend_tool.parameters["required"] == ["run_id"]
     assert revision_tool.parameters["required"] == [
@@ -80,6 +83,33 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
 
     get_settings.cache_clear()
     sys.modules.pop("app.mcp_server", None)
+
+
+def test_validate_only_normalizes_without_accessing_database() -> None:
+    result = record_strategy_run(
+        object(),
+        strategy_key="daily-alert",
+        strategy_version="0.8",
+        as_of_date="2026-08-21",
+        run_type="as_run",
+        idempotency_key="daily-alert:0.8:2026-08-21",
+        configuration={},
+        filters={},
+        candidates=[],
+        summary={},
+        report_markdown="# Daily alert\n\nNo trade today.",
+        evidence=[],
+        decision_contract_version="0.8",
+        publish=False,
+        validate_only=True,
+    )
+
+    assert result["status"] == "valid"
+    assert result["candidate_count"] == 0
+    assert result["persisted"] is False
+    assert result["published"] is False
+    assert result["emailed"] is False
+    assert len(result["payload_hash"]) == 64
 
 
 def test_website_delivery_sends_report_markdown_at_top_level(monkeypatch) -> None:
