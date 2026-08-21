@@ -389,6 +389,18 @@ def _normalize_v08_candidate_decision(item: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(item.get(gate), bool):
             raise ValueError(f"{ticker}.{gate} must be true or false")
         gates[gate] = item[gate]
+
+    if technical_state == "confirmed" and not gates["technical_gate_passed"]:
+        raise ValueError(
+            f"{ticker}.technical_state=confirmed requires technical_gate_passed=true"
+        )
+    if technical_state in {"no_setup", "invalidated"} and gates[
+        "technical_gate_passed"
+    ]:
+        raise ValueError(
+            f"{ticker}.technical_state={technical_state} requires "
+            "technical_gate_passed=false"
+        )
     if trigger is not None:
         if trigger <= 0:
             raise ValueError(f"{ticker}.trigger_price must be greater than zero")
@@ -400,6 +412,15 @@ def _normalize_v08_candidate_decision(item: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"{ticker}.trigger_price is required with distance_to_trigger_pct")
     if invalidation is not None and invalidation <= 0:
         raise ValueError(f"{ticker}.invalidation_price must be greater than zero")
+
+    represented_failures = sum(not passed for passed in gates.values())
+    if distance is not None and distance > 0:
+        represented_failures += 1
+    if status != "ALMOST_READY" and remaining < represented_failures:
+        raise ValueError(
+            f"{ticker}.remaining_gate_count cannot be less than the "
+            f"{represented_failures} failed represented gates"
+        )
 
     decision = {
         "buyability_status": status,
@@ -448,7 +469,13 @@ def _normalize_v08_candidate_decision(item: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{ticker}.ALMOST_READY requires exactly one remaining gate plus structured trigger and invalidation prices")
         if distance < Decimal("0") or distance > ALMOST_READY_MAX_DISTANCE_PCT:
             raise ValueError(f"{ticker}.ALMOST_READY must be zero to five percent below its trigger")
+        if represented_failures != 1:
+            raise ValueError(
+                f"{ticker}.ALMOST_READY requires exactly one failed represented gate"
+            )
     elif status == "RADAR":
+        if remaining == 0:
+            raise ValueError(f"{ticker}.RADAR requires at least one remaining gate")
         close_enough = trigger is not None and distance is not None and Decimal("0") <= distance <= ALMOST_READY_MAX_DISTANCE_PCT
         if remaining <= 1 and close_enough:
             raise ValueError(f"{ticker}.RADAR is close enough with one gate remaining and must be ALMOST_READY")

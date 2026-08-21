@@ -14,6 +14,8 @@
 - Include the test suite in the Docker test-stage build context.
 - Add a guarded Unraid update script that tests, migrates, recreates services, restarts the tunnel,
   and reports final container status.
+- Reject v0.8 buyability statuses whose remaining-gate counts contradict their represented
+  technical, market, or trigger gates, with focused status-by-status regression coverage.
 
 ## 0.4.19
 
