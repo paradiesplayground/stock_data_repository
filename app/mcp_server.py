@@ -27,6 +27,7 @@ from app.services.strategy_tracking import (
     record_strategy_outcomes as save_strategy_outcomes,
     record_strategy_run as save_strategy_run,
 )
+from app.services.daily_stock_alert import run_daily_stock_alert as execute_daily_stock_alert
 from app.services.stock_alert_delivery import (
     publish_strategy_run_revision as publish_strategy_run_rendering_revision,
     publish_strategy_run as deliver_strategy_run,
@@ -412,6 +413,30 @@ if settings.mcp_enable_strategy_writes:
                 data_cutoff_at_utc=data_cutoff_at_utc,
                 notes=notes,
                 publish=False,
+            )
+
+    @mcp.tool()
+    def run_daily_stock_alert(
+        as_of_date: str,
+        run_payload: Annotated[
+            dict[str, Any],
+            Field(
+                description=(
+                    "Complete v0.8 production run payload, including candidates and "
+                    "report_markdown. The service records, verifies, publishes, and emails it."
+                )
+            ),
+        ],
+        verify_mailbox: bool = False,
+    ) -> dict[str, Any]:
+        """Complete one prepared daily alert through a single idempotent server-side call."""
+        with SessionLocal() as session:
+            return execute_daily_stock_alert(
+                session,
+                get_settings(),
+                as_of_date=as_of_date,
+                run_payload=run_payload,
+                verify_mailbox=verify_mailbox,
             )
 
     @mcp.tool()
