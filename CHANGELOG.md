@@ -28,6 +28,8 @@
   alerts with missing, unexpected, or duplicate candidates or an unfinished report.
 - Add a side-effect-free daily-alert validator that executes the same normalization and contract
   checks as persistence, returning the canonical hash before any production call is attempted.
+- Allow clients with a cached MCP manifest to request that validator through the existing daily
+  alert tool using an explicit in-payload `validation_only` marker.
 
 ## 0.4.19
 

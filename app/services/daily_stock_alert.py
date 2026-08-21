@@ -117,6 +117,15 @@ def run_daily_stock_alert(
     verify_mailbox: bool = False,
 ) -> dict[str, Any]:
     """Complete a prepared production alert through one resumable server-side call."""
+    if run_payload.get("validation_only") is True:
+        validation_payload = dict(run_payload)
+        validation_payload.pop("validation_only")
+        return validate_daily_stock_alert(
+            session,
+            settings,
+            as_of_date=as_of_date,
+            run_payload=validation_payload,
+        )
     payload, freshness = _validate_request(
         session, settings, as_of_date=as_of_date, run_payload=run_payload
     )

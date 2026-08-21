@@ -118,6 +118,25 @@ def test_daily_alert_dry_validation_uses_recording_contract_without_writes(
     assert result["emailed"] is False
 
 
+def test_daily_alert_existing_tool_can_request_validation_only(monkeypatch) -> None:
+    payload = _payload()
+    payload["validation_only"] = True
+    captured = {}
+
+    def validate(_session, _settings, *, as_of_date, run_payload):
+        captured.update(as_of_date=as_of_date, run_payload=run_payload)
+        return {"status": "valid", "persisted": False}
+
+    monkeypatch.setattr("app.services.daily_stock_alert.validate_daily_stock_alert", validate)
+    result = run_daily_stock_alert(
+        object(), Settings(), as_of_date="2026-08-21", run_payload=payload
+    )
+
+    assert result == {"status": "valid", "persisted": False}
+    assert captured["as_of_date"] == "2026-08-21"
+    assert "validation_only" not in captured["run_payload"]
+
+
 def test_daily_alert_stops_before_recording_when_data_is_stale(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.daily_stock_alert.get_data_freshness",

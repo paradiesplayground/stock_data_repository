@@ -353,6 +353,9 @@ through the existing canonical run and website duplicate suppression.
 The template preserves the complete current-plus-dropped ticker scope. Finalization rejects a
 production alert unless every prepared ticker appears exactly once, no unprepared ticker is added,
 and `report_markdown` is complete.
+If an MCP client has cached the older tool manifest, the existing `run_daily_stock_alert` tool can
+execute the same side-effect-free path by adding `validation_only=true` to a copy of `run_payload`.
+The marker is removed before normalization and canonical hashing.
 
 The write tools are disabled by default. They can append complete, versioned strategy runs and
 later outcome observations to the isolated `strategy_tracking` schema. They cannot update source

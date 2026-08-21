@@ -462,7 +462,9 @@ if settings.mcp_enable_strategy_writes:
             Field(
                 description=(
                     "Complete v0.8 production run payload, including candidates and "
-                    "report_markdown. The service records, verifies, publishes, and emails it."
+                    "report_markdown. Set validation_only=true inside this payload to execute "
+                    "the exact contract checks without persistence or delivery. Otherwise the "
+                    "service records, verifies, publishes, and emails it."
                 )
             ),
         ],
