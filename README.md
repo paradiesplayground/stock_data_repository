@@ -104,6 +104,17 @@ Keep `COMPOSE_PROJECT_NAME=stock_data_repo` unchanged on upgrades. It matches th
 and prevents fixed container names such as `stock-data-postgres` from colliding with a second
 Compose project.
 
+For later updates, run the repository's guarded Unraid update script:
+
+```bash
+cd /mnt/user/appdata/stock-data-repository/compose
+./scripts/update-unraid.sh
+```
+
+The script pulls `main` with fast-forward-only protection, runs the Docker contract-test build,
+builds and applies migrations, recreates the application services, restarts the secure MCP tunnel,
+and prints the final container status. A failed pull, test, build, or migration stops the update.
+
 The `migrate` service owns the single application-image build. The `api`, `worker`, and `mcp`
 services reuse `stock-data-repository:local` and never try to pull it from a registry. Do not add
 `build: .` back to those three services; doing so makes Compose rebuild the same image multiple

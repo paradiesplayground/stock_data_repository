@@ -73,10 +73,7 @@ Stock repository:
 
 ```bash
 cd /mnt/user/appdata/stock-data-repository/compose
-git pull --ff-only
-docker compose -p stock_data_repo build contract-test migrate
-docker compose -p stock_data_repo up -d --force-recreate migrate api worker mcp
-docker compose -p stock_data_repo restart tunnel
+./scripts/update-unraid.sh
 ```
 
 No market, SEC, or feature backfill is required for `0.4.20`.

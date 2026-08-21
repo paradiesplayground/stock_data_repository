@@ -12,6 +12,8 @@
 - Add a one-call daily alert workflow that freshness-checks, persists, reads back, validates,
   publishes, emails, and optionally verifies a prepared production alert.
 - Include the test suite in the Docker test-stage build context.
+- Add a guarded Unraid update script that tests, migrates, recreates services, restarts the tunnel,
+  and reports final container status.
 
 ## 0.4.19
 
