@@ -22,6 +22,7 @@ def _candidate(
         "current_price": price,
         "invalidation_price": stop,
         "buy_conditions": blockers,
+        "payload": {"blocker_ids": blockers},
         "metrics": {
             "close": price,
             "relative_return_20d_vs_qqq_pct": relative_strength,
@@ -142,6 +143,8 @@ def test_daily_changes_suppress_wording_only_and_undated_research(monkeypatch) -
         "app.services.daily_changes._previous_run", lambda _session, **_kwargs: prior
     )
     current = _candidate("AAPL", "RADAR", "7", "93", ["Recover above EMA20."])
+    current["payload"] = None
+    prior["candidates"][0]["payload"] = None
     current["metrics"].pop("cash_runway_months")
     payload = {
         "strategy_key": "dynamic_swing_buy_alerts",

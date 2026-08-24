@@ -56,15 +56,13 @@ def _distance(candidate: dict[str, Any]) -> Decimal | None:
 
 
 def _blockers(candidate: dict[str, Any]) -> set[str]:
-    values = candidate.get("buy_conditions") or candidate.get("reasons") or []
+    payload = candidate.get("payload")
+    values = (
+        candidate.get("blocker_ids")
+        or (payload.get("blocker_ids") if isinstance(payload, dict) else None)
+        or []
+    )
     return {str(value).strip() for value in values if str(value).strip()}
-
-
-def _gate_count(candidate: dict[str, Any], blockers: set[str]) -> int:
-    value = candidate.get("remaining_gate_count")
-    if isinstance(value, int) and value >= 0:
-        return value
-    return len(blockers)
 
 
 def _stop(candidate: dict[str, Any]) -> Decimal | None:
@@ -197,18 +195,8 @@ def build_daily_changes(
             attend(ticker, reason)
 
         old_blockers, new_blockers = _blockers(before), _blockers(now)
-        old_gate_count = _gate_count(before, old_blockers)
-        new_gate_count = _gate_count(now, new_blockers)
-        resolved = (
-            sorted(old_blockers - new_blockers)
-            if new_gate_count < old_gate_count
-            else []
-        )
-        introduced = (
-            sorted(new_blockers - old_blockers)
-            if new_gate_count > old_gate_count
-            else []
-        )
+        resolved = sorted(old_blockers - new_blockers)
+        introduced = sorted(new_blockers - old_blockers)
         if resolved or introduced:
             blockers.append(
                 {"ticker": ticker, "resolved": resolved, "introduced": introduced}
@@ -331,6 +319,10 @@ def render_daily_changes(changes: dict[str, Any]) -> str:
     entries: list[str] = []
     if changes["new_candidates"]:
         entries.append("New candidates: " + ", ".join(changes["new_candidates"]) + ".")
+    if changes.get("removed_candidates"):
+        entries.append(
+            "Removed candidates: " + ", ".join(changes["removed_candidates"]) + "."
+        )
     for item in changes["classification_changes"]:
         entries.append(
             f'{item["ticker"]} {item["direction"]} from '
