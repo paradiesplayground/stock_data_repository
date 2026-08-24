@@ -102,7 +102,7 @@ def test_prepare_daily_alert_builds_deterministic_hybrid_handoff(monkeypatch) ->
     assert result["comparison"]["new_tickers"] == ["AAPL"]
     assert result["comparison"]["continuing_tickers"] == ["MSFT"]
     assert result["comparison"]["dropped_tickers"] == ["NVDA"]
-    assert result["skill_version"] == "1.5.1"
+    assert result["skill_version"] == "1.5.2"
     assert result["candidates"][0]["suggested_trigger_price"] == "100.10000"
     assert result["candidates"][0]["represented_gates"] == {
         "market_regime_gate_passed": True,

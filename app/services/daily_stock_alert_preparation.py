@@ -18,7 +18,7 @@ from app.services.strategy_tracking import get_strategy_run, list_strategy_runs
 
 STRATEGY_KEY = "dynamic_swing_buy_alerts"
 STRATEGY_VERSION = "0.7"
-SKILL_VERSION = "1.5.1"
+SKILL_VERSION = "1.5.2"
 DECISION_CONTRACT_VERSION = "0.8"
 MINIMUM_FEATURE_VERSION = (1, 4, 0)
 

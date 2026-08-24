@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Align daily alert preparation metadata with swing-trading skill v1.5.2 and its scheduled
+  readiness, validation, and end-to-end completion contract.
+
 ## 0.4.20 - 2026-08-21
 
 - Add decision contract v0.8 with one public buyability result: `BUY_NOW`, `ALMOST_READY`,
