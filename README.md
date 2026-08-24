@@ -351,6 +351,13 @@ after it passes should that returned payload be sent unchanged to
 the canonical run back and verifies its hash, publishes the website, requires the SMTP acceptance
 receipt, and optionally requests mailbox verification. Repeating the same idempotency key resumes
 through the existing canonical run and website duplicate suppression.
+For production alerts, validation also compares the finalized candidate and evidence set with the
+latest earlier canonical run. It stores the repository-owned result in
+`summary.daily_changes` and prepends an idempotent **What changed since yesterday?** section to
+`report_markdown`. The comparison records new and removed candidates, promotions and demotions,
+trigger-distance movement, prior-stop breaches, resolved and introduced blockers, new filing or
+financing/liquidity evidence, and a reason-coded attention list. A first run is explicitly marked
+as a baseline rather than presenting every field as a daily change.
 The template preserves the complete current-plus-dropped ticker scope. Finalization rejects a
 production alert unless every prepared ticker appears exactly once, no unprepared ticker is added,
 and `report_markdown` is complete.

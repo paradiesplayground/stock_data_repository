@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.mcp_queries import get_data_freshness
+from app.services.daily_changes import attach_daily_changes, build_daily_changes
 from app.services.stock_alert_delivery import (
     publish_strategy_run,
     verify_strategy_run_email,
@@ -82,6 +83,18 @@ def _validate_request(
         issues = freshness.get("freshness_issues") or []
         detail = "; ".join(str(item) for item in issues) or "market or features are stale"
         raise RuntimeError("data is not ready for screening: " + detail)
+
+    if (
+        payload.get("strategy_key") == PRODUCTION_STRATEGY_KEY
+        and payload.get("strategy_version") == PRODUCTION_STRATEGY_VERSION
+    ):
+        changes = build_daily_changes(session, payload=payload)
+        summary = dict(payload.get("summary") or {})
+        summary["daily_changes"] = changes
+        payload["summary"] = summary
+        payload["report_markdown"] = attach_daily_changes(
+            str(payload["report_markdown"]), changes
+        )
     return payload, freshness
 
 

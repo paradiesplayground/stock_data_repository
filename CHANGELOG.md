@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- Align daily alert preparation metadata with swing-trading skill v1.5.2 and its scheduled
+- Align daily alert preparation metadata with swing-trading skill v1.5.3 and its scheduled
   readiness, validation, and end-to-end completion contract.
+- Add a repository-owned daily comparison that stores structured candidate, classification,
+  trigger-distance, stop, blocker, evidence, and attention changes and prepends an idempotent
+  **What changed since yesterday?** section to every production report.
 
 ## 0.4.20 - 2026-08-21
 
