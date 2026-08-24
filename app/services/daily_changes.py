@@ -60,6 +60,13 @@ def _blockers(candidate: dict[str, Any]) -> set[str]:
     return {str(value).strip() for value in values if str(value).strip()}
 
 
+def _gate_count(candidate: dict[str, Any], blockers: set[str]) -> int:
+    value = candidate.get("remaining_gate_count")
+    if isinstance(value, int) and value >= 0:
+        return value
+    return len(blockers)
+
+
 def _stop(candidate: dict[str, Any]) -> Decimal | None:
     value = candidate.get("invalidation_price")
     plan = candidate.get("trade_plan")
@@ -84,7 +91,7 @@ def _evidence_key(item: dict[str, Any]) -> tuple[str, ...]:
 def _evidence_category(item: dict[str, Any]) -> str:
     text = " ".join(
         str(item.get(field) or "")
-        for field in ("evidence_type", "summary", "details")
+        for field in ("evidence_type", "summary")
     ).lower()
     financing_words = (
         "atm",
@@ -190,8 +197,18 @@ def build_daily_changes(
             attend(ticker, reason)
 
         old_blockers, new_blockers = _blockers(before), _blockers(now)
-        resolved = sorted(old_blockers - new_blockers)
-        introduced = sorted(new_blockers - old_blockers)
+        old_gate_count = _gate_count(before, old_blockers)
+        new_gate_count = _gate_count(now, new_blockers)
+        resolved = (
+            sorted(old_blockers - new_blockers)
+            if new_gate_count < old_gate_count
+            else []
+        )
+        introduced = (
+            sorted(new_blockers - old_blockers)
+            if new_gate_count > old_gate_count
+            else []
+        )
         if resolved or introduced:
             blockers.append(
                 {"ticker": ticker, "resolved": resolved, "introduced": introduced}
@@ -239,7 +256,7 @@ def build_daily_changes(
         ):
             old_value = prior_metrics.get(field)
             new_value = current_metrics.get(field)
-            if old_value != new_value:
+            if old_value is not None and new_value is not None and old_value != new_value:
                 fundamental_changes.append(
                     {
                         "ticker": ticker,
@@ -256,11 +273,21 @@ def build_daily_changes(
     }
     evidence_changes = []
     for item in payload.get("evidence") or []:
-        if _evidence_key(item) not in prior_evidence:
+        category = _evidence_category(item)
+        has_dated_source = bool(
+            item.get("source_url")
+            or item.get("accession_number")
+            or item.get("published_at_utc")
+        )
+        if (
+            category != "other"
+            and has_dated_source
+            and _evidence_key(item) not in prior_evidence
+        ):
             ticker = str(item.get("ticker") or "").strip().upper()
             change = {
                 "ticker": ticker,
-                "category": _evidence_category(item),
+                "category": category,
                 "evidence_type": item.get("evidence_type"),
                 "source_url": item.get("source_url"),
                 "accession_number": item.get("accession_number"),
@@ -322,12 +349,14 @@ def render_daily_changes(changes: dict[str, Any]) -> str:
     for item in changes["blocker_changes"]:
         if item["resolved"]:
             entries.append(
-                f'{item["ticker"]} resolved: ' + "; ".join(item["resolved"]) + "."
+                f'{item["ticker"]} resolved: '
+                + "; ".join(value.rstrip(".") for value in item["resolved"])
+                + "."
             )
         if item["introduced"]:
             entries.append(
                 f'{item["ticker"]} introduced: '
-                + "; ".join(item["introduced"])
+                + "; ".join(value.rstrip(".") for value in item["introduced"])
                 + "."
             )
     if changes.get("fundamental_changes"):

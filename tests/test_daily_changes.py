@@ -101,6 +101,7 @@ def test_daily_changes_compare_finalized_candidates_and_evidence(monkeypatch) ->
         "introduced": [],
     }
     assert changes["evidence_changes"][0]["category"] == "dilution_or_financing"
+    assert changes["fundamental_changes"] == []
     ionq_attention = next(
         item for item in changes["attention_today"] if item["ticker"] == "IONQ"
     )
@@ -126,3 +127,39 @@ def test_daily_changes_markdown_is_idempotently_attached() -> None:
     assert once == twice
     assert twice.count("## What changed since yesterday?") == 1
     assert "No material candidate" in render_daily_changes(changes)
+
+
+def test_daily_changes_suppress_wording_only_and_undated_research(monkeypatch) -> None:
+    prior = {
+        "run_id": "prior-run",
+        "as_of_date": "2026-08-20",
+        "candidates": [
+            _candidate("AAPL", "RADAR", "8", "92", ["Reclaim EMA20."])
+        ],
+        "evidence": [],
+    }
+    monkeypatch.setattr(
+        "app.services.daily_changes._previous_run", lambda _session, **_kwargs: prior
+    )
+    current = _candidate("AAPL", "RADAR", "7", "93", ["Recover above EMA20."])
+    current["metrics"].pop("cash_runway_months")
+    payload = {
+        "strategy_key": "dynamic_swing_buy_alerts",
+        "strategy_version": "0.7",
+        "as_of_date": "2026-08-21",
+        "candidates": [current],
+        "evidence": [
+            {
+                "ticker": "AAPL",
+                "evidence_type": "qualitative_research",
+                "summary": "Offerings and dilution were reviewed; no new event identified.",
+                "details": {"offerings_atm_convertibles_and_warrants": "reviewed"},
+            }
+        ],
+    }
+
+    changes = build_daily_changes(object(), payload=payload)
+
+    assert changes["blocker_changes"] == []
+    assert changes["fundamental_changes"] == []
+    assert changes["evidence_changes"] == []
