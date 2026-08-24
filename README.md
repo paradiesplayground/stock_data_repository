@@ -345,7 +345,8 @@ After completing the missing qualitative review, fill the returned `run_template
 v0.8 candidates, evidence, summary, and `report_markdown`, then pass it to
 `validate_daily_stock_alert`. This side-effect-free tool executes the same freshness, preparation
 scope, candidate, evidence, date, and payload normalization checks used by persistence and returns
-the canonical payload hash. Only after it passes should the unchanged payload be sent to
+the canonical payload hash plus the exact validated `run_payload` for stateless MCP handoff. Only
+after it passes should that returned payload be sent unchanged to
 `run_daily_stock_alert`. That call rechecks freshness, records without implicit publication, reads
 the canonical run back and verifies its hash, publishes the website, requires the SMTP acceptance
 receipt, and optionally requests mailbox verification. Repeating the same idempotency key resumes

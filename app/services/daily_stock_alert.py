@@ -105,6 +105,7 @@ def validate_daily_stock_alert(
         "latest_trade_date": freshness.get("latest_trade_date"),
         "latest_feature_date": freshness.get("latest_feature_date"),
     }
+    result["validated_run_payload"] = payload
     return result
 
 

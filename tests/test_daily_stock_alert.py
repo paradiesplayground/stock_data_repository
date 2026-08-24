@@ -116,6 +116,7 @@ def test_daily_alert_dry_validation_uses_recording_contract_without_writes(
     assert result["persisted"] is False
     assert result["published"] is False
     assert result["emailed"] is False
+    assert result["validated_run_payload"] == _payload()
 
 
 def test_daily_alert_existing_tool_can_request_validation_only(monkeypatch) -> None:

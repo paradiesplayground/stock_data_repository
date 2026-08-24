@@ -30,6 +30,8 @@
   checks as persistence, returning the canonical hash before any production call is attempted.
 - Allow clients with a cached MCP manifest to request that validator through the existing daily
   alert tool using an explicit in-payload `validation_only` marker.
+- Return the exact validated run payload with the dry-validation result so stateless MCP clients
+  can finalize it without reconstructing or silently changing the validated object.
 
 ## 0.4.19
 
