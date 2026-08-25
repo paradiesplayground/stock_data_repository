@@ -1,4 +1,4 @@
-# Codex handoff — Stock Data Repository — August 24, 2026
+# Codex handoff — Stock Data Repository — through August 25, 2026
 
 ## What was accomplished
 
@@ -32,18 +32,30 @@
 
 ## Anything still incomplete
 
-- The first normal scheduled run using daily changes has not been observed end to end.
-- Scheduled publication, SMTP acceptance, and mailbox verification still need confirmation on the next real run.
+- The August 25 scheduled attempt initially stopped safely because prices were current through August 24 while derived features were still current only through August 21. The feature job completed successfully at 5:30:46 AM, after the alert had already checked freshness.
+- The user confirmed the scheduled-task timing/retry fix is complete, but the next unattended run still needs observation to prove the race is eliminated.
+- A canonical August 24 alert was later present and its email was repeatedly accepted by SMTP during presentation testing. End-to-end mailbox verification was not run during this session.
 - The tunnel startup race has not been permanently fixed.
+
+## August 25 update
+
+- Diagnosed the scheduled-alert failure as a timing race, not an ingestion or decision-workflow failure. The alert and derived-feature job were both checking/starting around 5:30 AM.
+- Confirmed live freshness after feature completion: expected market date, market prices, and derived features all resolved to August 24; `ready_for_screening` became `true` with no freshness issues.
+- Added deterministic company-name propagation. Preparation now records a ticker-to-company mapping and final validation places the authoritative name in each candidate payload without relying on the website to guess.
+- Added focused tests for company-name propagation. Local Python compilation and Ruff passed; the broken Windows virtual environment prevented local pytest because it points to a removed Python installation.
+- The company-name change was pushed as `a8fa11a`, deployed on Unraid, and the user confirmed the linked website experience works.
 
 ## Recommended next steps
 
-1. Observe the next scheduled alert and verify the canonical run, daily-change summary, website publication, SMTP acceptance, and mailbox receipt.
-2. Add dependency-aware readiness or automatic retry behavior for the tunnel.
-3. Consider adding explicit evidence-confidence and verification metadata to future alert payloads.
+1. **Prove the scheduling fix on the next unattended run.** Record the alert start time and confirm `expected_market_date`, `latest_trade_date`, and `latest_feature_date` are identical before preparation. Require `ready_for_screening=true`, then verify exactly one canonical run ID and payload hash, a populated `summary.daily_changes`, website publication status, SMTP acceptance, and mailbox verification. If freshness is initially false, confirm the task retries during the same morning rather than waiting until the next day.
+2. **Run the authoritative backend regression suite after every stock-repository deployment.** From `/mnt/user/appdata/stock-data-repository/compose`, run `docker compose -p stock_data_repo run --rm contract-test sh -c "python -m pytest -q && ruff check app tests"`. Do not treat the local Windows virtual environment as authoritative until it is rebuilt against an installed Python runtime.
+3. **Verify company names on the next newly created alert.** Inspect the canonical run and confirm every expected candidate with an available reference name contains `payload.company_name`; then confirm ParadiesWeb displays that name under the ticker. Missing reference names must remain explicitly unavailable rather than inferred externally.
+4. **Fix tunnel recovery permanently.** Add dependency-aware readiness or retry/backoff so the tunnel reconnects after MCP becomes healthy. Test by recreating the complete stack once and confirm the tunnel reaches healthy without a manual restart.
+5. **Make evidence confidence explicit upstream.** Add a structured status enum (`current_verified`, `reused_rechecked`, `incomplete`, `conflicting`, `manual_review`), a verification timestamp, and source/date completeness fields to the alert payload. Validate them before persistence so ParadiesWeb can display stored confidence instead of inferring it from prose.
 
 ## Relevant commits
 
 - `a73e521` — Add daily stock alert changes summary
 - `78a76e7` — Reduce daily alert comparison noise
 - `7e558b3` — Require structured daily blocker changes
+- `a8fa11a` — Persist alert candidate company names
