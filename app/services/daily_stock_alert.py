@@ -57,6 +57,26 @@ def _validate_prepared_scope(payload: dict[str, Any]) -> None:
         raise ValueError("; ".join(problems))
 
 
+def _attach_company_names(payload: dict[str, Any]) -> None:
+    summary = payload.get("summary")
+    scope = summary.get("preparation_scope") if isinstance(summary, dict) else None
+    company_names = scope.get("company_names") if isinstance(scope, dict) else None
+    if not isinstance(company_names, dict):
+        return
+
+    enriched = []
+    for item in payload.get("candidates") or []:
+        candidate = dict(item)
+        ticker = str(candidate.get("ticker") or "").strip().upper()
+        company_name = company_names.get(ticker)
+        if isinstance(company_name, str) and company_name.strip():
+            candidate_payload = dict(candidate.get("payload") or {})
+            candidate_payload["company_name"] = company_name.strip()
+            candidate["payload"] = candidate_payload
+        enriched.append(candidate)
+    payload["candidates"] = enriched
+
+
 def _validate_request(
     session: Session,
     settings: Settings,
@@ -72,6 +92,7 @@ def _validate_request(
     if "publish" in payload:
         raise ValueError("run_payload must not contain publish")
     _validate_prepared_scope(payload)
+    _attach_company_names(payload)
 
     freshness = get_data_freshness(session, settings)
     if freshness.get("expected_market_date") != as_of_date:

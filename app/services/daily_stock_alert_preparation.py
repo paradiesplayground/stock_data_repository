@@ -336,6 +336,22 @@ def prepare_daily_stock_alert(
         }
         for ticker in comparison["dropped_tickers"]
     ]
+    company_names = {
+        candidate["ticker"]: candidate["company"]
+        for candidate in prepared_candidates
+        if candidate.get("company")
+    }
+    for review in dropped_reviews:
+        feature_item = (review.get("current_feature_check") or {}).get("item") or {}
+        prior_candidate = review.get("prior_candidate") or {}
+        prior_payload = prior_candidate.get("payload") or {}
+        company_name = (
+            feature_item.get("company")
+            or prior_payload.get("company_name")
+            or prior_candidate.get("company_name")
+        )
+        if company_name:
+            company_names[review["ticker"]] = company_name
     cutoff = max(
         (item.get("source_data_cutoff_utc") for item in pool["items"] if item.get("source_data_cutoff_utc")),
         default=None,
@@ -387,6 +403,7 @@ def prepare_daily_stock_alert(
                     "expected_candidate_tickers": sorted(
                         current_tickers | prior_raw_tickers
                     ),
+                    "company_names": company_names,
                 },
             },
             "report_markdown": None,

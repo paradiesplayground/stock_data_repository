@@ -2,6 +2,7 @@ import pytest
 
 from app.config import Settings
 from app.services.daily_stock_alert import (
+    _attach_company_names,
     run_daily_stock_alert,
     validate_daily_stock_alert,
 )
@@ -20,6 +21,28 @@ def _payload() -> dict:
         "decision_contract_version": "0.8",
         "report_markdown": "# Daily alert\n\nNo trade today.",
     }
+
+
+def test_company_names_are_attached_to_candidate_payloads() -> None:
+    payload = {
+        "summary": {
+            "preparation_scope": {
+                "company_names": {"IONQ": "IonQ, Inc."},
+            }
+        },
+        "candidates": [
+            {"ticker": "IONQ", "payload": {"in_raw_pool": True}},
+            {"ticker": "UNKNOWN"},
+        ],
+    }
+
+    _attach_company_names(payload)
+
+    assert payload["candidates"][0]["payload"] == {
+        "in_raw_pool": True,
+        "company_name": "IonQ, Inc.",
+    }
+    assert payload["candidates"][1].get("payload") is None
 
 
 def test_daily_alert_records_verifies_and_delivers_in_one_call(monkeypatch) -> None:

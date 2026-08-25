@@ -131,6 +131,10 @@ def test_prepare_daily_alert_builds_deterministic_hybrid_handoff(monkeypatch) ->
         "current_raw_tickers": ["AAPL", "MSFT"],
         "dropped_reassessed_tickers": ["NVDA"],
         "expected_candidate_tickers": ["AAPL", "MSFT", "NVDA"],
+        "company_names": {
+            "AAPL": "AAPL Company",
+            "MSFT": "MSFT Company",
+        },
     }
 
 
