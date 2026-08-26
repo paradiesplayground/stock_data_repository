@@ -172,6 +172,27 @@ def test_v08_almost_ready_accepts_exactly_one_represented_price_gate() -> None:
     assert decision["remaining_gate_count"] == 1
 
 
+@pytest.mark.parametrize("value", [1, 1.0, Decimal("1.0")])
+def test_v08_remaining_gate_count_accepts_json_integer_values(value) -> None:
+    decision = normalize_candidate_decision(
+        _v08_candidate(remaining_gate_count=value), contract_version="0.8"
+    )
+
+    assert decision["remaining_gate_count"] == 1
+    assert isinstance(decision["remaining_gate_count"], int)
+
+
+@pytest.mark.parametrize("value", [True, -1, 1.5, "1", "one", None])
+def test_v08_remaining_gate_count_rejects_non_integer_values(value) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"AAPL\.remaining_gate_count must be a non-negative integer; received",
+    ):
+        normalize_candidate_decision(
+            _v08_candidate(remaining_gate_count=value), contract_version="0.8"
+        )
+
+
 def test_v08_buy_now_rejects_any_remaining_gate() -> None:
     with pytest.raises(ValueError, match="BUY_NOW requires zero remaining gates"):
         normalize_candidate_decision(

@@ -106,6 +106,20 @@ def _required_decimal(value: Any, field: str) -> Decimal:
     return parsed
 
 
+def _non_negative_integer(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise ValueError(f"{field} must be a non-negative integer; received {value!r}")
+    parsed = _decimal(value, field)
+    if (
+        parsed is None
+        or not parsed.is_finite()
+        or parsed < 0
+        or parsed != parsed.to_integral_value()
+    ):
+        raise ValueError(f"{field} must be a non-negative integer; received {value!r}")
+    return int(parsed)
+
+
 def _mapping(value: Any, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field} is required and must be an object")
@@ -381,9 +395,9 @@ def _normalize_v08_candidate_decision(item: dict[str, Any]) -> dict[str, Any]:
     trigger = _decimal(item.get("trigger_price"), "trigger_price")
     distance = _decimal(item.get("distance_to_trigger_pct"), "distance_to_trigger_pct")
     invalidation = _decimal(item.get("invalidation_price"), "invalidation_price")
-    remaining = item.get("remaining_gate_count")
-    if isinstance(remaining, bool) or not isinstance(remaining, int) or remaining < 0:
-        raise ValueError("remaining_gate_count must be a non-negative integer")
+    remaining = _non_negative_integer(
+        item.get("remaining_gate_count"), f"{ticker}.remaining_gate_count"
+    )
     gates = {}
     for gate in ("technical_gate_passed", "market_regime_gate_passed"):
         if not isinstance(item.get(gate), bool):
