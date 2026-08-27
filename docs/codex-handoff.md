@@ -1,4 +1,4 @@
-# Codex handoff — Stock Data Repository — through August 25, 2026
+# Codex handoff — Stock Data Repository — through August 27, 2026
 
 ## What was accomplished
 
@@ -59,3 +59,10 @@
 - `78a76e7` — Reduce daily alert comparison noise
 - `7e558b3` — Require structured daily blocker changes
 - `a8fa11a` — Persist alert candidate company names
+
+## August 27 update
+
+- **Implemented:** Added root-level `AGENTS.md` instructions requiring every substantive work session to update this handoff under the correct `America/Chicago` date, commit it with the related repository changes, and push it to the default branch.
+- **Decision:** Handoff entries must distinguish implemented, discussed, deployed, and verified work; remain concise and public-safe; and preserve genuinely incomplete work or explicitly discussed backlog without adding generic verification tasks.
+- **Status:** The repository instruction and handoff update were implemented and verified by file inspection and Git whitespace checks. Deployment is not applicable because these are documentation-only changes; alert processing, persistence, publication, and email delivery are unchanged.
+- **Relevant prior commit:** `3c7594c` — Accept integral JSON values for `remaining_gate_count` and add clearer candidate-specific validation errors.
