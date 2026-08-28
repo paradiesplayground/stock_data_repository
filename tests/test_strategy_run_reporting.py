@@ -85,9 +85,22 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     sys.modules.pop("app.mcp_server", None)
 
 
-def test_validate_only_normalizes_without_accessing_database() -> None:
+def test_validate_only_checks_immutable_definition_without_writing() -> None:
+    class ValidationSession:
+        def __init__(self) -> None:
+            self.scalar_calls = 0
+
+        def scalar(self, _statement):
+            self.scalar_calls += 1
+            return type(
+                "Definition",
+                (),
+                {"configuration": {}, "skill_fingerprint": None},
+            )()
+
+    session = ValidationSession()
     result = record_strategy_run(
-        object(),
+        session,
         strategy_key="daily-alert",
         strategy_version="0.8",
         as_of_date="2026-08-21",
@@ -110,6 +123,39 @@ def test_validate_only_normalizes_without_accessing_database() -> None:
     assert result["published"] is False
     assert result["emailed"] is False
     assert len(result["payload_hash"]) == 64
+    assert session.scalar_calls == 1
+
+
+def test_validate_only_rejects_existing_version_with_different_configuration() -> None:
+    class ExistingDefinitionSession:
+        def scalar(self, _statement):
+            return type(
+                "Definition",
+                (),
+                {
+                    "configuration": {"minimum_revenue_growth_pct": 30},
+                    "skill_fingerprint": None,
+                },
+            )()
+
+    with pytest.raises(ValueError, match="configuration changed"):
+        record_strategy_run(
+            ExistingDefinitionSession(),
+            strategy_key="daily-alert",
+            strategy_version="0.8",
+            as_of_date="2026-08-21",
+            run_type="as_run",
+            idempotency_key="daily-alert:0.8:2026-08-21",
+            configuration={"minimum_revenue_growth_pct": 40},
+            filters={},
+            candidates=[],
+            summary={},
+            report_markdown="# Daily alert\n\nNo trade today.",
+            evidence=[],
+            decision_contract_version="0.8",
+            publish=False,
+            validate_only=True,
+        )
 
 
 def test_website_delivery_sends_report_markdown_at_top_level(monkeypatch) -> None:

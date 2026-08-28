@@ -110,13 +110,12 @@ def _evidence_category(item: dict[str, Any]) -> str:
 
 
 def _previous_run(
-    session: Session, *, strategy_key: str, strategy_version: str, as_of_date: str
+    session: Session, *, strategy_key: str, as_of_date: str
 ) -> dict[str, Any] | None:
     previous_date = (date.fromisoformat(as_of_date) - timedelta(days=1)).isoformat()
     listed = list_strategy_runs(
         session,
         strategy_key=strategy_key,
-        strategy_version=strategy_version,
         run_type="as_run",
         end_date=previous_date,
         limit=1,
@@ -133,7 +132,6 @@ def build_daily_changes(
     prior = _previous_run(
         session,
         strategy_key=str(payload["strategy_key"]),
-        strategy_version=str(payload["strategy_version"]),
         as_of_date=str(payload["as_of_date"]),
     )
     current = _candidate_map(payload)

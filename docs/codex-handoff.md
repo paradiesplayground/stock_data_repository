@@ -66,3 +66,13 @@
 - **Decision:** Handoff entries must distinguish implemented, discussed, deployed, and verified work; remain concise and public-safe; and preserve genuinely incomplete work or explicitly discussed backlog without adding generic verification tasks.
 - **Status:** The repository instruction and handoff update were implemented and verified by file inspection and Git whitespace checks. Deployment is not applicable because these are documentation-only changes; alert processing, persistence, publication, and email delivery are unchanged.
 - **Relevant prior commit:** `3c7594c` — Accept integral JSON values for `remaining_gate_count` and add clearer candidate-specific validation errors.
+
+## August 28 update
+
+- **Problem diagnosed:** The August 27 alert passed dry validation but production persistence rejected it because `dynamic_swing_buy_alerts:0.7` already referred to a different immutable configuration. No August 27 run was persisted, published, emailed, or mailbox-verified.
+- **Implemented:** Advanced the hybrid production workflow to repository-owned strategy v0.8 with an identity-bearing versioned configuration. The prior v0.7 profile remains preserved for audit history.
+- **Implemented:** Dry validation now queries any existing strategy definition and rejects configuration or skill-fingerprint collisions before production persistence, without creating rows or triggering external delivery.
+- **Decision:** Prior alert scope and daily-change comparisons continue across strategy-version boundaries so the corrective version advance does not reset dropped-candidate review or the daily comparison.
+- **Verified locally:** The full backend suite passed with 160 tests, Ruff passed, Python compilation passed, and Git whitespace checks passed.
+- **Current status:** The fix is implemented and locally verified but not yet deployed. The August 27 alert must be prepared and validated again under v0.8; the earlier v0.7 validation hash is intentionally obsolete. Production persistence, website publication, SMTP acceptance, and mailbox verification remain incomplete for that alert.
+- **Commit description:** Fix production strategy-version validation and advance the hybrid alert to v0.8.

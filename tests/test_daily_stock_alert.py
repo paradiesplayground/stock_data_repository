@@ -213,7 +213,7 @@ def test_daily_alert_requires_exact_prepared_candidate_scope(
     payload = _payload()
     payload.update(
         strategy_key="dynamic_swing_buy_alerts",
-        strategy_version="0.7",
+        strategy_version="0.8",
         candidates=candidates,
         summary={
             "preparation_scope": {
@@ -235,7 +235,7 @@ def test_daily_alert_requires_completed_report_for_prepared_strategy() -> None:
     payload = _payload()
     payload.update(
         strategy_key="dynamic_swing_buy_alerts",
-        strategy_version="0.7",
+        strategy_version="0.8",
         report_markdown=None,
     )
 

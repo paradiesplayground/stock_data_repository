@@ -1,8 +1,35 @@
 from app.services.daily_changes import (
+    _previous_run,
     attach_daily_changes,
     build_daily_changes,
     render_daily_changes,
 )
+
+
+def test_previous_run_comparison_continues_across_strategy_versions(
+    monkeypatch,
+) -> None:
+    captured = {}
+
+    def list_runs(_session, **kwargs):
+        captured.update(kwargs)
+        return {"items": [{"run_id": "prior-v0.7-run"}]}
+
+    monkeypatch.setattr("app.services.daily_changes.list_strategy_runs", list_runs)
+    monkeypatch.setattr(
+        "app.services.daily_changes.get_strategy_run",
+        lambda _session, run_id: {"run_id": run_id, "strategy_version": "0.7"},
+    )
+
+    prior = _previous_run(
+        object(),
+        strategy_key="dynamic_swing_buy_alerts",
+        as_of_date="2026-08-27",
+    )
+
+    assert prior["run_id"] == "prior-v0.7-run"
+    assert "strategy_version" not in captured
+    assert captured["end_date"] == "2026-08-26"
 
 
 def _candidate(

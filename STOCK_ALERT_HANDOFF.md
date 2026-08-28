@@ -16,7 +16,7 @@ summary appeared actionable while the detailed evidence said not to trade.
 - REST and MCP persistence never publish implicitly. Publication is an explicit operation.
 - `prepare_daily_stock_alert` owns the deterministic production prefilter, stored metrics, SPY
   regime, raw-pool comparison, trigger inputs, and qualitative evidence checklist for strategy
-  `dynamic_swing_buy_alerts` v0.7, including prioritized research and reusable prior evidence.
+  `dynamic_swing_buy_alerts` v0.8, including prioritized research and reusable prior evidence.
 - `run_daily_stock_alert` completes freshness checking, persistence, canonical read-back,
   validation, publication, email delivery, and optional mailbox verification in one resumable
   server-side call for a prepared production alert.

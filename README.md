@@ -332,9 +332,10 @@ run_strategy_scenario
 ```
 
 Use `prepare_daily_stock_alert` first for recurring production alerts. It freshness-checks the
-requested current date, applies the versioned `dynamic_swing_buy_alerts` v0.7 deterministic
+requested current date, applies the versioned `dynamic_swing_buy_alerts` v0.8 deterministic
 prefilter, calculates the completed-session SPY 50-day regime, derives trigger and invalidation
-inputs, compares raw membership with the prior stored alert, and returns the qualitative evidence
+inputs, compares raw membership with the prior stored alert across strategy-version transitions,
+and returns the qualitative evidence
 still required for each candidate. Its research queue prioritizes new names, material daily moves,
 fresh filings, prior near-buyable candidates, and deterministic risk flags; unchanged candidates
 with prior evidence are explicitly lower priority. Dropped names include a current source-feature
@@ -344,8 +345,8 @@ buyability decisions.
 After completing the missing qualitative review, fill the returned `run_template` with canonical
 v0.8 candidates, evidence, summary, and `report_markdown`, then pass it to
 `validate_daily_stock_alert`. This side-effect-free tool executes the same freshness, preparation
-scope, candidate, evidence, date, and payload normalization checks used by persistence and returns
-the canonical payload hash plus the exact validated `run_payload` for stateless MCP handoff. Only
+scope, candidate, evidence, date, payload normalization, and immutable strategy-definition checks
+used by persistence and returns the canonical payload hash plus the exact validated `run_payload` for stateless MCP handoff. Only
 after it passes should that returned payload be sent unchanged to
 `run_daily_stock_alert`. That call rechecks freshness, records without implicit publication, reads
 the canonical run back and verifies its hash, publishes the website, requires the SMTP acceptance

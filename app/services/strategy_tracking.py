@@ -118,6 +118,36 @@ def _definition(
     return definition
 
 
+def _validate_definition_contract(
+    session: Session,
+    strategy_key: str,
+    strategy_version: str,
+    configuration: dict[str, Any],
+    skill_fingerprint: str | None,
+) -> None:
+    """Check immutable definition compatibility without creating database rows."""
+    definition = session.scalar(
+        select(StrategyDefinition).where(
+            StrategyDefinition.strategy_key == strategy_key,
+            StrategyDefinition.version == strategy_version,
+        )
+    )
+    if definition is None:
+        return
+    if _canonical_hash(definition.configuration) != _canonical_hash(configuration):
+        raise ValueError(
+            "strategy configuration changed; record it under a new strategy_version"
+        )
+    if (
+        skill_fingerprint
+        and definition.skill_fingerprint
+        and definition.skill_fingerprint != skill_fingerprint
+    ):
+        raise ValueError(
+            "skill fingerprint changed; record it under a new strategy_version"
+        )
+
+
 def record_strategy_run(
     session: Session,
     *,
@@ -272,6 +302,13 @@ def record_strategy_run(
     _date(as_of_date, "as_of_date")
     _datetime(data_cutoff_at_utc, "data_cutoff_at_utc")
     if validate_only:
+        _validate_definition_contract(
+            session,
+            strategy_key,
+            strategy_version,
+            configuration,
+            skill_fingerprint,
+        )
         return {
             "status": "valid",
             "payload_hash": payload_hash,

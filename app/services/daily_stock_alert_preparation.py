@@ -17,7 +17,7 @@ from app.models import DailyPriceBar
 from app.services.strategy_tracking import get_strategy_run, list_strategy_runs
 
 STRATEGY_KEY = "dynamic_swing_buy_alerts"
-STRATEGY_VERSION = "0.7"
+STRATEGY_VERSION = "0.8"
 SKILL_VERSION = "1.5.3"
 DECISION_CONTRACT_VERSION = "0.8"
 MINIMUM_FEATURE_VERSION = (1, 4, 0)
@@ -26,11 +26,18 @@ STRATEGY_CONFIGURATION_PATH = (
     Path(__file__).resolve().parents[2]
     / "config"
     / "alerts"
-    / "dynamic-swing-buy-alerts-v0.7.json"
+    / "dynamic-swing-buy-alerts-v0.8.json"
 )
 STRATEGY_CONFIGURATION = json.loads(
     STRATEGY_CONFIGURATION_PATH.read_text(encoding="utf-8")
 )
+if STRATEGY_CONFIGURATION.get("strategy") != {
+    "key": STRATEGY_KEY,
+    "version": STRATEGY_VERSION,
+    "name": "Dynamic swing buy alerts",
+    "skill_version": SKILL_VERSION,
+}:
+    raise RuntimeError("production strategy configuration identity is inconsistent")
 
 QUALITATIVE_EVIDENCE_REQUIREMENTS = [
     "going_concern_and_auditor_language",
@@ -97,7 +104,6 @@ def _prior_run(session: Session, as_of_date: date) -> dict[str, Any] | None:
     listed = list_strategy_runs(
         session,
         strategy_key=STRATEGY_KEY,
-        strategy_version=STRATEGY_VERSION,
         run_type="as_run",
         end_date=(as_of_date - timedelta(days=1)).isoformat(),
         limit=1,

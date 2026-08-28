@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Advance the hybrid production alert to repository-owned strategy v0.8 so it no longer collides
+  with the different immutable v0.7 definition already stored in production.
+- Make dry validation read and compare an existing strategy definition, catching configuration or
+  skill-fingerprint version collisions before the persistence call without creating any rows.
+- Preserve prior-run scope and daily-change comparisons across a strategy-version transition.
 - Align daily alert preparation metadata with swing-trading skill v1.5.3 and its scheduled
   readiness, validation, and end-to-end completion contract.
 - Add a repository-owned daily comparison that stores structured candidate, classification,

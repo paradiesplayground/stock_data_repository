@@ -12,7 +12,7 @@ from app.services.stock_alert_delivery import (
 from app.services.strategy_tracking import get_strategy_run, record_strategy_run
 
 PRODUCTION_STRATEGY_KEY = "dynamic_swing_buy_alerts"
-PRODUCTION_STRATEGY_VERSION = "0.7"
+PRODUCTION_STRATEGY_VERSION = "0.8"
 
 
 def _validate_prepared_scope(payload: dict[str, Any]) -> None:

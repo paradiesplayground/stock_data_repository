@@ -1,9 +1,34 @@
+from datetime import date
+
 from app.config import Settings
 from app.services.daily_stock_alert_preparation import (
     _deterministic_candidate,
+    _prior_run,
     _research_plan,
     prepare_daily_stock_alert,
 )
+
+
+def test_preparation_carries_prior_scope_across_strategy_versions(monkeypatch) -> None:
+    captured = {}
+
+    def list_runs(_session, **kwargs):
+        captured.update(kwargs)
+        return {"items": [{"run_id": "prior-v0.7-run"}]}
+
+    monkeypatch.setattr(
+        "app.services.daily_stock_alert_preparation.list_strategy_runs", list_runs
+    )
+    monkeypatch.setattr(
+        "app.services.daily_stock_alert_preparation.get_strategy_run",
+        lambda _session, run_id: {"run_id": run_id, "strategy_version": "0.7"},
+    )
+
+    prior = _prior_run(object(), date(2026, 8, 27))
+
+    assert prior["run_id"] == "prior-v0.7-run"
+    assert "strategy_version" not in captured
+    assert captured["end_date"] == "2026-08-26"
 
 
 def _feature(ticker: str) -> dict:
@@ -98,7 +123,7 @@ def test_prepare_daily_alert_builds_deterministic_hybrid_handoff(monkeypatch) ->
     )
 
     assert result["status"] == "prepared"
-    assert result["strategy_version"] == "0.7"
+    assert result["strategy_version"] == "0.8"
     assert result["comparison"]["new_tickers"] == ["AAPL"]
     assert result["comparison"]["continuing_tickers"] == ["MSFT"]
     assert result["comparison"]["dropped_tickers"] == ["NVDA"]
@@ -124,6 +149,13 @@ def test_prepare_daily_alert_builds_deterministic_hybrid_handoff(monkeypatch) ->
     ] is True
     template = result["run_template"]
     assert template["strategy_key"] == "dynamic_swing_buy_alerts"
+    assert template["strategy_version"] == "0.8"
+    assert template["configuration"]["strategy"] == {
+        "key": "dynamic_swing_buy_alerts",
+        "version": "0.8",
+        "name": "Dynamic swing buy alerts",
+        "skill_version": "1.5.3",
+    }
     assert template["decision_contract_version"] == "0.8"
     assert template["candidates"] == []
     assert template["report_markdown"] is None
