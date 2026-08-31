@@ -39,6 +39,12 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     assert "report_markdown" not in properties["summary"].get("properties", {})
     assert prepare_tool.parameters["required"] == ["as_of_date"]
     assert validate_tool.parameters["required"] == ["as_of_date", "run_payload"]
+    for read_only_tool in (prepare_tool, validate_tool):
+        assert read_only_tool.annotations is not None
+        assert read_only_tool.annotations.readOnlyHint is True
+        assert read_only_tool.annotations.destructiveHint is False
+        assert read_only_tool.annotations.idempotentHint is True
+        assert read_only_tool.annotations.openWorldHint is False
     assert publish_tool.parameters["required"] == ["run_id"]
     assert resend_tool.parameters["required"] == ["run_id"]
     assert revision_tool.parameters["required"] == [

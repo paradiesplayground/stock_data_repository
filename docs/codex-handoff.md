@@ -76,3 +76,10 @@
 - **Verified locally:** The full backend suite passed with 160 tests, Ruff passed, Python compilation passed, and Git whitespace checks passed.
 - **Current status:** The fix is implemented and locally verified but not yet deployed. The August 27 alert must be prepared and validated again under v0.8; the earlier v0.7 validation hash is intentionally obsolete. Production persistence, website publication, SMTP acceptance, and mailbox verification remain incomplete for that alert.
 - **Commit description:** Fix production strategy-version validation and advance the hybrid alert to v0.8.
+
+## August 31 update
+
+- **Problem diagnosed:** The unattended August 28 alert was blocked before repository execution because `prepare_daily_stock_alert` and `validate_daily_stock_alert` were published without MCP safety annotations. MCP clients therefore treated these side-effect-free tools as potentially destructive, which requires an approval that a scheduled task cannot provide. Freshness, the database, and preparation logic were healthy; an interactive preparation call returned the expected v0.8 template for all 40 current and dropped tickers.
+- **Implemented:** Marked both preparation and validation as read-only, non-destructive, idempotent, and closed-world in the MCP manifest. Added regression assertions against the registered tool metadata so the safety contract cannot silently regress.
+- **Verified locally:** Focused Ruff checks and formatting checks pass, and Git whitespace checks pass. Python tests could not run because the existing Windows virtual environment points to a removed Python installation; deployment and the authoritative container test suite remain pending.
+- **Current status:** The repository fix is implemented but not yet deployed. The Daily Stock Alert automation remains disabled until the deployed MCP manifest is refreshed and verified with the read-only annotations; no August 28 validation, persistence, website publication, SMTP delivery, or mailbox verification occurred during this fix.

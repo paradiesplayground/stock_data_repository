@@ -2,6 +2,7 @@ from datetime import date
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from app.config import get_settings
@@ -421,7 +422,14 @@ if settings.mcp_enable_strategy_writes:
                 publish=False,
             )
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     def prepare_daily_stock_alert(
         as_of_date: str,
         limit: int = 100,
@@ -437,12 +445,21 @@ if settings.mcp_enable_strategy_writes:
                 exclude_industry_groups=exclude_industry_groups,
             )
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     def validate_daily_stock_alert(
         as_of_date: str,
         run_payload: Annotated[
             dict[str, Any],
-            Field(description="Completed production payload to validate without side effects."),
+            Field(
+                description="Completed production payload to validate without side effects."
+            ),
         ],
     ) -> dict[str, Any]:
         """Run the exact production alert contract checks without storing or delivering."""
