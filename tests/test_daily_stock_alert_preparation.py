@@ -7,6 +7,7 @@ from app.services.daily_stock_alert_preparation import (
     _research_plan,
     prepare_daily_stock_alert,
 )
+from app.services.strategy_tracking import configuration_fingerprint
 
 
 def test_preparation_carries_prior_scope_across_strategy_versions(monkeypatch) -> None:
@@ -156,6 +157,9 @@ def test_prepare_daily_alert_builds_deterministic_hybrid_handoff(monkeypatch) ->
         "name": "Dynamic swing buy alerts",
         "skill_version": "1.5.3",
     }
+    assert result["strategy_configuration_fingerprint"] == configuration_fingerprint(
+        template["configuration"]
+    )
     assert template["decision_contract_version"] == "0.8"
     assert template["candidates"] == []
     assert template["report_markdown"] is None

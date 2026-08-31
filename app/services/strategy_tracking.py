@@ -67,6 +67,42 @@ def _canonical_hash(payload: Any) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+def _canonical_configuration_node(value: Any) -> list[Any]:
+    """Encode JSON configuration values without distinguishing equivalent numbers."""
+    if value is None:
+        return ["null"]
+    if isinstance(value, bool):
+        return ["boolean", value]
+    if isinstance(value, (int, float, Decimal)):
+        number = Decimal(str(value))
+        if not number.is_finite():
+            raise ValueError("strategy configuration numbers must be finite")
+        normalized = "0" if number == 0 else format(number.normalize(), "f")
+        return ["number", normalized]
+    if isinstance(value, str):
+        return ["string", value]
+    if isinstance(value, list):
+        return ["array", [_canonical_configuration_node(item) for item in value]]
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("strategy configuration object keys must be strings")
+        return [
+            "object",
+            [[key, _canonical_configuration_node(value[key])] for key in sorted(value)],
+        ]
+    raise ValueError("strategy configuration values must use JSON-compatible types")
+
+
+def configuration_fingerprint(configuration: dict[str, Any]) -> str:
+    """Return a stable identity hash for a strategy's JSON configuration."""
+    encoded = json.dumps(
+        _canonical_configuration_node(configuration),
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
 def _decimal(value: Any, field: str) -> Decimal | None:
     if value is None:
         return None
@@ -92,18 +128,7 @@ def _definition(
         )
     )
     if definition is not None:
-        if _canonical_hash(definition.configuration) != _canonical_hash(configuration):
-            raise ValueError(
-                "strategy configuration changed; record it under a new strategy_version"
-            )
-        if (
-            skill_fingerprint
-            and definition.skill_fingerprint
-            and definition.skill_fingerprint != skill_fingerprint
-        ):
-            raise ValueError(
-                "skill fingerprint changed; record it under a new strategy_version"
-            )
+        _assert_definition_compatible(definition, configuration, skill_fingerprint)
         return definition
     definition = StrategyDefinition(
         strategy_key=strategy_key,
@@ -116,6 +141,29 @@ def _definition(
     session.add(definition)
     session.flush()
     return definition
+
+
+def _assert_definition_compatible(
+    definition: StrategyDefinition | None,
+    configuration: dict[str, Any],
+    skill_fingerprint: str | None,
+) -> None:
+    if definition is None:
+        return
+    if configuration_fingerprint(definition.configuration) != configuration_fingerprint(
+        configuration
+    ):
+        raise ValueError(
+            "strategy configuration changed; record it under a new strategy_version"
+        )
+    if (
+        skill_fingerprint
+        and definition.skill_fingerprint
+        and definition.skill_fingerprint != skill_fingerprint
+    ):
+        raise ValueError(
+            "skill fingerprint changed; record it under a new strategy_version"
+        )
 
 
 def _validate_definition_contract(
@@ -132,20 +180,7 @@ def _validate_definition_contract(
             StrategyDefinition.version == strategy_version,
         )
     )
-    if definition is None:
-        return
-    if _canonical_hash(definition.configuration) != _canonical_hash(configuration):
-        raise ValueError(
-            "strategy configuration changed; record it under a new strategy_version"
-        )
-    if (
-        skill_fingerprint
-        and definition.skill_fingerprint
-        and definition.skill_fingerprint != skill_fingerprint
-    ):
-        raise ValueError(
-            "skill fingerprint changed; record it under a new strategy_version"
-        )
+    _assert_definition_compatible(definition, configuration, skill_fingerprint)
 
 
 def record_strategy_run(

@@ -2,6 +2,7 @@ import importlib
 import json
 import sys
 from contextlib import contextmanager
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,24 @@ from app.services.stock_alert_delivery import (
     validate_strategy_run_for_delivery,
     verify_strategy_run_email,
 )
-from app.services.strategy_tracking import record_strategy_run
+from app.services.strategy_tracking import configuration_fingerprint, record_strategy_run
+
+
+def test_configuration_fingerprint_normalizes_equivalent_json_numbers() -> None:
+    prepared = {
+        "minimum_price": 5,
+        "minimum_market_cap": 100_000_000,
+        "threshold": 0.25,
+    }
+    transported = {
+        "minimum_price": 5.0,
+        "minimum_market_cap": Decimal("100000000.000"),
+        "threshold": Decimal("0.2500"),
+    }
+    changed = {**prepared, "minimum_price": 6}
+
+    assert configuration_fingerprint(prepared) == configuration_fingerprint(transported)
+    assert configuration_fingerprint(prepared) != configuration_fingerprint(changed)
 
 
 def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(

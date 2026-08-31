@@ -14,7 +14,11 @@ from app.mcp_queries import (
     query_security_features,
 )
 from app.models import DailyPriceBar
-from app.services.strategy_tracking import get_strategy_run, list_strategy_runs
+from app.services.strategy_tracking import (
+    configuration_fingerprint,
+    get_strategy_run,
+    list_strategy_runs,
+)
 
 STRATEGY_KEY = "dynamic_swing_buy_alerts"
 STRATEGY_VERSION = "0.8"
@@ -31,6 +35,7 @@ STRATEGY_CONFIGURATION_PATH = (
 STRATEGY_CONFIGURATION = json.loads(
     STRATEGY_CONFIGURATION_PATH.read_text(encoding="utf-8")
 )
+STRATEGY_CONFIGURATION_FINGERPRINT = configuration_fingerprint(STRATEGY_CONFIGURATION)
 if STRATEGY_CONFIGURATION.get("strategy") != {
     "key": STRATEGY_KEY,
     "version": STRATEGY_VERSION,
@@ -374,6 +379,7 @@ def prepare_daily_stock_alert(
         "as_of_date": as_of_date,
         "strategy_key": STRATEGY_KEY,
         "strategy_version": STRATEGY_VERSION,
+        "strategy_configuration_fingerprint": STRATEGY_CONFIGURATION_FINGERPRINT,
         "skill_version": SKILL_VERSION,
         "decision_contract_version": DECISION_CONTRACT_VERSION,
         "freshness": freshness,
