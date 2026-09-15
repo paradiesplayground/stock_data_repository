@@ -152,15 +152,22 @@ def test_canonical_prepared_v08_payload_validates_then_runs_unchanged(
     )
     validated_payload = validated["validated_run_payload"]
     unchanged_payload = copy.deepcopy(validated_payload)
+    transported_payload = _numbers_as_floats(validated_payload)
     result = run_daily_stock_alert(
         session,
         Settings(),
         as_of_date="2026-08-28",
-        run_payload=validated_payload,
+        run_payload=transported_payload,
     )
 
     assert payload["configuration"] == original_configuration
     assert validated_payload == unchanged_payload
+    assert isinstance(
+        validated_payload["configuration"]["universe"]["minimum_price"], int
+    )
+    assert isinstance(
+        transported_payload["configuration"]["universe"]["minimum_price"], float
+    )
     assert result["status"] == "completed"
     assert result["recorded"] is True
     assert result["payload_hash"] == validated["payload_hash"]

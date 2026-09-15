@@ -1,4 +1,4 @@
-# Codex handoff — Stock Data Repository — through August 27, 2026
+# Codex handoff — Stock Data Repository — through September 15, 2026
 
 ## What was accomplished
 
@@ -88,3 +88,11 @@
 - **Regression coverage:** Added a canonical v0.8 prepare → validate → unchanged production handoff test, strict changed-configuration rejection in both validation and production, numeric-representation fingerprint coverage, and preparation fingerprint coverage. Screening, scoring, classifications, decision semantics, email, and website rendering were not changed.
 - **Verified:** Commit `ede442e` passed 164 tests and Ruff in both the standard GitHub CI run and the production Docker test stage. Focused local Ruff and Git whitespace checks also pass; local pytest remains unavailable because the Windows virtual environment references a removed Python installation.
 - **Current status:** The configuration-fingerprint fix is pushed to `main` but is not yet deployed. No August 28 production run was persisted, published, or emailed during this work.
+
+## September 15 update
+
+- **Problem diagnosed:** A production alert passed validation but returned a different payload hash after the stateless MCP handoff. The earlier repair normalized numeric representations only for the immutable strategy configuration; the complete v0.8 run hash still distinguished equivalent JSON numbers such as `5` and `5.0` outside that configuration.
+- **Implemented:** v0.8 run hashing now normalizes equivalent JSON number representations throughout the complete canonical payload before hashing. Legacy contract hashes remain unchanged, and genuine changes to numeric values, structure, strings, or Booleans still produce a different identity.
+- **Regression coverage:** The canonical prepare → validate → production test now simulates every integer being re-encoded as a float during transport and requires production to preserve the validation hash. The full local suite passed with 164 tests; focused Ruff and Git whitespace checks passed.
+- **Production status:** The reported run was already recorded, read back, published, and accepted by SMTP before the mismatch was observed. It was not resent or republished. This repair is committed locally but is not deployed or verified on Unraid yet.
+- **Commit description:** Preserve v0.8 validation hashes across JSON transport.

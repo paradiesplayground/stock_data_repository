@@ -67,6 +67,35 @@ def _canonical_hash(payload: Any) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+def _canonical_json_numbers(value: Any) -> Any:
+    """Normalize equivalent JSON number representations before payload hashing."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, (float, Decimal)):
+        number = Decimal(str(value))
+        if not number.is_finite():
+            raise ValueError("strategy payload numbers must be finite")
+        if number == number.to_integral_value():
+            return int(number)
+        return float(number)
+    if isinstance(value, list):
+        return [_canonical_json_numbers(item) for item in value]
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("strategy payload object keys must be strings")
+        return {key: _canonical_json_numbers(item) for key, item in value.items()}
+    raise ValueError("strategy payload values must use JSON-compatible types")
+
+
+def _strategy_payload_hash(
+    payload: dict[str, Any], decision_contract_version: str | None
+) -> str:
+    """Hash v0.8 payloads across stateless JSON transports without numeric drift."""
+    if decision_contract_version == DECISION_CONTRACT_VERSION:
+        payload = _canonical_json_numbers(payload)
+    return _canonical_hash(payload)
+
+
 def _canonical_configuration_node(value: Any) -> list[Any]:
     """Encode JSON configuration values without distinguishing equivalent numbers."""
     if value is None:
@@ -333,7 +362,7 @@ def record_strategy_run(
     }
     if decision_contract_version is not None:
         payload["decision_contract_version"] = decision_contract_version
-    payload_hash = _canonical_hash(payload)
+    payload_hash = _strategy_payload_hash(payload, decision_contract_version)
     _date(as_of_date, "as_of_date")
     _datetime(data_cutoff_at_utc, "data_cutoff_at_utc")
     if validate_only:
