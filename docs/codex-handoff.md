@@ -96,3 +96,11 @@
 - **Regression coverage:** The canonical prepare → validate → production test now simulates every integer being re-encoded as a float during transport and requires production to preserve the validation hash. The full local suite passed with 164 tests; focused Ruff and Git whitespace checks passed.
 - **Production status:** The reported run was already recorded, read back, published, and accepted by SMTP before the mismatch was observed. It was not resent or republished. This repair is committed locally but is not deployed or verified on Unraid yet.
 - **Commit description:** Preserve v0.8 validation hashes across JSON transport.
+
+## September 16 update
+
+- **Implemented:** Redesigned daily-alert preparation under skill/workflow version 1.6.0 without changing strategy version 0.8 or the decision contract. The complete current-plus-dropped canonical ticker scope remains mandatory, while preparation now separates bounded fresh deep research, carry-forward evidence, deterministic-only handling, and dropped-candidate reviews.
+- **Implemented:** Fresh qualitative research is capped at 12 names in a normal regime and 6 in a SPY BLOCK regime. New names, newer filings, prior BUY_NOW/ALMOST_READY conclusions, stale evidence, and material actionable setup changes are prioritized; deterministic risk flags, missing evidence for clearly non-actionable names, and raw-pool drops alone no longer trigger deep research.
+- **Safety decision:** A candidate lacking current qualitative confirmation may remain RADAR or NOT_ELIGIBLE, but final validation rejects BUY_NOW or ALMOST_READY unless it records fresh research or explicitly reusable current evidence. The preparation result also supplies a 20-name detailed-report scope with a compact remainder summary.
+- **Verified locally:** Added focused regression coverage for queue causes, budgets, dropped names, canonical coverage, report scope, and actionable-evidence safety. The full Python suite passed (171 tests) and Python compilation passed using the bundled runtime.
+- **Current status:** No production run, publication, email, or mailbox action was performed. A live read-only preparation attempt could not reach the local default database hostname from this checkout, so current-market queue counts and tickers remain unverified until the deployed environment runs preparation.

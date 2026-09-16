@@ -56,6 +56,40 @@ def _validate_prepared_scope(payload: dict[str, Any]) -> None:
     if problems:
         raise ValueError("; ".join(problems))
 
+    # A deterministic screen may safely keep an unreviewed stock on RADAR or mark
+    # it NOT_ELIGIBLE, but it must never manufacture an actionable conclusion.
+    # The preparation scope makes the required evidence state auditable through
+    # the stateless validate -> run handoff.
+    scope_by_ticker = scope.get("research_scope_by_ticker")
+    evidence_tickers = {
+        str(item.get("ticker") or "").strip().upper()
+        for item in payload.get("evidence") or []
+        if isinstance(item, dict)
+    }
+    for candidate in payload.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        status = str(candidate.get("buyability_status") or "").upper()
+        if status not in {"BUY_NOW", "ALMOST_READY"}:
+            continue
+        ticker = str(candidate.get("ticker") or "").strip().upper()
+        candidate_payload = candidate.get("payload") or {}
+        evidence_status = candidate_payload.get("qualitative_evidence_status") if isinstance(candidate_payload, dict) else None
+        ticker_scope = scope_by_ticker.get(ticker) if isinstance(scope_by_ticker, dict) else None
+        scope_evidence_state = ticker_scope.get("evidence_state") if isinstance(ticker_scope, dict) else None
+        requires_current = bool(
+            ticker_scope.get("requires_current_qualitative_confirmation_for_actionable_status")
+        ) if isinstance(ticker_scope, dict) else True
+        if requires_current:
+            if evidence_status != "fresh_researched" or ticker not in evidence_tickers:
+                raise ValueError(
+                    f"{ticker} {status} requires fresh qualitative evidence after preparation"
+                )
+        elif evidence_status != "reused_current" or scope_evidence_state != "reused_current":
+            raise ValueError(
+                f"{ticker} {status} requires current or freshly reviewed qualitative evidence"
+            )
+
 
 def _attach_company_names(payload: dict[str, Any]) -> None:
     summary = payload.get("summary")

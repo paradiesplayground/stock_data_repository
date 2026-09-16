@@ -4,7 +4,7 @@
     "key": "dynamic_swing_buy_alerts",
     "version": "0.8",
     "name": "Dynamic swing buy alerts",
-    "skill_version": "1.5.3"
+    "skill_version": "1.6.0"
   },
   "universe": {
     "exchanges": ["XNAS", "XNYS"],

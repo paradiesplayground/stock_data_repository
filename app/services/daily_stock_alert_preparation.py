@@ -22,9 +22,12 @@ from app.services.strategy_tracking import (
 
 STRATEGY_KEY = "dynamic_swing_buy_alerts"
 STRATEGY_VERSION = "0.8"
-SKILL_VERSION = "1.5.3"
+SKILL_VERSION = "1.6.0"
 DECISION_CONTRACT_VERSION = "0.8"
 MINIMUM_FEATURE_VERSION = (1, 4, 0)
+NORMAL_DEEP_RESEARCH_BUDGET = 12
+BLOCK_DEEP_RESEARCH_BUDGET = 6
+EVIDENCE_STALENESS_DAYS = 30
 
 STRATEGY_CONFIGURATION_PATH = (
     Path(__file__).resolve().parents[2]
@@ -195,19 +198,65 @@ def _metric_changes(
     }
 
 
+def _potentially_actionable(candidate: dict[str, Any]) -> bool:
+    """Whether deterministic facts leave a realistic near-term action path."""
+    gates = candidate["represented_gates"]
+    return bool(
+        gates["price_within_five_pct_below_trigger"]
+        and gates["relative_strength_gate_passed"]
+    )
+
+
+def _evidence_state(
+    prior_evidence: list[dict[str, Any]], prior: dict[str, Any] | None, as_of_date: date
+) -> tuple[str, str | None]:
+    """Classify reusable evidence without representing old review as fresh."""
+    if not prior_evidence:
+        return "missing", "no_reusable_prior_evidence"
+    evidence_dates = []
+    for item in prior_evidence:
+        for field in ("retrieved_at_utc", "accepted_at_utc", "published_at_utc"):
+            value = item.get(field)
+            if value:
+                try:
+                    evidence_dates.append(date.fromisoformat(str(value)[:10]))
+                except ValueError:
+                    pass
+    if not evidence_dates and prior and prior.get("as_of_date"):
+        try:
+            evidence_dates.append(date.fromisoformat(str(prior["as_of_date"])))
+        except ValueError:
+            pass
+    if not evidence_dates:
+        return "reused_unverified_date", "prior_evidence_has_no_review_date"
+    if as_of_date - max(evidence_dates) > timedelta(days=EVIDENCE_STALENESS_DAYS):
+        return "stale", "prior_evidence_stale"
+    return "reused_current", None
+
+
+def _material_metric_change(
+    candidate: dict[str, Any], changes: dict[str, dict[str, Any]]
+) -> bool:
+    """Avoid deep research for ordinary daily noise while escalating changed setups."""
+    if not changes:
+        return False
+    risk_fields = {"cash_runway_months", "share_count_yoy_pct", "revenue_ttm_yoy_pct", "latest_quarter_revenue_yoy_pct"}
+    return bool(risk_fields & set(changes)) and _potentially_actionable(candidate)
+
+
 def _research_plan(
     candidate: dict[str, Any],
     prior: dict[str, Any] | None,
     prior_evidence: list[dict[str, Any]],
     *,
     is_new: bool,
+    as_of_date: date | None = None,
+    is_dropped: bool = False,
 ) -> dict[str, Any]:
-    reasons: list[str] = []
+    reasons: list[str] = ["dropped_from_raw_pool"] if is_dropped else []
     if is_new:
         reasons.append("new_raw_pool_candidate")
     daily_move = _decimal(candidate["deterministic_metrics"].get("daily_return_pct"))
-    if daily_move is not None and abs(daily_move) >= Decimal("5"):
-        reasons.append("material_daily_move")
     changes = _metric_changes(candidate["deterministic_metrics"], prior)
     filing_change = changes.get("latest_source_filing_date")
     if (
@@ -219,33 +268,51 @@ def _research_plan(
         reasons.append("fresh_source_filing")
     if prior and prior.get("buyability_status") in {"BUY_NOW", "ALMOST_READY"}:
         reasons.append("prior_near_buyable_status")
+    evidence_state, evidence_reason = _evidence_state(
+        prior_evidence, prior, as_of_date or date.today()
+    )
+    if evidence_reason:
+        reasons.append(evidence_reason)
+    materially_changed = _material_metric_change(candidate, changes)
+    if materially_changed and "fresh_source_filing" not in reasons:
+        reasons.append("material_metric_change")
+    if (
+        daily_move is not None
+        and abs(daily_move) >= Decimal("5")
+        and _potentially_actionable(candidate)
+    ):
+        reasons.append("material_daily_move")
     if candidate["deterministic_risk_flags"]:
-        reasons.append("deterministic_risk_flag")
-    if not prior_evidence:
-        reasons.append("no_reusable_prior_evidence")
+        reasons.append("deterministic_risk_flag_deterministic_only")
 
-    if any(
-        reason
-        in {
-            "new_raw_pool_candidate",
-            "material_daily_move",
-            "fresh_source_filing",
-            "prior_near_buyable_status",
-            "deterministic_risk_flag",
+    requires_deep = any(
+        reason in {
+            "new_raw_pool_candidate", "material_daily_move", "fresh_source_filing",
+            "prior_near_buyable_status", "material_metric_change", "prior_evidence_stale",
         }
         for reason in reasons
-    ):
-        priority = "high"
-    elif not prior_evidence or not prior:
-        priority = "normal"
+    )
+    # Missing evidence alone is enough only when deterministic facts leave an actionable path.
+    if evidence_state == "missing" and _potentially_actionable(candidate):
+        requires_deep = True
+        reasons.append("potentially_actionable_without_current_evidence")
+    if requires_deep:
+        scope, priority = "deep_research", "high"
+    elif evidence_state == "reused_current":
+        scope, priority = "carry_forward", "low"
     else:
-        priority = "low"
+        scope, priority = "deterministic_only", "normal"
     return {
         "ticker": candidate["ticker"],
         "priority": priority,
+        "research_scope": scope,
         "reasons": reasons or ["unchanged_candidate_review"],
         "prior_buyability_status": prior.get("buyability_status") if prior else None,
         "metric_changes": changes,
+        "evidence_state": evidence_state,
+        "requires_current_qualitative_confirmation_for_actionable_status": (
+            scope == "deep_research" or evidence_state != "reused_current"
+        ),
         "reusable_prior_evidence": prior_evidence,
         "qualitative_evidence_required": candidate[
             "qualitative_evidence_required"
@@ -320,33 +387,63 @@ def prepare_daily_stock_alert(
         _deterministic_candidate(item, regime["gate_passed"])
         for item in pool["items"]
     ]
-    research_queue = [
+    research_plans = [
         _research_plan(
             candidate,
             prior_candidates.get(candidate["ticker"]),
             prior_evidence_by_ticker.get(candidate["ticker"], []),
             is_new=candidate["ticker"] in comparison["new_tickers"],
+            as_of_date=requested_date,
         )
         for candidate in prepared_candidates
     ]
+    dropped_reviews = []
+    for ticker in comparison["dropped_tickers"]:
+        feature_check = get_security_features(
+            session, ticker, as_of_date=as_of_date, calculation_version=feature_version
+        )
+        feature_item = (feature_check or {}).get("item")
+        prior_candidate = prior_candidates[ticker]
+        # A dropped name can still be reassessed from current features, but dropping it
+        # is never itself a reason to spend fresh qualitative research.
+        candidate = _deterministic_candidate(
+            feature_item or (prior_candidate.get("metrics") or {"ticker": ticker}),
+            regime["gate_passed"],
+        )
+        plan = _research_plan(
+            candidate,
+            prior_candidate,
+            prior_evidence_by_ticker.get(ticker, []),
+            is_new=False,
+            is_dropped=True,
+            as_of_date=requested_date,
+        )
+        dropped_reviews.append(
+            {
+                **plan,
+                "prior_candidate": prior_candidate,
+                "current_feature_check": feature_check,
+                "drop_reason": "not_in_current_raw_pool",
+            }
+        )
+        research_plans.append(plan)
+
     priority_order = {"high": 0, "normal": 1, "low": 2}
-    research_queue.sort(key=lambda item: (priority_order[item["priority"]], item["ticker"]))
-    dropped_reviews = [
-        {
-            "ticker": ticker,
-            "priority": "high",
-            "reasons": ["dropped_from_raw_pool"],
-            "prior_candidate": prior_candidates[ticker],
-            "current_feature_check": get_security_features(
-                session,
-                ticker,
-                as_of_date=as_of_date,
-                calculation_version=feature_version,
-            ),
-            "reusable_prior_evidence": prior_evidence_by_ticker.get(ticker, []),
-        }
-        for ticker in comparison["dropped_tickers"]
-    ]
+    research_plans.sort(key=lambda item: (priority_order[item["priority"]], item["ticker"]))
+    deep_budget = BLOCK_DEEP_RESEARCH_BUDGET if regime["status"] == "block" else NORMAL_DEEP_RESEARCH_BUDGET
+    qualifying_deep = [item for item in research_plans if item["research_scope"] == "deep_research"]
+    deep_research_queue = qualifying_deep[:deep_budget]
+    deferred_deep = qualifying_deep[deep_budget:]
+    for item in deferred_deep:
+        item["research_scope"] = "deterministic_only"
+        item["priority"] = "normal"
+        item["reasons"] = [*item["reasons"], "deep_research_budget_deferred"]
+        item["requires_current_qualitative_confirmation_for_actionable_status"] = True
+    carry_forward_queue = [item for item in research_plans if item["research_scope"] == "carry_forward"]
+    deterministic_only_queue = [item for item in research_plans if item["research_scope"] == "deterministic_only"]
+    plan_by_ticker = {item["ticker"]: item for item in research_plans}
+    for review in dropped_reviews:
+        review.update(plan_by_ticker[review["ticker"]])
     company_names = {
         candidate["ticker"]: candidate["company"]
         for candidate in prepared_candidates
@@ -373,6 +470,17 @@ def prepare_daily_stock_alert(
         "excluded_sic_prefixes": pool["excluded_sic_prefixes"],
         "limit": limit,
     }
+    expected_tickers = sorted(current_tickers | prior_raw_tickers)
+    detailed_tickers = [
+        item["ticker"]
+        for item in deep_research_queue + carry_forward_queue + deterministic_only_queue
+        if item["ticker"] in expected_tickers
+    ][:20]
+    report_scope = {
+        "detailed_tickers": detailed_tickers,
+        "detailed_ticker_limit": 20,
+        "compact_summary_tickers": sorted(set(expected_tickers) - set(detailed_tickers)),
+    }
     return {
         "status": "prepared",
         "workflow": "hybrid_deterministic_plus_qualitative",
@@ -387,8 +495,24 @@ def prepare_daily_stock_alert(
         "comparison": comparison,
         "raw_candidate_count": pool["count"],
         "candidates": prepared_candidates,
-        "research_queue": research_queue,
+        # research_queue is retained as a compatibility alias; it now contains only
+        # the bounded fresh qualitative work, never the whole canonical universe.
+        "research_queue": deep_research_queue,
+        "deep_research_queue": deep_research_queue,
+        "carry_forward_queue": carry_forward_queue,
+        "deterministic_only_queue": deterministic_only_queue,
         "dropped_candidate_reviews": dropped_reviews,
+        "research_budget": {
+            "market_regime": regime["status"],
+            "maximum_fresh_qualitative_research": deep_budget,
+            "qualifying_deep_research_count": len(qualifying_deep),
+            "fresh_deep_research_count": len(deep_research_queue),
+            "deferred_deep_research_count": len(deferred_deep),
+            "carry_forward_count": len(carry_forward_queue),
+            "deterministic_only_count": len(deterministic_only_queue),
+            "dropped_candidate_count": len(dropped_reviews),
+        },
+        "report_scope": report_scope,
         "run_template": {
             "strategy_key": STRATEGY_KEY,
             "strategy_version": STRATEGY_VERSION,
@@ -412,17 +536,25 @@ def prepare_daily_stock_alert(
                 "preparation_scope": {
                     "current_raw_tickers": sorted(current_tickers),
                     "dropped_reassessed_tickers": comparison["dropped_tickers"],
-                    "expected_candidate_tickers": sorted(
-                        current_tickers | prior_raw_tickers
-                    ),
+                    "expected_candidate_tickers": expected_tickers,
                     "company_names": company_names,
+                    "research_scope_by_ticker": {
+                        ticker: {
+                            "research_scope": plan_by_ticker[ticker]["research_scope"],
+                            "evidence_state": plan_by_ticker[ticker]["evidence_state"],
+                            "requires_current_qualitative_confirmation_for_actionable_status": plan_by_ticker[ticker]["requires_current_qualitative_confirmation_for_actionable_status"],
+                        }
+                        for ticker in expected_tickers
+                    },
+                    "report_scope": report_scope,
                 },
             },
             "report_markdown": None,
         },
         "finalization_requirements": {
             "instruction": (
-                "Research the listed qualitative evidence, create canonical v0.8 candidates, "
+                "Research only deep_research_queue, carry forward current evidence where stated, "
+                "and create canonical v0.8 candidates for every expected ticker. "
                 "complete summary and report_markdown, then pass run_template as run_payload "
                 "to run_daily_stock_alert."
             ),
@@ -436,6 +568,7 @@ def prepare_daily_stock_alert(
                 "current_price",
                 "technical_gate_passed",
                 "market_regime_gate_passed",
+                "payload.qualitative_evidence_status for BUY_NOW or ALMOST_READY",
             ],
         },
     }

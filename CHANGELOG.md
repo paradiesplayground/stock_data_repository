@@ -7,8 +7,9 @@
 - Make dry validation read and compare an existing strategy definition, catching configuration or
   skill-fingerprint version collisions before the persistence call without creating any rows.
 - Preserve prior-run scope and daily-change comparisons across a strategy-version transition.
-- Align daily alert preparation metadata with swing-trading skill v1.5.3 and its scheduled
-  readiness, validation, and end-to-end completion contract.
+- Redesign daily alert preparation for swing-trading skill v1.6.0: retain complete canonical
+  candidate coverage while bounding fresh qualitative work to 12 names normally and 6 in a BLOCK
+  regime, carrying forward current evidence, and preventing unresearched actionable conclusions.
 - Add a repository-owned daily comparison that stores structured candidate, classification,
   trigger-distance, stop, blocker, evidence, and attention changes and prepends an idempotent
   **What changed since yesterday?** section to every production report.

@@ -336,11 +336,15 @@ requested current date, applies the versioned `dynamic_swing_buy_alerts` v0.8 de
 prefilter, calculates the completed-session SPY 50-day regime, derives trigger and invalidation
 inputs, compares raw membership with the prior stored alert across strategy-version transitions,
 and returns the qualitative evidence
-still required for each candidate. Its research queue prioritizes new names, material daily moves,
-fresh filings, prior near-buyable candidates, and deterministic risk flags; unchanged candidates
-with prior evidence are explicitly lower priority. Dropped names include a current source-feature
-check so their exact filter transition can be reviewed. It does not invent research or final
-buyability decisions.
+still required for each candidate. Preparation separates a bounded fresh `deep_research_queue`
+from `carry_forward_queue`, `deterministic_only_queue`, and reassessed dropped candidates. Fresh
+research prioritizes new names, newer filings, prior near-buyable candidates, and material setup
+changes; a deterministic risk flag, missing evidence for a clearly non-actionable stock, or a
+drop from the raw pool alone does not consume the research budget. The budget is 12 names in a
+normal regime and 6 when SPY is BLOCK. Every current and dropped ticker remains in the canonical
+scope even when the human-facing report uses a compact summary. An unreviewed name may remain
+RADAR or NOT_ELIGIBLE, but cannot be finalized BUY_NOW or ALMOST_READY without current qualitative
+evidence. It does not invent research or final buyability decisions.
 
 After completing the missing qualitative review, fill the returned `run_template` with canonical
 v0.8 candidates, evidence, summary, and `report_markdown`, then pass it to
