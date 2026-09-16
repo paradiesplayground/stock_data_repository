@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from decimal import Decimal
+import re
 from typing import Any, Iterator
 from uuid import uuid4
 
@@ -21,10 +22,46 @@ _PREPARATION_REVISION_REASON: ContextVar[str | None] = ContextVar(
     "daily_alert_preparation_revision_reason",
     default=None,
 )
+_EVIDENCE_TYPE_INVALID = re.compile(r"[^a-z0-9._-]+")
+_EVIDENCE_TYPE_SEPARATORS = re.compile(r"[._-]{2,}")
+_EVIDENCE_TYPE_FALLBACK = "qualitative_research"
 
 
 def _supports_persistence(session: Any) -> bool:
     return all(hasattr(session, method) for method in ("scalar", "add", "commit", "flush"))
+
+
+def _normalize_evidence_type(value: Any) -> str:
+    """Return the canonical strategy-tracking identifier form for evidence types."""
+    normalized = _EVIDENCE_TYPE_INVALID.sub("_", str(value or "").strip().lower())
+    normalized = _EVIDENCE_TYPE_SEPARATORS.sub("_", normalized).strip("._-")
+    normalized = normalized[:64].rstrip("._-")
+    return normalized or _EVIDENCE_TYPE_FALLBACK
+
+
+def _normalize_evidence_record(item: dict[str, Any]) -> dict[str, Any]:
+    """Normalize one evidence record while retaining the caller's original label."""
+    if not isinstance(item, dict):
+        raise ValueError("research evidence records must be objects")
+    normalized = deepcopy(item)
+    original = str(item.get("evidence_type") or "")
+    evidence_type = _normalize_evidence_type(original)
+    normalized["evidence_type"] = evidence_type
+    if evidence_type != original:
+        existing_details = normalized.get("details")
+        if isinstance(existing_details, dict):
+            details = deepcopy(existing_details)
+        elif existing_details is None:
+            details = {}
+        else:
+            details = {"original_details": deepcopy(existing_details)}
+        details.setdefault("original_evidence_type", original)
+        normalized["details"] = details
+    return normalized
+
+
+def _normalize_evidence_records(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_normalize_evidence_record(item) for item in evidence]
 
 
 @contextmanager
@@ -158,7 +195,7 @@ def record_daily_stock_alert_research(
         DailyAlertPreparationResearch.ticker == normalized_ticker,
     ))
     values = {
-        "evidence": deepcopy(evidence), "required_dimensions": dict(required_dimensions),
+        "evidence": _normalize_evidence_records(evidence), "required_dimensions": dict(required_dimensions),
         "qualitative_blockers": sorted(set(qualitative_blockers or [])),
         "qualitative_flags": sorted(set(qualitative_flags or [])),
         "candidate_decision": deepcopy(candidate_decision),
@@ -333,9 +370,9 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
     candidates = [_default_candidate(snapshot["candidate_snapshots"][ticker], plans[ticker], research.get(ticker)) for ticker in expected]
     evidence = []
     for item in snapshot["carry_forward_queue"]:
-        evidence.extend(item["reusable_prior_evidence"])
+        evidence.extend(_normalize_evidence_records(item["reusable_prior_evidence"]))
     for item in research.values():
-        evidence.extend(item.evidence)
+        evidence.extend(_normalize_evidence_records(item.evidence))
     payload = deepcopy(snapshot["run_template"])
     payload["candidates"] = candidates
     payload["evidence"] = evidence
