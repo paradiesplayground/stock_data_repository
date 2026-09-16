@@ -424,6 +424,7 @@ def prepare_daily_stock_alert(
                 "prior_candidate": prior_candidate,
                 "current_feature_check": feature_check,
                 "drop_reason": "not_in_current_raw_pool",
+                "deterministic_candidate": candidate,
             }
         )
         research_plans.append(plan)
@@ -471,6 +472,10 @@ def prepare_daily_stock_alert(
         "limit": limit,
     }
     expected_tickers = sorted(current_tickers | prior_raw_tickers)
+    candidate_snapshots = {item["ticker"]: item for item in prepared_candidates}
+    candidate_snapshots.update(
+        {item["ticker"]: item["deterministic_candidate"] for item in dropped_reviews}
+    )
     detailed_tickers = [
         item["ticker"]
         for item in deep_research_queue + carry_forward_queue + deterministic_only_queue
@@ -481,7 +486,7 @@ def prepare_daily_stock_alert(
         "detailed_ticker_limit": 20,
         "compact_summary_tickers": sorted(set(expected_tickers) - set(detailed_tickers)),
     }
-    return {
+    result = {
         "status": "prepared",
         "workflow": "hybrid_deterministic_plus_qualitative",
         "as_of_date": as_of_date,
@@ -502,6 +507,8 @@ def prepare_daily_stock_alert(
         "carry_forward_queue": carry_forward_queue,
         "deterministic_only_queue": deterministic_only_queue,
         "dropped_candidate_reviews": dropped_reviews,
+        "all_research_plans": research_plans,
+        "candidate_snapshots": candidate_snapshots,
         "research_budget": {
             "market_regime": regime["status"],
             "maximum_fresh_qualitative_research": deep_budget,
@@ -572,3 +579,8 @@ def prepare_daily_stock_alert(
             ],
         },
     }
+    # The durable record owns the exact deterministic snapshot. A later ChatGPT
+    # execution resumes it instead of rebuilding a transient canonical payload.
+    from app.services.daily_stock_alert_workflow import persist_preparation
+
+    return persist_preparation(session, result)

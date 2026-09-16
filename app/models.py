@@ -514,6 +514,54 @@ class StrategyEvidence(Base):
     details: Mapped[dict | None] = mapped_column(JSONB)
 
 
+class DailyAlertPreparation(Base):
+    __tablename__ = "daily_alert_preparations"
+    __table_args__ = (
+        UniqueConstraint("preparation_key", name="uq_daily_alert_preparation_key"),
+        Index("ix_daily_alert_preparations_date", "as_of_date"),
+        {"schema": "strategy_tracking"},
+    )
+
+    preparation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    preparation_key: Mapped[str] = mapped_column(String(255))
+    as_of_date: Mapped[date] = mapped_column(Date)
+    strategy_key: Mapped[str] = mapped_column(String(128))
+    strategy_version: Mapped[str] = mapped_column(String(64))
+    snapshot: Mapped[dict] = mapped_column(JSONB)
+    final_payload: Mapped[dict | None] = mapped_column(JSONB)
+    validation: Mapped[dict | None] = mapped_column(JSONB)
+    production_run_id: Mapped[str | None] = mapped_column(String(36))
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DailyAlertPreparationResearch(Base):
+    __tablename__ = "daily_alert_preparation_research"
+    __table_args__ = (
+        UniqueConstraint("preparation_id", "ticker", name="uq_daily_alert_preparation_research"),
+        Index("ix_daily_alert_preparation_research_preparation", "preparation_id"),
+        {"schema": "strategy_tracking"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    preparation_id: Mapped[str] = mapped_column(
+        ForeignKey("strategy_tracking.daily_alert_preparations.preparation_id", ondelete="CASCADE")
+    )
+    ticker: Mapped[str] = mapped_column(String(32))
+    evidence: Mapped[list] = mapped_column(JSONB)
+    required_dimensions: Mapped[dict] = mapped_column(JSONB)
+    qualitative_blockers: Mapped[list] = mapped_column(JSONB)
+    qualitative_flags: Mapped[list] = mapped_column(JSONB)
+    candidate_decision: Mapped[dict | None] = mapped_column(JSONB)
+    updated_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class StrategyOutcomeObservation(Base):
     __tablename__ = "strategy_outcome_observations"
     __table_args__ = (

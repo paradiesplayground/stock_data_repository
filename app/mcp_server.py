@@ -35,6 +35,12 @@ from app.services.daily_stock_alert import (
 from app.services.daily_stock_alert_preparation import (
     prepare_daily_stock_alert as prepare_daily_stock_alert_workflow,
 )
+from app.services.daily_stock_alert_workflow import (
+    daily_stock_alert_preparation_status as daily_alert_preparation_status_workflow,
+    finalize_daily_stock_alert_preparation as finalize_daily_alert_preparation_workflow,
+    record_daily_stock_alert_research as record_daily_alert_research_workflow,
+    run_finalized_daily_stock_alert_preparation as run_finalized_daily_alert_preparation_workflow,
+)
 from app.services.stock_alert_delivery import (
     publish_strategy_run_revision as publish_strategy_run_rendering_revision,
     publish_strategy_run as deliver_strategy_run,
@@ -469,6 +475,51 @@ if settings.mcp_enable_strategy_writes:
                 get_settings(),
                 as_of_date=as_of_date,
                 run_payload=run_payload,
+            )
+
+    @mcp.tool()
+    def record_daily_stock_alert_research(
+        preparation_id: str,
+        ticker: str,
+        evidence: list[dict[str, Any]],
+        required_dimensions: dict[str, bool],
+        qualitative_blockers: list[str] | None = None,
+        qualitative_flags: list[str] | None = None,
+        candidate_decision: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Durably checkpoint one completed deep-research ticker."""
+        with SessionLocal() as session:
+            return record_daily_alert_research_workflow(
+                session, preparation_id=preparation_id, ticker=ticker, evidence=evidence,
+                required_dimensions=required_dimensions,
+                qualitative_blockers=qualitative_blockers, qualitative_flags=qualitative_flags,
+                candidate_decision=candidate_decision,
+            )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+        )
+    )
+    def get_daily_stock_alert_preparation_status(preparation_id: str) -> dict[str, Any]:
+        """Return resumable research, finalization, validation, and production state."""
+        with SessionLocal() as session:
+            return daily_alert_preparation_status_workflow(session, preparation_id=preparation_id)
+
+    @mcp.tool()
+    def finalize_daily_stock_alert_preparation(preparation_id: str) -> dict[str, Any]:
+        """Server-assemble and validate the complete canonical v0.8 alert payload."""
+        with SessionLocal() as session:
+            return finalize_daily_alert_preparation_workflow(
+                session, get_settings(), preparation_id=preparation_id
+            )
+
+    @mcp.tool()
+    def run_finalized_daily_stock_alert_preparation(preparation_id: str) -> dict[str, Any]:
+        """Explicitly persist, publish, and email one already validated preparation."""
+        with SessionLocal() as session:
+            return run_finalized_daily_alert_preparation_workflow(
+                session, get_settings(), preparation_id=preparation_id
             )
 
     @mcp.tool()
