@@ -103,6 +103,60 @@ def test_finalizer_counts_positive_distance_as_a_represented_failed_gate() -> No
     assert candidate["remaining_gate_count"] >= 3
 
 
+def test_block_regime_overrides_actionable_saved_decision_to_rejected_not_eligible() -> None:
+    snapshot = _candidate("APP")
+    snapshot["represented_gates"] = {
+        **snapshot["represented_gates"],
+        "market_regime_gate_passed": False,
+    }
+    research = SimpleNamespace(
+        evidence=[], qualitative_blockers=[], qualitative_flags=[],
+        candidate_decision={"buyability_status": "BUY_NOW", "screen_bucket": "qualified"},
+    )
+
+    candidate = workflow._default_candidate(
+        snapshot, {"reasons": [], "evidence_state": "missing"}, research
+    )
+
+    assert candidate["buyability_status"] == "NOT_ELIGIBLE"
+    assert candidate["screen_bucket"] == "rejected"
+
+
+def test_block_regime_preserves_dropped_bucket() -> None:
+    snapshot = _candidate("DROP")
+    snapshot["represented_gates"] = {
+        **snapshot["represented_gates"],
+        "market_regime_gate_passed": False,
+    }
+    research = SimpleNamespace(
+        evidence=[], qualitative_blockers=[], qualitative_flags=[],
+        candidate_decision={"buyability_status": "ALMOST_READY", "screen_bucket": "dropped"},
+    )
+
+    candidate = workflow._default_candidate(
+        snapshot,
+        {"reasons": ["dropped_from_raw_pool"], "evidence_state": "missing"},
+        research,
+    )
+
+    assert candidate["buyability_status"] == "NOT_ELIGIBLE"
+    assert candidate["screen_bucket"] == "dropped"
+
+
+def test_non_block_regime_keeps_saved_decision_unchanged() -> None:
+    research = SimpleNamespace(
+        evidence=[], qualitative_blockers=[], qualitative_flags=[],
+        candidate_decision={"buyability_status": "BUY_NOW", "screen_bucket": "qualified"},
+    )
+
+    candidate = workflow._default_candidate(
+        _candidate("OPEN"), {"reasons": [], "evidence_state": "missing"}, research
+    )
+
+    assert candidate["buyability_status"] == "BUY_NOW"
+    assert candidate["screen_bucket"] == "qualified"
+
+
 def test_validation_failure_does_not_save_final_payload_or_produce(monkeypatch) -> None:
     preparation = SimpleNamespace(preparation_id="prep-3", snapshot=_snapshot(1), final_payload=None, validation=None, production_run_id=None)
     monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
