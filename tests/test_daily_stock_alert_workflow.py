@@ -84,6 +84,7 @@ def test_deterministic_only_candidate_cannot_become_buy_without_saved_research()
 
     assert candidate["buyability_status"] == "RADAR"
     assert candidate["payload"]["qualitative_evidence_status"] == "missing"
+    assert candidate["payload"]["setup_buyability_status"] == "RADAR"
 
 
 def test_finalizer_counts_positive_distance_as_a_represented_failed_gate() -> None:
@@ -103,15 +104,25 @@ def test_finalizer_counts_positive_distance_as_a_represented_failed_gate() -> No
     assert candidate["remaining_gate_count"] >= 3
 
 
-def test_block_regime_overrides_actionable_saved_decision_to_rejected_not_eligible() -> None:
+def test_block_regime_preserves_underlying_actionable_setup_before_effective_veto() -> None:
     snapshot = _candidate("APP")
     snapshot["represented_gates"] = {
         **snapshot["represented_gates"],
         "market_regime_gate_passed": False,
     }
+    snapshot["distance_to_trigger_pct"] = "-1.0"
     research = SimpleNamespace(
         evidence=[], qualitative_blockers=[], qualitative_flags=[],
-        candidate_decision={"buyability_status": "BUY_NOW", "screen_bucket": "qualified"},
+        candidate_decision={
+            "buyability_status": "BUY_NOW",
+            "screen_bucket": "qualified",
+            "technical_state": "confirmed",
+            "technical_gate_passed": True,
+            "market_regime_gate_passed": True,
+            "remaining_gate_count": 0,
+            "status_reason": "The stock-specific setup is ready.",
+            "buy_conditions": ["Keep price inside the planned entry zone."],
+        },
     )
 
     candidate = workflow._default_candidate(
@@ -120,9 +131,15 @@ def test_block_regime_overrides_actionable_saved_decision_to_rejected_not_eligib
 
     assert candidate["buyability_status"] == "NOT_ELIGIBLE"
     assert candidate["screen_bucket"] == "rejected"
+    assert candidate["market_regime_gate_passed"] is False
+    assert candidate["remaining_gate_count"] == 1
+    assert candidate["payload"]["setup_buyability_status"] == "BUY_NOW"
+    assert candidate["payload"]["setup_screen_bucket"] == "qualified"
+    assert candidate["payload"]["setup_remaining_gate_count"] == 0
+    assert candidate["payload"]["market_actionability_status"] == "MARKET_BLOCKED"
 
 
-def test_block_regime_preserves_dropped_bucket() -> None:
+def test_block_regime_preserves_dropped_bucket_as_intrinsically_not_eligible() -> None:
     snapshot = _candidate("DROP")
     snapshot["represented_gates"] = {
         **snapshot["represented_gates"],
@@ -141,9 +158,11 @@ def test_block_regime_preserves_dropped_bucket() -> None:
 
     assert candidate["buyability_status"] == "NOT_ELIGIBLE"
     assert candidate["screen_bucket"] == "dropped"
+    assert candidate["payload"]["setup_buyability_status"] == "NOT_ELIGIBLE"
+    assert candidate["payload"]["setup_screen_bucket"] == "dropped"
 
 
-def test_non_block_regime_keeps_saved_decision_unchanged() -> None:
+def test_non_block_regime_keeps_saved_decision_unchanged_and_records_setup_overlay() -> None:
     research = SimpleNamespace(
         evidence=[], qualitative_blockers=[], qualitative_flags=[],
         candidate_decision={"buyability_status": "BUY_NOW", "screen_bucket": "qualified"},
@@ -155,6 +174,63 @@ def test_non_block_regime_keeps_saved_decision_unchanged() -> None:
 
     assert candidate["buyability_status"] == "BUY_NOW"
     assert candidate["screen_bucket"] == "qualified"
+    assert candidate["payload"]["setup_buyability_status"] == "BUY_NOW"
+    assert candidate["payload"]["market_actionability_status"] == "MARKET_OPEN"
+
+
+def test_finalized_report_surfaces_market_blocked_setup_quality(monkeypatch) -> None:
+    snapshot = _snapshot(1)
+    candidate_snapshot = snapshot["candidate_snapshots"]["T00"]
+    candidate_snapshot["represented_gates"] = {
+        **candidate_snapshot["represented_gates"],
+        "market_regime_gate_passed": False,
+    }
+    candidate_snapshot["distance_to_trigger_pct"] = "-1.0"
+    preparation = SimpleNamespace(
+        preparation_id="prep-blocked",
+        snapshot=snapshot,
+        final_payload=None,
+        validation=None,
+        production_run_id=None,
+    )
+    research = {
+        "T00": SimpleNamespace(
+            ticker="T00",
+            evidence=[{"ticker": "T00", "evidence_type": "review"}],
+            qualitative_blockers=[],
+            qualitative_flags=[],
+            candidate_decision={
+                "buyability_status": "BUY_NOW",
+                "screen_bucket": "qualified",
+                "technical_state": "confirmed",
+                "technical_gate_passed": True,
+                "market_regime_gate_passed": True,
+                "remaining_gate_count": 0,
+                "status_reason": "Stock-specific gates pass.",
+                "buy_conditions": ["Hold the entry zone."],
+            },
+        )
+    }
+    monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
+    monkeypatch.setattr(workflow, "_research_by_ticker", lambda *_args: research)
+    monkeypatch.setattr(
+        workflow,
+        "validate_daily_stock_alert",
+        lambda _session, _settings, **kwargs: {
+            "status": "valid",
+            "payload_hash": "hash",
+            "validated_run_payload": kwargs["run_payload"],
+        },
+    )
+
+    result = workflow.finalize_daily_stock_alert_preparation(
+        _Session(), Settings(), preparation_id="prep-blocked"
+    )
+
+    assert "BUY_NOW setup (MARKET BLOCKED)" in result["run_payload"]["report_markdown"]
+    assert result["run_payload"]["summary"]["setup_counts"]["BUY_NOW"] == 1
+    assert result["run_payload"]["summary"]["market_blocked_count"] == 1
+    assert result["run_payload"]["summary"]["candidate_counts"]["NOT_ELIGIBLE"] == 1
 
 
 def test_validation_failure_does_not_save_final_payload_or_produce(monkeypatch) -> None:

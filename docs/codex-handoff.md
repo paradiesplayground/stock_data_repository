@@ -1,4 +1,4 @@
-# Codex handoff — Stock Data Repository — through September 15, 2026
+# Codex handoff — Stock Data Repository — through September 16, 2026
 
 ## What was accomplished
 
@@ -126,3 +126,8 @@
 - **Problem diagnosed:** The next finalization failure was caused by `strategy.skill_version` changing from 1.5.3 to 1.6.0 while the actual v0.8 trading thresholds, market-regime rules, scoring model, and decision contract remained unchanged. The saved preparation correctly retained the 1.6.0 workflow metadata, but immutable strategy-definition validation treated that operational metadata as a strategy change.
 - **Implemented:** The v0.8 validation boundary now compares the submitted and registered configurations with `strategy.skill_version` removed. When that is the only difference, it aligns the submitted metadata to the registered definition before immutable-definition validation. Any actual strategy-configuration difference remains untouched and continues to require a new `strategy_version`.
 - **Regression coverage / status:** Added tests for the 1.5.3→1.6.0 metadata transition, numeric-equivalent configuration values, and a genuine threshold change that must still fail. Commits `91f3dff` and `cfcbaae` are pushed to `main`; the saved preparation/research checkpoint was not modified and no production persistence, publication, or email action occurred.
+- **Implemented:** Refined the BLOCK behavior so market regime controls actionability without erasing stock-specific setup quality. The finalizer now stores intrinsic setup status, screen bucket, remaining gates, and reason in candidate payload metadata while keeping the effective v0.8 status `NOT_ELIGIBLE` under BLOCK for downstream safety and contract compatibility.
+- **Reporting decision:** The closest-setups report now ranks detailed names by intrinsic setup quality and explicitly renders cases such as `BUY_NOW setup (MARKET BLOCKED)`. Summary metadata separately reports effective candidate counts, intrinsic setup counts, and the number of market-blocked candidates.
+- **Timing/scope decision:** Research queues, the six-name BLOCK deep-research budget, preparation snapshots, and qualitative evidence requirements are unchanged. This is a finalizer/reporting overlay only, so preserving blocked setups does not create additional qualitative research work.
+- **Regression coverage:** Added tests for a blocked actionable setup retaining its intrinsic classification, hard-screen/dropped candidates remaining intrinsically non-eligible, unchanged non-BLOCK behavior, adjusted effective gate counts, and market-blocked setup/report summary rendering. Implementation commits are `8a1d07c` and `022f6aa`.
+- **Current status:** Implemented on a feature branch for CI review; not deployed to Unraid. No production finalization, persistence, publication, website update, or email action was performed by this change.
