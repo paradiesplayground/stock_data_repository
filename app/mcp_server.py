@@ -285,7 +285,8 @@ def get_strategy_run(run_id: str) -> dict[str, Any]:
 @mcp.tool()
 def list_strategy_simulations(limit: int = 20) -> dict[str, Any]:
     """List stored deterministic portfolio simulations and their scenario summaries."""
-    return query_strategy_simulations(session, limit)
+    with SessionLocal() as session:
+        return query_strategy_simulations(session, limit)
 
 
 @mcp.tool()
