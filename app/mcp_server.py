@@ -38,6 +38,7 @@ from app.services.daily_stock_alert_preparation import (
 from app.services.daily_stock_alert_workflow import (
     daily_stock_alert_preparation_status as daily_alert_preparation_status_workflow,
     finalize_daily_stock_alert_preparation as finalize_daily_alert_preparation_workflow,
+    new_daily_stock_alert_preparation_revision,
     record_daily_stock_alert_research as record_daily_alert_research_workflow,
     run_finalized_daily_stock_alert_preparation as run_finalized_daily_alert_preparation_workflow,
 )
@@ -441,7 +442,7 @@ if settings.mcp_enable_strategy_writes:
         limit: int = 100,
         exclude_industry_groups: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Prepare deterministic candidates and evidence gaps for a hybrid daily alert."""
+        """Prepare or resume the latest deterministic checkpoint for a hybrid daily alert."""
         with SessionLocal() as session:
             return prepare_daily_stock_alert_workflow(
                 session,
@@ -450,6 +451,32 @@ if settings.mcp_enable_strategy_writes:
                 limit=limit,
                 exclude_industry_groups=exclude_industry_groups,
             )
+
+    @mcp.tool()
+    def create_daily_stock_alert_revision(
+        as_of_date: str,
+        reason: Annotated[
+            str,
+            Field(
+                description=(
+                    "Why a genuinely new same-date preparation/run is required. "
+                    "Use only after an explicit rerun request; never for ordinary resume/retry."
+                )
+            ),
+        ],
+        limit: int = 100,
+        exclude_industry_groups: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create a fresh numbered preparation revision with a new production idempotency key."""
+        with new_daily_stock_alert_preparation_revision(reason):
+            with SessionLocal() as session:
+                return prepare_daily_stock_alert_workflow(
+                    session,
+                    get_settings(),
+                    as_of_date=as_of_date,
+                    limit=limit,
+                    exclude_industry_groups=exclude_industry_groups,
+                )
 
     @mcp.tool(
         annotations=ToolAnnotations(

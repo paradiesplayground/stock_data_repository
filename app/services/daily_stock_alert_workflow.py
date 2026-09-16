@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from decimal import Decimal
-from typing import Any
+from typing import Any, Iterator
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -15,26 +17,86 @@ from app.models import DailyAlertPreparation, DailyAlertPreparationResearch
 from app.services.daily_stock_alert import run_daily_stock_alert, validate_daily_stock_alert
 
 
+_PREPARATION_REVISION_REASON: ContextVar[str | None] = ContextVar(
+    "daily_alert_preparation_revision_reason",
+    default=None,
+)
+
+
 def _supports_persistence(session: Any) -> bool:
     return all(hasattr(session, method) for method in ("scalar", "add", "commit", "flush"))
 
 
-def persist_preparation(session: Session, prepared: dict[str, Any]) -> dict[str, Any]:
-    """Create exactly one checkpoint for a deterministic snapshot/idempotency key."""
-    if not _supports_persistence(session):  # Unit-level deterministic preparation tests.
-        prepared["preparation_id"] = "transient-" + prepared["run_template"]["idempotency_key"]
-        return prepared
-    key = prepared["run_template"]["idempotency_key"]
-    existing = session.scalar(
-        select(DailyAlertPreparation).where(DailyAlertPreparation.preparation_key == key)
+@contextmanager
+def new_daily_stock_alert_preparation_revision(reason: str) -> Iterator[None]:
+    """Request one fresh durable preparation revision inside the current call context."""
+    normalized_reason = str(reason or "").strip()
+    if not normalized_reason:
+        raise ValueError("a preparation revision requires a non-empty reason")
+    token = _PREPARATION_REVISION_REASON.set(normalized_reason)
+    try:
+        yield
+    finally:
+        _PREPARATION_REVISION_REASON.reset(token)
+
+
+def _latest_preparation_for_base_key(
+    session: Session,
+    base_key: str,
+) -> DailyAlertPreparation | None:
+    revision_prefix = f"{base_key}:revision:"
+    return session.scalar(
+        select(DailyAlertPreparation)
+        .where(
+            or_(
+                DailyAlertPreparation.preparation_key == base_key,
+                DailyAlertPreparation.preparation_key.like(revision_prefix + "%"),
+            )
+        )
+        .order_by(desc(DailyAlertPreparation.created_at_utc))
+        .limit(1)
     )
-    if existing:
-        result = deepcopy(existing.snapshot)
-        result["preparation_id"] = existing.preparation_id
+
+
+def persist_preparation(session: Session, prepared: dict[str, Any]) -> dict[str, Any]:
+    """Persist or resume the latest checkpoint, with explicit opt-in revisions."""
+    base_key = prepared["run_template"]["idempotency_key"]
+    revision_reason = _PREPARATION_REVISION_REASON.get()
+    if not _supports_persistence(session):  # Unit-level deterministic preparation tests.
+        revision = 1 if revision_reason else 0
+        key = f"{base_key}:revision:{revision}" if revision else base_key
+        snapshot = deepcopy(prepared)
+        snapshot["run_template"] = deepcopy(snapshot["run_template"])
+        snapshot["run_template"]["idempotency_key"] = key
+        snapshot["preparation_base_key"] = base_key
+        snapshot["preparation_revision"] = revision
+        if revision_reason:
+            snapshot["preparation_revision_reason"] = revision_reason
+        snapshot["preparation_id"] = "transient-" + key
+        snapshot["preparation_reused"] = False
+        return snapshot
+
+    latest = _latest_preparation_for_base_key(session, base_key)
+    if latest and not revision_reason:
+        result = deepcopy(latest.snapshot)
+        result["preparation_id"] = latest.preparation_id
         result["preparation_reused"] = True
         return result
+
+    latest_revision = int((latest.snapshot or {}).get("preparation_revision") or 0) if latest else 0
+    revision = latest_revision + 1 if revision_reason else 0
+    key = f"{base_key}:revision:{revision}" if revision else base_key
+    if len(key) > 255:
+        raise ValueError("daily alert preparation revision key exceeds 255 characters")
+
     preparation_id = str(uuid4())
     snapshot = deepcopy(prepared)
+    snapshot["run_template"] = deepcopy(snapshot["run_template"])
+    snapshot["run_template"]["idempotency_key"] = key
+    snapshot["preparation_base_key"] = base_key
+    snapshot["preparation_revision"] = revision
+    if revision_reason:
+        snapshot["preparation_revision_reason"] = revision_reason
     snapshot["preparation_id"] = preparation_id
     session.add(DailyAlertPreparation(
         preparation_id=preparation_id,
@@ -121,6 +183,8 @@ def daily_stock_alert_preparation_status(session: Session, *, preparation_id: st
     deep = sorted(item["ticker"] for item in snapshot["deep_research_queue"])
     return {
         "preparation_id": preparation_id,
+        "preparation_revision": int(snapshot.get("preparation_revision") or 0),
+        "preparation_revision_reason": snapshot.get("preparation_revision_reason"),
         "as_of_date": snapshot["as_of_date"],
         "expected_ticker_count": len(snapshot["run_template"]["summary"]["preparation_scope"]["expected_candidate_tickers"]),
         "completed_deep_research_tickers": completed,
@@ -285,6 +349,7 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
     payload["summary"] = {
         **payload["summary"],
         "preparation_id": preparation_id,
+        "preparation_revision": int(snapshot.get("preparation_revision") or 0),
         "candidate_counts": {
             status: sum(item["buyability_status"] == status for item in candidates)
             for status in ("BUY_NOW", "ALMOST_READY", "RADAR", "NOT_ELIGIBLE")

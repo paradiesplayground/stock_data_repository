@@ -9,7 +9,7 @@ Use this skill for the repository's production `dynamic_swing_buy_alerts` daily 
 
 ## Prepare and research
 
-Call `prepare_daily_stock_alert` for the current expected market date before doing qualitative work. It returns a durable `preparation_id`; a repeated call reuses the same deterministic checkpoint rather than losing prior work.
+Call `prepare_daily_stock_alert` for the current expected market date before doing qualitative work. It returns a durable `preparation_id`; a repeated call reuses the latest preparation revision rather than losing prior work.
 
 Treat the returned scopes as authoritative:
 
@@ -26,7 +26,15 @@ After preparation, call `get_daily_stock_alert_preparation_status` and follow it
 - If `outstanding_deep_research_tickers` is non-empty, research only those tickers. Immediately call `record_daily_stock_alert_research` after each completed ticker. Supply its evidence, mark every required dimension complete, and include blockers, flags, and any per-ticker decision detail. Never hold completed research only in chat context.
 - If no deep research is outstanding and finalization is incomplete, call `finalize_daily_stock_alert_preparation`, then use its `validated.status` result or a fresh status read to choose the next state above.
 
-Checkpoint only per-ticker research. Do not use `candidate_decision` to construct a canonical candidate array, summary, or report. A resume must reuse the same `preparation_id` and saved deterministic snapshot; never restart work merely because an earlier execution ended.
+Checkpoint only per-ticker research. Do not use `candidate_decision` to construct a canonical candidate array, summary, or report. A resume must reuse the latest saved `preparation_id`; never restart work merely because an earlier execution ended.
+
+### Explicit same-date reruns
+
+A completed preparation remains immutable. If, and only if, the user explicitly asks for a genuinely new run for the current expected market date after an earlier production run already completed, call `create_daily_stock_alert_revision` with a concise reason that reflects the user's request. This creates a fresh deterministic preparation revision with a new `preparation_id` and a distinct production `idempotency_key`.
+
+Do not call `create_daily_stock_alert_revision` for ordinary retries, interrupted chats, validation failures, scheduler resumes, or because the same preparation was returned again. Those cases must resume the existing preparation. A scheduled unattended run must never invent a revision merely because production for that date already exists.
+
+After creating a revision, use the returned revision's `preparation_id` and follow the normal status/research/finalization/production state machine. Do not reuse research checkpoints from the completed preparation unless the new preparation itself places that evidence in `carry_forward_queue`.
 
 Do not construct a canonical candidate array, summary, or report in ChatGPT. Call `finalize_daily_stock_alert_preparation`; the repository loads the durable snapshot, carry-forward evidence, and saved research, constructs every expected v0.8 candidate exactly once, generates the report, and validates the exact resulting payload.
 
