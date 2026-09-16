@@ -172,6 +172,13 @@ def _default_candidate(snapshot: dict[str, Any], plan: dict[str, Any], research:
         # A per-ticker decision is checkpointed, not a caller-assembled run payload.
         base.update(deepcopy(research.candidate_decision))
         base["payload"] = {**base["payload"], **(research.candidate_decision.get("payload") or {}), "qualitative_evidence_status": "fresh_researched"}
+    if not gates["market_regime_gate_passed"]:
+        # The market-regime veto is server-owned and must win over any saved
+        # per-ticker overlay. A BLOCK regime cannot retain an actionable or
+        # near-actionable bucket under the v0.8 decision contract.
+        base["buyability_status"] = "NOT_ELIGIBLE"
+        if base["screen_bucket"] != "dropped":
+            base["screen_bucket"] = "rejected"
     if base["buyability_status"] in {"BUY_NOW", "ALMOST_READY"} and not research:
         raise ValueError(f"{base['ticker']} cannot become actionable without saved qualitative research")
     return base
