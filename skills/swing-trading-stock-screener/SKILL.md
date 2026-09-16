@@ -18,12 +18,13 @@ Treat the returned scopes as authoritative:
 - Finalize `deterministic_only_queue` without fresh qualitative research. A name without sufficiently current qualitative evidence may be `RADAR` or `NOT_ELIGIBLE`, but must not be `BUY_NOW` or `ALMOST_READY`.
 - Reassess `dropped_candidate_reviews` from the supplied deterministic context. A drop from the raw pool alone is not a reason to expand fresh research.
 
-After preparation, call `get_daily_stock_alert_preparation_status` and follow its durable state:
+After preparation, call `get_daily_stock_alert_preparation_status` and follow its durable state. This is the complete resume decision point; a scheduler must not duplicate it:
 
 - If `production_status` is `completed`, report the idempotent result and stop.
-- If finalization is complete and `validation_status` is `valid`, call `run_finalized_daily_stock_alert_preparation`; do not re-finalize or rebuild the payload.
-- If deep research is outstanding, research only the listed tickers. Immediately call `record_daily_stock_alert_research` after each completed ticker. Supply its evidence, mark every required dimension complete, and include blockers, flags, and any per-ticker decision detail. Never hold completed research only in chat context.
-- When no deep research is outstanding, call `finalize_daily_stock_alert_preparation`.
+- If `finalization_complete` is true and `validation_status` is `valid`, call `run_finalized_daily_stock_alert_preparation`; do not re-finalize or rebuild the payload.
+- If `finalization_complete` is true and `validation_status` is not `valid`, stop and report the persisted validation state. Do not retry finalization or bypass it with a manual payload.
+- If `outstanding_deep_research_tickers` is non-empty, research only those tickers. Immediately call `record_daily_stock_alert_research` after each completed ticker. Supply its evidence, mark every required dimension complete, and include blockers, flags, and any per-ticker decision detail. Never hold completed research only in chat context.
+- If no deep research is outstanding and finalization is incomplete, call `finalize_daily_stock_alert_preparation`, then use its `validated.status` result or a fresh status read to choose the next state above.
 
 Checkpoint only per-ticker research. Do not use `candidate_decision` to construct a canonical candidate array, summary, or report. A resume must reuse the same `preparation_id` and saved deterministic snapshot; never restart work merely because an earlier execution ended.
 
@@ -37,4 +38,4 @@ Keep `verify_mailbox=false`. SMTP acceptance remains required by the production 
 
 Never rerun a historical alert merely to demonstrate resumption. Use only the current expected market date, and report the preparation ID plus the exact stopped stage if a current run cannot continue.
 
-For the scheduled production sequence and its stop conditions, read [references/scheduled-production.md](references/scheduled-production.md).
+For the scheduler's intentionally narrow invocation contract, read [references/scheduled-production.md](references/scheduled-production.md).

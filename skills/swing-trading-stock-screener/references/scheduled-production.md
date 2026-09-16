@@ -1,10 +1,7 @@
 # Scheduled production
 
-Keep the scheduler thin: use the skill for state transitions and stop conditions. Run only for the current expected market date; never reopen a historical alert to resume it.
+Keep the scheduler thin. Its prompt must invoke `swing-trading-stock-screener` to run the daily `dynamic_swing_buy_alerts` workflow for the current expected market date.
 
-1. Prepare, retain the returned `preparation_id`, then read its status.
-2. Checkpoint each outstanding deep-research ticker immediately after its review.
-3. Let server-side finalization assemble and validate the canonical payload after research is complete.
-4. Run production only when the persisted validation status is `valid` and production has not completed.
+All workflow implementation—including preparation reuse, checkpoint persistence, status-driven resume, finalization, validation, production gating, and stop conditions—belongs in the skill. The scheduler must not prescribe MCP calls, reconstruct payloads, or hold a `preparation_id` as its own state.
 
-Do not reconstruct payloads, rerun finished research, or enable mailbox verification. The production operation owns persistence, read-back verification, publication, and SMTP acceptance; always keep `verify_mailbox=false`.
+Never use it to reopen or rerun a historical alert, including September 15, to demonstrate resumption. Keep `verify_mailbox=false`; the production operation owns persistence, read-back verification, publication, and SMTP acceptance.
