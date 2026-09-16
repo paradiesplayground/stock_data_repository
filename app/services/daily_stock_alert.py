@@ -1,15 +1,22 @@
+from copy import deepcopy
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.mcp_queries import get_data_freshness
+from app.models import StrategyDefinition
 from app.services.daily_changes import attach_daily_changes, build_daily_changes
 from app.services.stock_alert_delivery import (
     publish_strategy_run,
     verify_strategy_run_email,
 )
-from app.services.strategy_tracking import get_strategy_run, record_strategy_run
+from app.services.strategy_tracking import (
+    configuration_fingerprint,
+    get_strategy_run,
+    record_strategy_run,
+)
 
 PRODUCTION_STRATEGY_KEY = "dynamic_swing_buy_alerts"
 PRODUCTION_STRATEGY_VERSION = "0.8"
@@ -111,6 +118,61 @@ def _attach_company_names(payload: dict[str, Any]) -> None:
     payload["candidates"] = enriched
 
 
+def _configuration_without_skill_version(configuration: dict[str, Any]) -> dict[str, Any]:
+    """Remove workflow-only metadata before comparing immutable strategy semantics."""
+    normalized = deepcopy(configuration)
+    strategy = normalized.get("strategy")
+    if isinstance(strategy, dict):
+        strategy.pop("skill_version", None)
+    return normalized
+
+
+def _align_production_skill_metadata(
+    session: Session, payload: dict[str, Any]
+) -> None:
+    """Keep v0.8 immutable while allowing the orchestration skill to evolve."""
+    if (
+        payload.get("strategy_key") != PRODUCTION_STRATEGY_KEY
+        or payload.get("strategy_version") != PRODUCTION_STRATEGY_VERSION
+        or not hasattr(session, "scalar")
+    ):
+        return
+    configuration = payload.get("configuration")
+    if not isinstance(configuration, dict):
+        return
+
+    definition = session.scalar(
+        select(StrategyDefinition).where(
+            StrategyDefinition.strategy_key == PRODUCTION_STRATEGY_KEY,
+            StrategyDefinition.version == PRODUCTION_STRATEGY_VERSION,
+        )
+    )
+    registered = getattr(definition, "configuration", None)
+    if not isinstance(registered, dict):
+        return
+
+    if configuration_fingerprint(
+        _configuration_without_skill_version(registered)
+    ) != configuration_fingerprint(_configuration_without_skill_version(configuration)):
+        return
+
+    registered_strategy = registered.get("strategy")
+    submitted_strategy = configuration.get("strategy")
+    if not isinstance(registered_strategy, dict) or not isinstance(submitted_strategy, dict):
+        return
+    if registered_strategy.get("skill_version") == submitted_strategy.get("skill_version"):
+        return
+
+    aligned = deepcopy(configuration)
+    aligned_strategy = dict(aligned.get("strategy") or {})
+    if "skill_version" in registered_strategy:
+        aligned_strategy["skill_version"] = registered_strategy["skill_version"]
+    else:
+        aligned_strategy.pop("skill_version", None)
+    aligned["strategy"] = aligned_strategy
+    payload["configuration"] = aligned
+
+
 def _validate_request(
     session: Session,
     settings: Settings,
@@ -127,6 +189,7 @@ def _validate_request(
         raise ValueError("run_payload must not contain publish")
     _validate_prepared_scope(payload)
     _attach_company_names(payload)
+    _align_production_skill_metadata(session, payload)
 
     freshness = get_data_freshness(session, settings)
     if freshness.get("expected_market_date") != as_of_date:
