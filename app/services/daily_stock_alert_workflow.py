@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
@@ -138,6 +139,12 @@ def _default_candidate(snapshot: dict[str, Any], plan: dict[str, Any], research:
     dropped = "dropped_from_raw_pool" in plan["reasons"]
     rejected = dropped or bool(snapshot["deterministic_risk_flags"])
     technical = bool(gates["price_at_or_above_trigger"])
+    distance = snapshot.get("distance_to_trigger_pct")
+    represented_failures = (
+        int(not technical)
+        + int(not gates["market_regime_gate_passed"])
+        + int(distance is not None and Decimal(str(distance)) > 0)
+    )
     status = "NOT_ELIGIBLE" if rejected else "RADAR"
     base = {
         "ticker": snapshot["ticker"],
@@ -146,10 +153,10 @@ def _default_candidate(snapshot: dict[str, Any], plan: dict[str, Any], research:
         "buyability_status": status,
         "status_reason": "Deterministic-only classification; current qualitative confirmation is required before an actionable status." if not research else "Finalized from saved qualitative research.",
         "buy_conditions": ["Complete current qualitative confirmation before any actionable decision."],
-        "remaining_gate_count": max(2, int(not technical) + int(not gates["market_regime_gate_passed"])),
+        "remaining_gate_count": max(2, represented_failures),
         "current_price": metrics.get("close"),
         "trigger_price": snapshot.get("suggested_trigger_price"),
-        "distance_to_trigger_pct": snapshot.get("distance_to_trigger_pct"),
+        "distance_to_trigger_pct": distance,
         "invalidation_price": snapshot.get("suggested_invalidation_price"),
         "technical_gate_passed": technical,
         "market_regime_gate_passed": gates["market_regime_gate_passed"],

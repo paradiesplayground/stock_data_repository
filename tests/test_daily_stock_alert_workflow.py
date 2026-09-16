@@ -86,6 +86,23 @@ def test_deterministic_only_candidate_cannot_become_buy_without_saved_research()
     assert candidate["payload"]["qualitative_evidence_status"] == "missing"
 
 
+def test_finalizer_counts_positive_distance_as_a_represented_failed_gate() -> None:
+    snapshot = _candidate("AAOI")
+    snapshot["represented_gates"] = {
+        **snapshot["represented_gates"],
+        "price_at_or_above_trigger": False,
+        "market_regime_gate_passed": False,
+    }
+    snapshot["distance_to_trigger_pct"] = "5.1"
+
+    candidate = workflow._default_candidate(snapshot, {"reasons": [], "evidence_state": "missing"}, None)
+
+    assert candidate["technical_gate_passed"] is False
+    assert candidate["market_regime_gate_passed"] is False
+    assert candidate["distance_to_trigger_pct"] == "5.1"
+    assert candidate["remaining_gate_count"] >= 3
+
+
 def test_validation_failure_does_not_save_final_payload_or_produce(monkeypatch) -> None:
     preparation = SimpleNamespace(preparation_id="prep-3", snapshot=_snapshot(1), final_payload=None, validation=None, production_run_id=None)
     monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
