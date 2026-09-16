@@ -172,16 +172,85 @@ def _default_candidate(snapshot: dict[str, Any], plan: dict[str, Any], research:
         # A per-ticker decision is checkpointed, not a caller-assembled run payload.
         base.update(deepcopy(research.candidate_decision))
         base["payload"] = {**base["payload"], **(research.candidate_decision.get("payload") or {}), "qualitative_evidence_status": "fresh_researched"}
-    if not gates["market_regime_gate_passed"]:
-        # The market-regime veto is server-owned and must win over any saved
-        # per-ticker overlay. A BLOCK regime cannot retain an actionable or
-        # near-actionable bucket under the v0.8 decision contract.
+
+    # Hard screen buckets remain non-actionable regardless of a saved per-ticker
+    # overlay. This also keeps the intrinsic setup snapshot contract-consistent.
+    eligible_buckets = {"qualified", "speculative", "cooldown"}
+    if base["screen_bucket"] not in eligible_buckets:
         base["buyability_status"] = "NOT_ELIGIBLE"
-        if base["screen_bucket"] != "dropped":
-            base["screen_bucket"] = "rejected"
-    if base["buyability_status"] in {"BUY_NOW", "ALMOST_READY"} and not research:
+
+    # Preserve the stock-specific setup before applying the server-owned market
+    # overlay. The effective v0.8 fields remain conservative for downstream
+    # consumers, while the payload keeps the closest setup visible for reporting.
+    setup_status = base["buyability_status"]
+    setup_bucket = base["screen_bucket"]
+    setup_remaining = int(base.get("remaining_gate_count") or 0)
+    setup_reason = base["status_reason"]
+    setup_market_gate = base.get("market_regime_gate_passed")
+    base["payload"] = {
+        **base["payload"],
+        "setup_buyability_status": setup_status,
+        "setup_screen_bucket": setup_bucket,
+        "setup_remaining_gate_count": setup_remaining,
+        "setup_status_reason": setup_reason,
+        "market_actionability_status": (
+            "MARKET_OPEN" if gates["market_regime_gate_passed"] else "MARKET_BLOCKED"
+        ),
+    }
+
+    if setup_status in {"BUY_NOW", "ALMOST_READY"} and not research:
         raise ValueError(f"{base['ticker']} cannot become actionable without saved qualitative research")
+
+    if not gates["market_regime_gate_passed"]:
+        # The market-regime veto remains server-owned. It controls actionability,
+        # but no longer erases the underlying setup quality captured above.
+        base["market_regime_gate_passed"] = False
+        base["buyability_status"] = "NOT_ELIGIBLE"
+        if base["screen_bucket"] in eligible_buckets:
+            base["screen_bucket"] = "rejected"
+
+        final_distance = base.get("distance_to_trigger_pct")
+        represented_failures = (
+            int(not bool(base.get("technical_gate_passed")))
+            + 1
+            + int(
+                final_distance is not None
+                and Decimal(str(final_distance)) > 0
+            )
+        )
+        added_market_gate = 1 if setup_market_gate is True else 0
+        base["remaining_gate_count"] = max(
+            setup_remaining + added_market_gate,
+            represented_failures,
+        )
+        base["status_reason"] = (
+            f"Market regime BLOCK; underlying setup remains {setup_status}. "
+            f"{setup_reason}"
+        )
+        market_condition = "Wait for the market-regime gate to pass before considering an entry."
+        base["buy_conditions"] = [
+            market_condition,
+            *[
+                condition
+                for condition in base["buy_conditions"]
+                if condition != market_condition
+            ],
+        ]
     return base
+
+
+def _setup_sort_key(candidate: dict[str, Any]) -> tuple[int, int, Decimal, str]:
+    payload = candidate.get("payload") or {}
+    status = str(
+        payload.get("setup_buyability_status") or candidate["buyability_status"]
+    ).upper()
+    priority = {"BUY_NOW": 0, "ALMOST_READY": 1, "RADAR": 2, "NOT_ELIGIBLE": 3}
+    remaining = int(
+        payload.get("setup_remaining_gate_count", candidate.get("remaining_gate_count") or 0)
+    )
+    distance_value = candidate.get("distance_to_trigger_pct")
+    distance = abs(Decimal(str(distance_value))) if distance_value is not None else Decimal("999999")
+    return priority.get(status, 99), remaining, distance, candidate["ticker"]
 
 
 def finalize_daily_stock_alert_preparation(session: Session, settings: Settings, *, preparation_id: str) -> dict[str, Any]:
@@ -206,11 +275,50 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
     payload = deepcopy(snapshot["run_template"])
     payload["candidates"] = candidates
     payload["evidence"] = evidence
-    payload["summary"] = {**payload["summary"], "preparation_id": preparation_id, "candidate_counts": {status: sum(item["buyability_status"] == status for item in candidates) for status in ("BUY_NOW", "ALMOST_READY", "RADAR", "NOT_ELIGIBLE")}}
+    setup_counts = {
+        status: sum(
+            str((item.get("payload") or {}).get("setup_buyability_status") or item["buyability_status"]).upper() == status
+            for item in candidates
+        )
+        for status in ("BUY_NOW", "ALMOST_READY", "RADAR", "NOT_ELIGIBLE")
+    }
+    payload["summary"] = {
+        **payload["summary"],
+        "preparation_id": preparation_id,
+        "candidate_counts": {
+            status: sum(item["buyability_status"] == status for item in candidates)
+            for status in ("BUY_NOW", "ALMOST_READY", "RADAR", "NOT_ELIGIBLE")
+        },
+        "setup_counts": setup_counts,
+        "market_blocked_count": sum(
+            not item["market_regime_gate_passed"] for item in candidates
+        ),
+    }
     lines = ["# Daily Stock Alert", "", "## Closest setups"]
-    for item in candidates:
-        if item["ticker"] in snapshot["report_scope"]["detailed_tickers"]:
-            lines.append(f"- **{item['ticker']}** — {item['buyability_status']}: {item['status_reason']}")
+    detailed_tickers = set(snapshot["report_scope"]["detailed_tickers"])
+    detailed_candidates = sorted(
+        (item for item in candidates if item["ticker"] in detailed_tickers),
+        key=_setup_sort_key,
+    )
+    for item in detailed_candidates:
+        item_payload = item.get("payload") or {}
+        setup_status = str(
+            item_payload.get("setup_buyability_status") or item["buyability_status"]
+        ).upper()
+        setup_reason = str(
+            item_payload.get("setup_status_reason") or item["status_reason"]
+        )
+        if (
+            not item["market_regime_gate_passed"]
+            and setup_status != "NOT_ELIGIBLE"
+        ):
+            lines.append(
+                f"- **{item['ticker']}** — {setup_status} setup (MARKET BLOCKED): {setup_reason}"
+            )
+        else:
+            lines.append(
+                f"- **{item['ticker']}** — {item['buyability_status']}: {item['status_reason']}"
+            )
     compact = len(snapshot["report_scope"]["compact_summary_tickers"])
     if compact:
         lines.append(f"- {compact} additional tracked stocks are retained in the canonical record as a compact summary.")
