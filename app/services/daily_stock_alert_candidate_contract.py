@@ -107,9 +107,20 @@ def normalize_candidate_state(
     if setup_bucket not in ELIGIBLE_BUCKETS:
         setup_status = "NOT_ELIGIBLE"
 
+    # v0.8 permits NOT_ELIGIBLE only in a terminal/non-actionable bucket. Keep
+    # the saved setup bucket in payload metadata, but map its effective bucket
+    # before the shared validator sees the candidate.
+    effective_bucket = setup_bucket
+    if setup_status == "NOT_ELIGIBLE" and effective_bucket not in {
+        "rejected",
+        "dropped",
+        "incomplete",
+    }:
+        effective_bucket = "rejected"
+
     normalized["market_regime_gate_passed"] = bool(market_regime_gate_passed)
     normalized["buyability_status"] = setup_status
-    normalized["screen_bucket"] = setup_bucket
+    normalized["screen_bucket"] = effective_bucket
     normalized["remaining_gate_count"] = max(
         setup_remaining,
         represented_gate_count(normalized),

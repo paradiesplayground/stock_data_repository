@@ -183,6 +183,29 @@ def test_non_block_regime_keeps_saved_decision_unchanged_and_records_setup_overl
     assert candidate["payload"]["market_actionability_status"] == "MARKET_OPEN"
 
 
+def test_not_eligible_saved_setup_maps_qualified_bucket_to_effective_rejected() -> None:
+    """KRMN-shaped resumed research must satisfy the v0.8 terminal bucket rule."""
+    research = SimpleNamespace(
+        evidence=[], qualitative_blockers=[], qualitative_flags=[],
+        candidate_decision={
+            "buyability_status": "NOT_ELIGIBLE",
+            "screen_bucket": "qualified",
+            "status_reason": "Saved research rejects the setup.",
+            "buy_conditions": ["Wait for a valid setup."],
+            "remaining_gate_count": 1,
+        },
+    )
+
+    candidate = workflow._default_candidate(
+        _candidate("KRMN"), {"reasons": [], "evidence_state": "missing"}, research,
+        {"checkpoint": "fresh"},
+    )
+
+    assert candidate["buyability_status"] == "NOT_ELIGIBLE"
+    assert candidate["screen_bucket"] == "rejected"
+    assert candidate["payload"]["setup_screen_bucket"] == "qualified"
+
+
 def test_finalized_report_surfaces_market_blocked_setup_quality(monkeypatch) -> None:
     snapshot = _snapshot(1)
     candidate_snapshot = snapshot["candidate_snapshots"]["T00"]
