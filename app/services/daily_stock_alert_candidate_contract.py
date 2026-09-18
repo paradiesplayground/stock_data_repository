@@ -102,7 +102,7 @@ def normalize_candidate_state(
         and not fresh_checkpoint
     ):
         raise ValueError(
-            f"{normalized.get('ticker', '<unknown>')} cannot become actionable without fresh saved qualitative research"
+            f"{normalized.get('ticker', '<unknown>')} {setup_status} requires fresh qualitative evidence after preparation"
         )
     if setup_bucket not in ELIGIBLE_BUCKETS:
         setup_status = "NOT_ELIGIBLE"
