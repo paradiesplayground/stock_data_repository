@@ -206,6 +206,47 @@ def test_not_eligible_saved_setup_maps_qualified_bucket_to_effective_rejected() 
     assert candidate["payload"]["setup_screen_bucket"] == "qualified"
 
 
+def test_almost_ready_saved_setup_derives_its_one_canonical_remaining_gate() -> None:
+    """MXL-shaped saved research cannot leak a stale remaining-gate count."""
+    snapshot = _candidate("MXL")
+    snapshot.update(
+        deterministic_metrics={
+            **snapshot["deterministic_metrics"], "close": "99",
+        },
+        suggested_trigger_price="100",
+        suggested_invalidation_price="95",
+        distance_to_trigger_pct="1",
+        represented_gates={
+            **snapshot["represented_gates"],
+            "price_at_or_above_trigger": True,
+            "market_regime_gate_passed": True,
+        },
+    )
+    research = SimpleNamespace(
+        evidence=[], qualitative_blockers=[], qualitative_flags=[],
+        candidate_decision={
+            "buyability_status": "ALMOST_READY",
+            "screen_bucket": "qualified",
+            "technical_state": "confirmed",
+            "technical_gate_passed": True,
+            "market_regime_gate_passed": True,
+            "remaining_gate_count": 3,
+            "status_reason": "Saved research confirms the near-trigger setup.",
+            "buy_conditions": ["Wait for the remaining price gate."],
+        },
+    )
+
+    candidate = workflow._default_candidate(
+        snapshot, {"reasons": [], "evidence_state": "missing"}, research,
+        {"checkpoint": "fresh"},
+    )
+
+    assert candidate["buyability_status"] == "ALMOST_READY"
+    assert candidate["remaining_gate_count"] == 1
+    assert candidate["trigger_price"] == "100"
+    assert candidate["invalidation_price"] == "95"
+
+
 def test_finalized_report_surfaces_market_blocked_setup_quality(monkeypatch) -> None:
     snapshot = _snapshot(1)
     candidate_snapshot = snapshot["candidate_snapshots"]["T00"]

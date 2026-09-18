@@ -121,10 +121,28 @@ def normalize_candidate_state(
     normalized["market_regime_gate_passed"] = bool(market_regime_gate_passed)
     normalized["buyability_status"] = setup_status
     normalized["screen_bucket"] = effective_bucket
-    normalized["remaining_gate_count"] = max(
-        setup_remaining,
-        represented_gate_count(normalized),
-    )
+    represented_remaining = represented_gate_count(normalized)
+    normalized["remaining_gate_count"] = max(setup_remaining, represented_remaining)
+
+    # ALMOST_READY is not a loose label: v0.8 requires precisely one
+    # represented gate plus a structured, near-trigger risk plan. Derive that
+    # state from the canonical fields rather than trusting a checkpointed count.
+    if setup_status == "ALMOST_READY":
+        trigger = normalized.get("trigger_price")
+        invalidation = normalized.get("invalidation_price")
+        distance = normalized.get("distance_to_trigger_pct")
+        structured_near_trigger = (
+            trigger is not None
+            and invalidation is not None
+            and distance is not None
+            and Decimal("0") <= Decimal(str(distance)) <= Decimal("5")
+        )
+        if represented_remaining == 1 and structured_near_trigger:
+            normalized["remaining_gate_count"] = 1
+        else:
+            setup_status = "RADAR"
+            normalized["buyability_status"] = setup_status
+            normalized["remaining_gate_count"] = max(1, represented_remaining)
     payload.update(
         setup_buyability_status=setup_status,
         setup_screen_bucket=setup_bucket,
