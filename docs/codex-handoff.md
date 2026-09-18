@@ -1,4 +1,4 @@
-# Codex handoff — Stock Data Repository — through September 16, 2026
+# Codex handoff — Stock Data Repository — through September 18, 2026
 
 ## What was accomplished
 
@@ -141,3 +141,10 @@
 - **Resume safety:** The finalizer-side normalization deliberately repairs already-saved evidence at payload assembly time without modifying or deleting checkpoint rows. Preparation `15ddf18f-e5ce-4205-bb48-b8d28d683376` therefore remains resumable directly at finalization after deployment; its five completed research names do not need to be researched again.
 - **Regression coverage / current status:** Added tests for invalid characters, the 64-character cap, checkpoint-time normalization, and finalization of preexisting saved invalid evidence. PR #14 passed pytest, Ruff, and the production Docker test stage. No production finalization, persistence, publication, website update, or email action was performed by this fix.
 - **Deployed / verified:** Deployed current `main` through the guarded Unraid update process. The deployment-side contract image built successfully; API and MCP became healthy and their health endpoints responded successfully. The tunnel encountered the known early-MCP startup race, then became healthy with an initialized MCP session after a single restart once MCP was ready. No saved preparation was retried and no production persistence, publication, or email action occurred.
+
+## September 18 update
+
+- **Implemented:** Centralized daily-alert finalizer candidate rules in `daily_stock_alert_candidate_contract.py`. Finalization and prepared-payload validation now share one normalized effective state for eligibility, market-regime vetoes, bucket mapping, represented remaining-gate counts, and deep-research checkpoint freshness.
+- **Implemented:** A durable deep-research checkpoint is stamped only when its saved update time is later than the preparation timestamp. The finalized payload preserves the server-owned checkpoint and intrinsic setup metadata; an actionable setup under a BLOCK regime remains effectively `NOT_ELIGIBLE`.
+- **Regression coverage:** Added a resumed-production-shaped fixture that finalizes a saved BUY_NOW research decision under a market BLOCK and asserts the canonical effective candidate, gate count, setup metadata, and freshness checkpoint.
+- **Verified locally:** Ruff and Git whitespace checks pass. The local Windows virtual environment references a removed Python executable and Docker is unavailable on this workstation, so pytest was not executed here. No preparation, production alert, persistence, publication, or email action was performed.

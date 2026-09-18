@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import pytest
 
@@ -42,7 +43,8 @@ def _snapshot(count: int = 5) -> dict:
 
 
 def _research(tickers: list[str]) -> dict:
-    return {ticker: SimpleNamespace(ticker=ticker, evidence=[{"ticker": ticker, "evidence_type": "review"}], qualitative_blockers=[], qualitative_flags=[], candidate_decision=None) for ticker in tickers}
+    reviewed_at = datetime(2026, 9, 15, 15, 1, tzinfo=timezone.utc)
+    return {ticker: SimpleNamespace(ticker=ticker, evidence=[{"ticker": ticker, "evidence_type": "review"}], qualitative_blockers=[], qualitative_flags=[], candidate_decision=None, updated_at_utc=reviewed_at) for ticker in tickers}
 
 
 def test_status_and_finalization_resume_after_one_of_five_research_checkpoints(monkeypatch) -> None:
@@ -126,7 +128,8 @@ def test_block_regime_preserves_underlying_actionable_setup_before_effective_vet
     )
 
     candidate = workflow._default_candidate(
-        snapshot, {"reasons": [], "evidence_state": "missing"}, research
+        snapshot, {"reasons": [], "evidence_state": "missing"}, research,
+        {"checkpoint": "fresh"},
     )
 
     assert candidate["buyability_status"] == "NOT_ELIGIBLE"
@@ -154,6 +157,7 @@ def test_block_regime_preserves_dropped_bucket_as_intrinsically_not_eligible() -
         snapshot,
         {"reasons": ["dropped_from_raw_pool"], "evidence_state": "missing"},
         research,
+        {"checkpoint": "fresh"},
     )
 
     assert candidate["buyability_status"] == "NOT_ELIGIBLE"
@@ -169,7 +173,8 @@ def test_non_block_regime_keeps_saved_decision_unchanged_and_records_setup_overl
     )
 
     candidate = workflow._default_candidate(
-        _candidate("OPEN"), {"reasons": [], "evidence_state": "missing"}, research
+        _candidate("OPEN"), {"reasons": [], "evidence_state": "missing"}, research,
+        {"checkpoint": "fresh"},
     )
 
     assert candidate["buyability_status"] == "BUY_NOW"
@@ -192,6 +197,7 @@ def test_finalized_report_surfaces_market_blocked_setup_quality(monkeypatch) -> 
         final_payload=None,
         validation=None,
         production_run_id=None,
+        created_at_utc=datetime(2026, 9, 15, 15, 0, tzinfo=timezone.utc),
     )
     research = {
         "T00": SimpleNamespace(
@@ -209,6 +215,7 @@ def test_finalized_report_surfaces_market_blocked_setup_quality(monkeypatch) -> 
                 "status_reason": "Stock-specific gates pass.",
                 "buy_conditions": ["Hold the entry zone."],
             },
+            updated_at_utc=datetime(2026, 9, 15, 15, 1, tzinfo=timezone.utc),
         )
     }
     monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
@@ -231,6 +238,71 @@ def test_finalized_report_surfaces_market_blocked_setup_quality(monkeypatch) -> 
     assert result["run_payload"]["summary"]["setup_counts"]["BUY_NOW"] == 1
     assert result["run_payload"]["summary"]["market_blocked_count"] == 1
     assert result["run_payload"]["summary"]["candidate_counts"]["NOT_ELIGIBLE"] == 1
+
+
+def test_resumed_production_fixture_rebuilds_the_same_canonical_blocked_candidate(monkeypatch) -> None:
+    """A saved production checkpoint must not regain actionability on resume."""
+    snapshot = _snapshot(1)
+    snapshot["candidate_snapshots"]["T00"].update(
+        distance_to_trigger_pct="-1.0",
+        represented_gates={
+            **snapshot["candidate_snapshots"]["T00"]["represented_gates"],
+            "market_regime_gate_passed": False,
+        },
+    )
+    preparation = SimpleNamespace(
+        preparation_id="production-resume-2026-09-15",
+        created_at_utc=datetime(2026, 9, 15, 15, 0, tzinfo=timezone.utc),
+        snapshot=snapshot,
+        final_payload=None,
+        validation=None,
+        production_run_id=None,
+    )
+    resumed_research = {
+        "T00": SimpleNamespace(
+            ticker="T00",
+            updated_at_utc=datetime(2026, 9, 15, 15, 2, tzinfo=timezone.utc),
+            evidence=[{"ticker": "T00", "evidence_type": "review"}],
+            qualitative_blockers=[],
+            qualitative_flags=[],
+            candidate_decision={
+                "buyability_status": "BUY_NOW",
+                "screen_bucket": "qualified",
+                "technical_state": "confirmed",
+                "technical_gate_passed": True,
+                "market_regime_gate_passed": True,
+                "remaining_gate_count": 0,
+                "status_reason": "Saved production research confirms the setup.",
+                "buy_conditions": ["Hold the planned entry zone."],
+            },
+        )
+    }
+    monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
+    monkeypatch.setattr(workflow, "_research_by_ticker", lambda *_args: resumed_research)
+    monkeypatch.setattr(
+        workflow,
+        "validate_daily_stock_alert",
+        lambda _session, _settings, **kwargs: {
+            "status": "valid", "payload_hash": "resumed-hash",
+            "validated_run_payload": kwargs["run_payload"],
+        },
+    )
+
+    result = workflow.finalize_daily_stock_alert_preparation(
+        _Session(), Settings(), preparation_id=preparation.preparation_id
+    )
+
+    candidate = result["run_payload"]["candidates"][0]
+    assert candidate["buyability_status"] == "NOT_ELIGIBLE"
+    assert candidate["screen_bucket"] == "rejected"
+    assert candidate["remaining_gate_count"] == 1
+    assert candidate["payload"]["setup_buyability_status"] == "BUY_NOW"
+    assert candidate["payload"]["qualitative_research_checkpoint"] == {
+        "preparation_id": preparation.preparation_id,
+        "ticker": "T00",
+        "research_scope": "deep_research",
+        "completed_at_utc": "2026-09-15T15:02:00+00:00",
+    }
 
 
 def test_validation_failure_does_not_save_final_payload_or_produce(monkeypatch) -> None:

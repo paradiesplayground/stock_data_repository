@@ -16,6 +16,10 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.models import DailyAlertPreparation, DailyAlertPreparationResearch
 from app.services.daily_stock_alert import run_daily_stock_alert, validate_daily_stock_alert
+from app.services.daily_stock_alert_candidate_contract import (
+    fresh_research_checkpoint,
+    normalize_candidate_state,
+)
 
 
 _PREPARATION_REVISION_REASON: ContextVar[str | None] = ContextVar(
@@ -233,7 +237,12 @@ def daily_stock_alert_preparation_status(session: Session, *, preparation_id: st
     }
 
 
-def _default_candidate(snapshot: dict[str, Any], plan: dict[str, Any], research: DailyAlertPreparationResearch | None) -> dict[str, Any]:
+def _default_candidate(
+    snapshot: dict[str, Any],
+    plan: dict[str, Any],
+    research: DailyAlertPreparationResearch | None,
+    fresh_research_checkpoint: dict[str, str] | None = None,
+) -> dict[str, Any]:
     metrics = dict(snapshot["deterministic_metrics"])
     metrics.setdefault("relative_volume_20d", "0")
     gates = snapshot["represented_gates"]
@@ -241,11 +250,6 @@ def _default_candidate(snapshot: dict[str, Any], plan: dict[str, Any], research:
     rejected = dropped or bool(snapshot["deterministic_risk_flags"])
     technical = bool(gates["price_at_or_above_trigger"])
     distance = snapshot.get("distance_to_trigger_pct")
-    represented_failures = (
-        int(not technical)
-        + int(not gates["market_regime_gate_passed"])
-        + int(distance is not None and Decimal(str(distance)) > 0)
-    )
     status = "NOT_ELIGIBLE" if rejected else "RADAR"
     base = {
         "ticker": snapshot["ticker"],
@@ -254,7 +258,7 @@ def _default_candidate(snapshot: dict[str, Any], plan: dict[str, Any], research:
         "buyability_status": status,
         "status_reason": "Deterministic-only classification; current qualitative confirmation is required before an actionable status." if not research else "Finalized from saved qualitative research.",
         "buy_conditions": ["Complete current qualitative confirmation before any actionable decision."],
-        "remaining_gate_count": max(2, represented_failures),
+        "remaining_gate_count": 0,
         "current_price": metrics.get("close"),
         "trigger_price": snapshot.get("suggested_trigger_price"),
         "distance_to_trigger_pct": distance,
@@ -264,7 +268,10 @@ def _default_candidate(snapshot: dict[str, Any], plan: dict[str, Any], research:
         "metrics": metrics,
         "payload": {
             "in_raw_pool": not dropped,
-            "qualitative_evidence_status": "fresh_researched" if research else plan["evidence_state"],
+            "qualitative_evidence_status": (
+                "fresh_researched" if fresh_research_checkpoint else plan["evidence_state"]
+            ),
+            "qualitative_research_checkpoint": fresh_research_checkpoint,
             "qualitative_blockers": research.qualitative_blockers if research else [],
             "qualitative_flags": research.qualitative_flags if research else [],
         },
@@ -272,72 +279,22 @@ def _default_candidate(snapshot: dict[str, Any], plan: dict[str, Any], research:
     if research and research.candidate_decision:
         # A per-ticker decision is checkpointed, not a caller-assembled run payload.
         base.update(deepcopy(research.candidate_decision))
-        base["payload"] = {**base["payload"], **(research.candidate_decision.get("payload") or {}), "qualitative_evidence_status": "fresh_researched"}
+        base["payload"] = {
+            **base["payload"],
+            **(research.candidate_decision.get("payload") or {}),
+            "qualitative_evidence_status": (
+                "fresh_researched" if fresh_research_checkpoint else "stale_researched"
+            ),
+            "qualitative_research_checkpoint": fresh_research_checkpoint,
+        }
 
-    # Hard screen buckets remain non-actionable regardless of a saved per-ticker
-    # overlay. This also keeps the intrinsic setup snapshot contract-consistent.
-    eligible_buckets = {"qualified", "speculative", "cooldown"}
-    if base["screen_bucket"] not in eligible_buckets:
-        base["buyability_status"] = "NOT_ELIGIBLE"
-
-    # Preserve the stock-specific setup before applying the server-owned market
-    # overlay. The effective v0.8 fields remain conservative for downstream
-    # consumers, while the payload keeps the closest setup visible for reporting.
-    setup_status = base["buyability_status"]
-    setup_bucket = base["screen_bucket"]
-    setup_remaining = int(base.get("remaining_gate_count") or 0)
-    setup_reason = base["status_reason"]
-    setup_market_gate = base.get("market_regime_gate_passed")
-    base["payload"] = {
-        **base["payload"],
-        "setup_buyability_status": setup_status,
-        "setup_screen_bucket": setup_bucket,
-        "setup_remaining_gate_count": setup_remaining,
-        "setup_status_reason": setup_reason,
-        "market_actionability_status": (
-            "MARKET_OPEN" if gates["market_regime_gate_passed"] else "MARKET_BLOCKED"
-        ),
-    }
-
-    if setup_status in {"BUY_NOW", "ALMOST_READY"} and not research:
-        raise ValueError(f"{base['ticker']} cannot become actionable without saved qualitative research")
-
-    if not gates["market_regime_gate_passed"]:
-        # The market-regime veto remains server-owned. It controls actionability,
-        # but no longer erases the underlying setup quality captured above.
-        base["market_regime_gate_passed"] = False
-        base["buyability_status"] = "NOT_ELIGIBLE"
-        if base["screen_bucket"] in eligible_buckets:
-            base["screen_bucket"] = "rejected"
-
-        final_distance = base.get("distance_to_trigger_pct")
-        represented_failures = (
-            int(not bool(base.get("technical_gate_passed")))
-            + 1
-            + int(
-                final_distance is not None
-                and Decimal(str(final_distance)) > 0
-            )
-        )
-        added_market_gate = 1 if setup_market_gate is True else 0
-        base["remaining_gate_count"] = max(
-            setup_remaining + added_market_gate,
-            represented_failures,
-        )
-        base["status_reason"] = (
-            f"Market regime BLOCK; underlying setup remains {setup_status}. "
-            f"{setup_reason}"
-        )
-        market_condition = "Wait for the market-regime gate to pass before considering an entry."
-        base["buy_conditions"] = [
-            market_condition,
-            *[
-                condition
-                for condition in base["buy_conditions"]
-                if condition != market_condition
-            ],
-        ]
-    return base
+    # All finalization rules are shared with validation; do not derive effective
+    # actionability from raw fields anywhere else in this workflow.
+    return normalize_candidate_state(
+        base,
+        market_regime_gate_passed=bool(gates["market_regime_gate_passed"]),
+        fresh_checkpoint=fresh_research_checkpoint,
+    )
 
 
 def _setup_sort_key(candidate: dict[str, Any]) -> tuple[int, int, Decimal, str]:
@@ -367,7 +324,21 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
         raise ValueError("outstanding deep research: " + ", ".join(missing))
     plans = {item["ticker"]: item for item in snapshot["all_research_plans"]}
     expected = snapshot["run_template"]["summary"]["preparation_scope"]["expected_candidate_tickers"]
-    candidates = [_default_candidate(snapshot["candidate_snapshots"][ticker], plans[ticker], research.get(ticker)) for ticker in expected]
+    candidates = [
+        _default_candidate(
+            snapshot["candidate_snapshots"][ticker],
+            plans[ticker],
+            research.get(ticker),
+            fresh_research_checkpoint(
+                preparation_id=preparation.preparation_id,
+                ticker=ticker,
+                preparation_created_at_utc=getattr(preparation, "created_at_utc", None),
+                research_updated_at_utc=getattr(research.get(ticker), "updated_at_utc", None),
+                is_deep_research=ticker in deep,
+            ),
+        )
+        for ticker in expected
+    ]
     evidence = []
     for item in snapshot["carry_forward_queue"]:
         evidence.extend(_normalize_evidence_records(item["reusable_prior_evidence"]))
@@ -396,6 +367,12 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
             not item["market_regime_gate_passed"] for item in candidates
         ),
     }
+    preparation_scope = payload["summary"].get("preparation_scope")
+    if isinstance(preparation_scope, dict):
+        preparation_scope["preparation_id"] = preparation_id
+        created_at = getattr(preparation, "created_at_utc", None)
+        if created_at is not None:
+            preparation_scope["preparation_created_at_utc"] = created_at.isoformat()
     lines = ["# Daily Stock Alert", "", "## Closest setups"]
     detailed_tickers = set(snapshot["report_scope"]["detailed_tickers"])
     detailed_candidates = sorted(

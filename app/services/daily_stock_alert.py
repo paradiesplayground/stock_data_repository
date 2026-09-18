@@ -8,6 +8,9 @@ from app.config import Settings
 from app.mcp_queries import get_data_freshness
 from app.models import StrategyDefinition
 from app.services.daily_changes import attach_daily_changes, build_daily_changes
+from app.services.daily_stock_alert_candidate_contract import (
+    validate_finalized_candidate_state,
+)
 from app.services.stock_alert_delivery import (
     publish_strategy_run,
     verify_strategy_run_email,
@@ -68,34 +71,23 @@ def _validate_prepared_scope(payload: dict[str, Any]) -> None:
     # The preparation scope makes the required evidence state auditable through
     # the stateless validate -> run handoff.
     scope_by_ticker = scope.get("research_scope_by_ticker")
-    evidence_tickers = {
-        str(item.get("ticker") or "").strip().upper()
-        for item in payload.get("evidence") or []
-        if isinstance(item, dict)
-    }
     for candidate in payload.get("candidates") or []:
         if not isinstance(candidate, dict):
             continue
-        status = str(candidate.get("buyability_status") or "").upper()
-        if status not in {"BUY_NOW", "ALMOST_READY"}:
-            continue
         ticker = str(candidate.get("ticker") or "").strip().upper()
-        candidate_payload = candidate.get("payload") or {}
-        evidence_status = candidate_payload.get("qualitative_evidence_status") if isinstance(candidate_payload, dict) else None
         ticker_scope = scope_by_ticker.get(ticker) if isinstance(scope_by_ticker, dict) else None
-        scope_evidence_state = ticker_scope.get("evidence_state") if isinstance(ticker_scope, dict) else None
-        requires_current = bool(
-            ticker_scope.get("requires_current_qualitative_confirmation_for_actionable_status")
-        ) if isinstance(ticker_scope, dict) else True
-        if requires_current:
-            if evidence_status != "fresh_researched" or ticker not in evidence_tickers:
-                raise ValueError(
-                    f"{ticker} {status} requires fresh qualitative evidence after preparation"
+        if not isinstance(ticker_scope, dict):
+            raise ValueError(f"{ticker} requires a prepared research scope")
+        validate_finalized_candidate_state(
+            candidate,
+            preparation_id=scope.get("preparation_id"),
+            preparation_created_at_utc=scope.get("preparation_created_at_utc"),
+            require_fresh_research_for_actionable=bool(
+                ticker_scope.get(
+                    "requires_current_qualitative_confirmation_for_actionable_status"
                 )
-        elif evidence_status != "reused_current" or scope_evidence_state != "reused_current":
-            raise ValueError(
-                f"{ticker} {status} requires current or freshly reviewed qualitative evidence"
-            )
+            ),
+        )
 
 
 def _attach_company_names(payload: dict[str, Any]) -> None:
