@@ -96,8 +96,6 @@ def normalize_candidate_state(
     setup_status = str(normalized.get("buyability_status") or "").strip().upper()
     setup_remaining = int(normalized.get("remaining_gate_count") or 0)
 
-    if setup_bucket not in ELIGIBLE_BUCKETS:
-        setup_status = "NOT_ELIGIBLE"
     if (
         setup_status in ACTIONABLE_STATUSES
         and require_fresh_research_for_actionable
@@ -106,6 +104,8 @@ def normalize_candidate_state(
         raise ValueError(
             f"{normalized.get('ticker', '<unknown>')} cannot become actionable without fresh saved qualitative research"
         )
+    if setup_bucket not in ELIGIBLE_BUCKETS:
+        setup_status = "NOT_ELIGIBLE"
 
     normalized["market_regime_gate_passed"] = bool(market_regime_gate_passed)
     normalized["buyability_status"] = setup_status
