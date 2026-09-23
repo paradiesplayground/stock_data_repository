@@ -35,13 +35,44 @@ def _percent(value: Any) -> str:
     return f"{parsed.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)}%" if parsed is not None else "not available"
 
 
+def _implied_52w_high(metrics: dict[str, Any]) -> Decimal | None:
+    """Recover the observed 52-week high from close and saved drawdown."""
+    close = _decimal(metrics.get("close"))
+    drawdown = _decimal(metrics.get("drawdown_52w_pct"))
+    if close is None or close <= 0 or drawdown is None:
+        return None
+    denominator = Decimal("1") + (drawdown / Decimal("100"))
+    if denominator <= 0:
+        return None
+    return (close / denominator).quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+
+
 def structural_targets(*, trigger: Any, metrics: dict[str, Any]) -> list[dict[str, str]]:
-    """Return only observed price levels above the entry; never invent R targets."""
+    """Return observed resistance levels above entry without inventing fixed-R targets."""
     entry = _decimal(trigger)
-    high_60d = _decimal(metrics.get("high_60d"))
-    if entry is None or high_60d is None or high_60d <= entry:
+    if entry is None:
         return []
-    return [{"price": str(high_60d), "basis": "60-day resistance"}]
+
+    high_60d = _decimal(metrics.get("high_60d"))
+    high_52w = _implied_52w_high(metrics)
+    targets: list[dict[str, str]] = []
+
+    if high_60d is not None and high_60d > entry:
+        targets.append({"price": str(high_60d), "basis": "60-day resistance"})
+
+    if high_52w is not None and high_52w > entry:
+        # The 60-day high can also be the 52-week high. Two labels on the same
+        # price are not two useful targets, so dedupe at displayed-cent precision.
+        duplicate = any(
+            _decimal(item["price"]) is not None
+            and _decimal(item["price"]).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            == high_52w.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            for item in targets
+        )
+        if not duplicate:
+            targets.append({"price": str(high_52w), "basis": "52-week resistance"})
+
+    return targets[:2]
 
 
 def report_enrichment(
