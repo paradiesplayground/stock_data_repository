@@ -6,8 +6,7 @@
 - **Implemented:** Added a bounded top-five `report_focus_queue`, ticker-specific factual Why/Next text, and structural target/R-multiple reporting based only on saved technical levels. Missing structure is shown explicitly rather than manufacturing 1R/2R targets.
 - **Implemented:** Daily changes now emit at most eight material New, Improved, Deteriorated, or Removed items, including meaningful score and trigger-distance changes with rounded values.
 - **Verified locally:** Python files compile and deterministic enrichment was exercised directly. Focused pytest could not run because the checked-in Windows virtualenv points to a removed Python interpreter; no production alert, publication, or email was run.
-- **Deployment:** Not deployed.
-- **Deployment follow-up:** The first guarded deployment stopped before service recreation because the contract suite preserved the required `BUY_NOW setup (MARKET BLOCKED)` report label; the renderer now retains that underlying setup label alongside the enriched fields. A redeploy is pending.
+- **Verified and deployed:** The guarded Unraid updater passed 201 tests and Ruff, then deployed functional commit `5d82392`. API and MCP are healthy; the API health endpoint returned OK. The tunnel startup race was resolved by restarting only the tunnel after MCP became healthy.
 
 ## What was accomplished
 
