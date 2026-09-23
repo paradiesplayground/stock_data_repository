@@ -302,8 +302,14 @@ def _default_candidate(
     )
     normalized.update(report_enrichment(snapshot=snapshot, plan=plan, research=research))
     why, next_condition = ticker_specific_explanation(normalized)
-    normalized["status_reason"] = why
-    normalized["buy_conditions"] = [next_condition]
+    # Display copy must not overwrite contract-owned reason/conditions after
+    # normalization. Validation reconstructs those canonical fields from the
+    # saved setup payload, while renderers consume this separate enrichment.
+    normalized["payload"] = {
+        **(normalized.get("payload") or {}),
+        "report_why": why,
+        "report_next": next_condition,
+    }
     return normalized
 
 
@@ -421,8 +427,8 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
             f"{decision_text} · Setup score **{item['setup_score']}/100**",
             f"Current {money(item.get('current_price'))} · Trigger {money(item.get('trigger_price'))} · {distance_text} · Stop {money(item.get('invalidation_price'))}",
             f"Targets: {target_text}",
-            f"Why: {item['status_reason']}",
-            f"Next: {item['buy_conditions'][0]}",
+            f"Why: {item_payload.get('report_why') or item['status_reason']}",
+            f"Next: {item_payload.get('report_next') or item['buy_conditions'][0]}",
             "",
         ])
     compact = len(snapshot["report_scope"]["compact_summary_tickers"])

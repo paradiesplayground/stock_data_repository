@@ -5,6 +5,7 @@ import pytest
 
 from app.config import Settings
 from app.services import daily_stock_alert_workflow as workflow
+from app.services.daily_stock_alert_candidate_contract import validate_finalized_candidate_state
 
 
 class _Session:
@@ -87,6 +88,22 @@ def test_deterministic_only_candidate_cannot_become_buy_without_saved_research()
     assert candidate["buyability_status"] == "RADAR"
     assert candidate["payload"]["qualitative_evidence_status"] == "missing"
     assert candidate["payload"]["setup_buyability_status"] == "RADAR"
+    assert candidate["status_reason"].startswith("Deterministic-only classification")
+    assert "report_why" in candidate["payload"]
+    assert "report_next" in candidate["payload"]
+
+
+def test_report_copy_does_not_violate_the_canonical_finalizer_contract() -> None:
+    candidate = workflow._default_candidate(
+        _candidate("AAOI"), {"reasons": [], "evidence_state": "missing"}, None
+    )
+
+    validate_finalized_candidate_state(
+        candidate,
+        preparation_id="prep-aaoi",
+        preparation_created_at_utc=None,
+        require_fresh_research_for_actionable=False,
+    )
 
 
 def test_finalizer_counts_positive_distance_as_a_represented_failed_gate() -> None:

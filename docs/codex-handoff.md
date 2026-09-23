@@ -7,6 +7,7 @@
 - **Implemented:** Daily changes now emit at most eight material New, Improved, Deteriorated, or Removed items, including meaningful score and trigger-distance changes with rounded values.
 - **Verified locally:** Python files compile and deterministic enrichment was exercised directly. Focused pytest could not run because the checked-in Windows virtualenv points to a removed Python interpreter; no production alert, publication, or email was run.
 - **Verified and deployed:** The guarded Unraid updater passed 201 tests and Ruff, then deployed functional commit `5d82392`. API and MCP are healthy; the API health endpoint returned OK. The tunnel startup race was resolved by restarting only the tunnel after MCP became healthy.
+- **Follow-up implemented:** Report-specific Why/Next copy is now retained separately from canonical `status_reason` and `buy_conditions`. This fixes finalizer/validator equality for durable preparations without weakening actionability validation or altering saved research. Regression coverage uses AAOI-shaped deterministic output; deployment and resuming the September 22 revision remain pending.
 
 ## What was accomplished
 
