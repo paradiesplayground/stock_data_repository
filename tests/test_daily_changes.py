@@ -193,3 +193,18 @@ def test_daily_changes_suppress_wording_only_and_undated_research(monkeypatch) -
     assert changes["blocker_changes"] == []
     assert changes["fundamental_changes"] == []
     assert changes["evidence_changes"] == []
+
+
+def test_daily_changes_curates_material_score_and_trigger_moves(monkeypatch) -> None:
+    prior = {"run_id": "prior", "as_of_date": "2026-08-20", "candidates": [_candidate("KLIC", "RADAR", "2.8", "90", [])], "evidence": []}
+    current = _candidate("KLIC", "RADAR", "0.1", "95", [])
+    prior["candidates"][0]["setup_score"] = 71
+    current["setup_score"] = 79
+    monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
+
+    changes = build_daily_changes(object(), payload={"strategy_key": "dynamic_swing_buy_alerts", "as_of_date": "2026-08-21", "candidates": [current], "evidence": []})
+    rendered = render_daily_changes(changes)
+
+    assert len(changes["meaningful_changes"]) <= 8
+    assert "KLIC improved from 2.8% to 0.1% below trigger." in rendered
+    assert "KLIC setup score improved from 71 to 79." in rendered

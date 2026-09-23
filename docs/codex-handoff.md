@@ -1,5 +1,13 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-09-23 — Deterministic report enrichment
+
+- **Implemented:** Added a server-owned 0–100 setup score for every prepared candidate, including deterministic-only names. The score uses saved growth, trend, liquidity, drawdown, trigger proximity, observed risk/reward, and available qualitative confidence; it does not change actionability.
+- **Implemented:** Added a bounded top-five `report_focus_queue`, ticker-specific factual Why/Next text, and structural target/R-multiple reporting based only on saved technical levels. Missing structure is shown explicitly rather than manufacturing 1R/2R targets.
+- **Implemented:** Daily changes now emit at most eight material New, Improved, Deteriorated, or Removed items, including meaningful score and trigger-distance changes with rounded values.
+- **Verified locally:** Python files compile and deterministic enrichment was exercised directly. Focused pytest could not run because the checked-in Windows virtualenv points to a removed Python interpreter; no production alert, publication, or email was run.
+- **Deployment:** Not deployed.
+
 ## What was accomplished
 
 - Added a deterministic **What changed since yesterday?** summary to each stock alert.

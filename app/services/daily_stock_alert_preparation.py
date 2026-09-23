@@ -19,6 +19,7 @@ from app.services.strategy_tracking import (
     get_strategy_run,
     list_strategy_runs,
 )
+from app.services.daily_stock_alert_report import report_enrichment, report_focus_sort_key
 
 STRATEGY_KEY = "dynamic_swing_buy_alerts"
 STRATEGY_VERSION = "0.8"
@@ -443,6 +444,8 @@ def prepare_daily_stock_alert(
     carry_forward_queue = [item for item in research_plans if item["research_scope"] == "carry_forward"]
     deterministic_only_queue = [item for item in research_plans if item["research_scope"] == "deterministic_only"]
     plan_by_ticker = {item["ticker"]: item for item in research_plans}
+    for candidate in prepared_candidates:
+        candidate.update(report_enrichment(snapshot=candidate, plan=plan_by_ticker[candidate["ticker"]]))
     for review in dropped_reviews:
         review.update(plan_by_ticker[review["ticker"]])
     company_names = {
@@ -476,6 +479,8 @@ def prepare_daily_stock_alert(
     candidate_snapshots.update(
         {item["ticker"]: item["deterministic_candidate"] for item in dropped_reviews}
     )
+    for ticker, candidate in candidate_snapshots.items():
+        candidate.update(report_enrichment(snapshot=candidate, plan=plan_by_ticker[ticker]))
     detailed_tickers = [
         item["ticker"]
         for item in deep_research_queue + carry_forward_queue + deterministic_only_queue
@@ -486,6 +491,15 @@ def prepare_daily_stock_alert(
         "detailed_ticker_limit": 20,
         "compact_summary_tickers": sorted(set(expected_tickers) - set(detailed_tickers)),
     }
+    report_focus_queue = [
+        {
+            "ticker": candidate["ticker"],
+            "setup_score": candidate["setup_score"],
+            "distance_to_trigger_pct": candidate.get("distance_to_trigger_pct"),
+            "research_scope": plan_by_ticker[candidate["ticker"]]["research_scope"],
+        }
+        for candidate in sorted(candidate_snapshots.values(), key=report_focus_sort_key)[:5]
+    ]
     result = {
         "status": "prepared",
         "workflow": "hybrid_deterministic_plus_qualitative",
@@ -506,6 +520,7 @@ def prepare_daily_stock_alert(
         "deep_research_queue": deep_research_queue,
         "carry_forward_queue": carry_forward_queue,
         "deterministic_only_queue": deterministic_only_queue,
+        "report_focus_queue": report_focus_queue,
         "dropped_candidate_reviews": dropped_reviews,
         "all_research_plans": research_plans,
         "candidate_snapshots": candidate_snapshots,
@@ -554,6 +569,7 @@ def prepare_daily_stock_alert(
                         for ticker in expected_tickers
                     },
                     "report_scope": report_scope,
+                    "report_focus_queue": report_focus_queue,
                 },
             },
             "report_markdown": None,

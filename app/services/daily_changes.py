@@ -73,6 +73,14 @@ def _stop(candidate: dict[str, Any]) -> Decimal | None:
     return _decimal(value)
 
 
+def _score(candidate: dict[str, Any]) -> Decimal | None:
+    return _decimal(candidate.get("setup_score", candidate.get("score")))
+
+
+def _format_pct(value: Decimal) -> str:
+    return f"{value.quantize(Decimal('0.1'))}%"
+
+
 def _evidence_key(item: dict[str, Any]) -> tuple[str, ...]:
     return tuple(
         str(item.get(field) or "").strip()
@@ -284,6 +292,38 @@ def build_daily_changes(
             if ticker:
                 attend(ticker, "new_" + change["category"] + "_evidence")
 
+    meaningful: list[dict[str, str | int]] = []
+    for ticker in sorted(current.keys() - previous.keys()):
+        meaningful.append({"category": "New", "ticker": ticker, "text": f"{ticker} entered the tracked set.", "priority": 3})
+    for ticker in sorted(previous.keys() - current.keys()):
+        meaningful.append({"category": "Removed", "ticker": ticker, "text": f"{ticker} was removed because it no longer met the tracked screen.", "priority": 3})
+    for item in classifications:
+        direction = "Improved" if item["direction"] == "promoted" else "Deteriorated"
+        meaningful.append({"category": direction, "ticker": item["ticker"], "text": f"{item['ticker']} moved from {item['previous']} to {item['current']}.", "priority": 3})
+    for item in distances:
+        change = _decimal(item["change_percentage_points"])
+        if change is not None and abs(change) >= Decimal("0.5"):
+            direction = "Improved" if change < 0 else "Deteriorated"
+            meaningful.append({
+                "category": direction,
+                "ticker": item["ticker"],
+                "text": f"{item['ticker']} {direction.lower()} from {_format_pct(_decimal(item['previous_pct']) or Decimal(0))} to {_format_pct(_decimal(item['current_pct']) or Decimal(0))} below trigger.",
+                "priority": 2,
+            })
+    for ticker in shared:
+        before_score, current_score = _score(previous[ticker]), _score(current[ticker])
+        if before_score is not None and current_score is not None and abs(current_score - before_score) >= 3:
+            direction = "Improved" if current_score > before_score else "Deteriorated"
+            meaningful.append({
+                "category": direction,
+                "ticker": ticker,
+                "text": f"{ticker} setup score {direction.lower()} from {before_score:.0f} to {current_score:.0f}.",
+                "priority": 2,
+            })
+    for item in stop_breaches:
+        meaningful.append({"category": "Deteriorated", "ticker": item["ticker"], "text": f"{item['ticker']} breached its prior stop at {item['current_price']}.", "priority": 4})
+    meaningful.sort(key=lambda item: (-int(item["priority"]), str(item["ticker"]), str(item["text"])))
+
     return {
         "baseline": prior is None,
         "previous_run_id": prior.get("run_id") if prior else None,
@@ -300,6 +340,7 @@ def build_daily_changes(
             {"ticker": ticker, "reasons": sorted(reasons)}
             for ticker, reasons in sorted(attention.items())
         ],
+        "meaningful_changes": meaningful[:8],
     }
 
 
@@ -314,6 +355,11 @@ def render_daily_changes(changes: dict[str, Any]) -> str:
                 "<!-- daily-changes:end -->",
             ]
         )
+    if changes.get("meaningful_changes") is not None:
+        entries = [str(item["text"]) for item in changes["meaningful_changes"]]
+        if not entries:
+            entries.append("No material candidate, score, trigger, or stop changes.")
+        return "\n".join(lines + [""] + ["- " + entry for entry in entries] + ["<!-- daily-changes:end -->"])
     entries: list[str] = []
     if changes["new_candidates"]:
         entries.append("New candidates: " + ", ".join(changes["new_candidates"]) + ".")

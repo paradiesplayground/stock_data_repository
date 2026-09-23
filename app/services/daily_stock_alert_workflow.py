@@ -20,6 +20,11 @@ from app.services.daily_stock_alert_candidate_contract import (
     fresh_research_checkpoint,
     normalize_candidate_state,
 )
+from app.services.daily_stock_alert_report import (
+    report_enrichment,
+    report_focus_sort_key,
+    ticker_specific_explanation,
+)
 
 
 _PREPARATION_REVISION_REASON: ContextVar[str | None] = ContextVar(
@@ -290,11 +295,16 @@ def _default_candidate(
 
     # All finalization rules are shared with validation; do not derive effective
     # actionability from raw fields anywhere else in this workflow.
-    return normalize_candidate_state(
+    normalized = normalize_candidate_state(
         base,
         market_regime_gate_passed=bool(gates["market_regime_gate_passed"]),
         fresh_checkpoint=fresh_research_checkpoint,
     )
+    normalized.update(report_enrichment(snapshot=snapshot, plan=plan, research=research))
+    why, next_condition = ticker_specific_explanation(normalized)
+    normalized["status_reason"] = why
+    normalized["buy_conditions"] = [next_condition]
+    return normalized
 
 
 def _setup_sort_key(candidate: dict[str, Any]) -> tuple[int, int, Decimal, str]:
@@ -374,30 +384,42 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
         if created_at is not None:
             preparation_scope["preparation_created_at_utc"] = created_at.isoformat()
     lines = ["# Daily Stock Alert", "", "## Closest setups"]
-    detailed_tickers = set(snapshot["report_scope"]["detailed_tickers"])
-    detailed_candidates = sorted(
-        (item for item in candidates if item["ticker"] in detailed_tickers),
-        key=_setup_sort_key,
-    )
-    for item in detailed_candidates:
+    focus_tickers = {item["ticker"] for item in snapshot.get("report_focus_queue", [])}
+    if not focus_tickers:
+        focus_tickers = {item["ticker"] for item in candidates}
+    focus_candidates = sorted(
+        (item for item in candidates if item["ticker"] in focus_tickers),
+        key=report_focus_sort_key,
+    )[:5]
+    payload["summary"]["report_focus_queue"] = [
+        {"ticker": item["ticker"], "setup_score": item["setup_score"]}
+        for item in focus_candidates
+    ]
+    for item in focus_candidates:
         item_payload = item.get("payload") or {}
         setup_status = str(
             item_payload.get("setup_buyability_status") or item["buyability_status"]
         ).upper()
-        setup_reason = str(
-            item_payload.get("setup_status_reason") or item["status_reason"]
-        )
-        if (
-            not item["market_regime_gate_passed"]
-            and setup_status != "NOT_ELIGIBLE"
-        ):
-            lines.append(
-                f"- **{item['ticker']}** — {setup_status} setup (MARKET BLOCKED): {setup_reason}"
-            )
-        else:
-            lines.append(
-                f"- **{item['ticker']}** — {item['buyability_status']}: {item['status_reason']}"
-            )
+        company = (payload["summary"]["preparation_scope"].get("company_names") or {}).get(item["ticker"])
+        market_note = " (market blocked)" if not item["market_regime_gate_passed"] and setup_status != "NOT_ELIGIBLE" else ""
+        targets = item.get("structural_targets") or []
+        target_text = "; ".join(
+            f"${Decimal(target['price']):.2f} ({target['basis']}, {target['r_multiple']}R)"
+            for target in targets
+        ) or "No structural target available from current saved levels"
+        def money(value: Any) -> str:
+            return f"${Decimal(str(value)):.2f}" if value is not None else "not available"
+        distance = item.get("distance_to_trigger_pct")
+        distance_text = f"{Decimal(str(distance)):.1f}% below trigger" if distance is not None else "trigger distance not available"
+        lines.extend([
+            f"### {item['ticker']}{' — ' + company if company else ''}",
+            f"{item['buyability_status']}{market_note} · Setup score **{item['setup_score']}/100**",
+            f"Current {money(item.get('current_price'))} · Trigger {money(item.get('trigger_price'))} · {distance_text} · Stop {money(item.get('invalidation_price'))}",
+            f"Targets: {target_text}",
+            f"Why: {item['status_reason']}",
+            f"Next: {item['buy_conditions'][0]}",
+            "",
+        ])
     compact = len(snapshot["report_scope"]["compact_summary_tickers"])
     if compact:
         lines.append(f"- {compact} additional tracked stocks are retained in the canonical record as a compact summary.")
