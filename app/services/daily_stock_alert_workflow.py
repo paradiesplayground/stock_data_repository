@@ -401,7 +401,12 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
             item_payload.get("setup_buyability_status") or item["buyability_status"]
         ).upper()
         company = (payload["summary"]["preparation_scope"].get("company_names") or {}).get(item["ticker"])
-        market_note = " (market blocked)" if not item["market_regime_gate_passed"] and setup_status != "NOT_ELIGIBLE" else ""
+        market_blocked = not item["market_regime_gate_passed"] and setup_status != "NOT_ELIGIBLE"
+        decision_text = (
+            f"{setup_status} setup (MARKET BLOCKED)"
+            if market_blocked
+            else item["buyability_status"]
+        )
         targets = item.get("structural_targets") or []
         target_text = "; ".join(
             f"${Decimal(target['price']):.2f} ({target['basis']}, {target['r_multiple']}R)"
@@ -413,7 +418,7 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
         distance_text = f"{Decimal(str(distance)):.1f}% below trigger" if distance is not None else "trigger distance not available"
         lines.extend([
             f"### {item['ticker']}{' — ' + company if company else ''}",
-            f"{item['buyability_status']}{market_note} · Setup score **{item['setup_score']}/100**",
+            f"{decision_text} · Setup score **{item['setup_score']}/100**",
             f"Current {money(item.get('current_price'))} · Trigger {money(item.get('trigger_price'))} · {distance_text} · Stop {money(item.get('invalidation_price'))}",
             f"Targets: {target_text}",
             f"Why: {item['status_reason']}",
