@@ -1,5 +1,12 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-09-24 — Canonical Daily Stock Alert presentation
+
+- **Implemented:** Replaced generic report prose with a structured candidate presentation model shared by the canonical Markdown delivered to both the website and email. `BUY_NOW`, `ALMOST_READY`, and `RADAR` detailed candidates appear under **Watch first**; `NOT_ELIGIBLE` detailed candidates appear separately under **Excluded — worth reviewing**.
+- **Implemented:** Each rendered detailed ticker now shows its effective decision and factual classification reason, positive factors, every current screen/technical/market/qualitative blocker with its clearing condition, the post-eligibility technical trigger, and invalidation level. User-facing prices, percentages, and R multiples are formatted.
+- **Implemented:** Mechanical screen explanations use the configured thresholds. The ALAB regression fixture for preparation `242477b3-2eca-4653-9f12-6354747f8ee9` confirms that a `-16.3394%` 12-week change explicitly fails the required `<= -20.0%` threshold and cannot be cured by crossing the technical trigger alone. Fresh research no longer renders the stale generic qualitative-confirmation condition.
+- **Verified locally:** Ruff and Git whitespace checks pass. Focused pytest could not run because the checked-in Windows virtualenv references a removed Python interpreter; no alert was finalized, published, emailed, or deployed in this session.
+
 ## 2026-09-23 — Deterministic report enrichment
 
 - **Implemented:** Added a server-owned 0–100 setup score for every prepared candidate, including deterministic-only names. The score uses saved growth, trend, liquidity, drawdown, trigger proximity, observed risk/reward, and available qualitative confidence; it does not change actionability.

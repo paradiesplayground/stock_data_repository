@@ -89,8 +89,8 @@ def test_deterministic_only_candidate_cannot_become_buy_without_saved_research()
     assert candidate["payload"]["qualitative_evidence_status"] == "missing"
     assert candidate["payload"]["setup_buyability_status"] == "RADAR"
     assert candidate["status_reason"].startswith("Deterministic-only classification")
-    assert "report_why" in candidate["payload"]
-    assert "report_next" in candidate["payload"]
+    assert candidate["payload"]["presentation"]["group"] == "watch_first"
+    assert candidate["payload"]["presentation"]["blockers"]
 
 
 def test_report_copy_does_not_violate_the_canonical_finalizer_contract() -> None:
@@ -319,6 +319,50 @@ def test_finalized_report_surfaces_market_blocked_setup_quality(monkeypatch) -> 
     assert result["run_payload"]["summary"]["setup_counts"]["BUY_NOW"] == 1
     assert result["run_payload"]["summary"]["market_blocked_count"] == 1
     assert result["run_payload"]["summary"]["candidate_counts"]["NOT_ELIGIBLE"] == 1
+
+
+def test_report_uses_one_watch_first_policy_and_keeps_alab_screen_failure_visible(monkeypatch) -> None:
+    """Regression for run 242477b3: a trigger cannot erase ALAB's screen exit."""
+    snapshot = _snapshot(2)
+    snapshot["candidate_snapshots"]["T00"]["deterministic_metrics"].update(
+        revenue_ttm_yoy_pct="75", latest_quarter_revenue_yoy_pct="80",
+        price_change_12w_pct="-25", avg_dollar_volume_20d="100000000",
+    )
+    alab = snapshot["candidate_snapshots"].pop("T01")
+    alab["ticker"] = "ALAB"
+    alab["deterministic_metrics"].update(
+        ticker="ALAB", revenue_ttm_yoy_pct="75", latest_quarter_revenue_yoy_pct="80",
+        price_change_12w_pct="-16.3394", avg_dollar_volume_20d="100000000",
+    )
+    snapshot["candidate_snapshots"]["ALAB"] = alab
+    snapshot["deep_research_queue"][1]["ticker"] = "ALAB"
+    snapshot["all_research_plans"][1].update(ticker="ALAB", reasons=["dropped_from_raw_pool"])
+    scope = snapshot["run_template"]["summary"]["preparation_scope"]
+    scope["expected_candidate_tickers"] = ["T00", "ALAB"]
+    scope["research_scope_by_ticker"]["ALAB"] = scope["research_scope_by_ticker"].pop("T01")
+    snapshot["report_scope"] = {"detailed_tickers": ["T00", "ALAB"], "compact_summary_tickers": []}
+    preparation = SimpleNamespace(
+        preparation_id="242477b3-2eca-4653-9f12-6354747f8ee9",
+        created_at_utc=datetime(2026, 9, 15, 15, 0, tzinfo=timezone.utc),
+        snapshot=snapshot, final_payload=None, validation=None, production_run_id=None,
+    )
+    research = _research(["T00", "ALAB"])
+    monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
+    monkeypatch.setattr(workflow, "_research_by_ticker", lambda *_args: research)
+    monkeypatch.setattr(workflow, "validate_daily_stock_alert", lambda _session, _settings, **kwargs: {"status": "valid", "payload_hash": "hash", "validated_run_payload": kwargs["run_payload"]})
+
+    result = workflow.finalize_daily_stock_alert_preparation(_Session(), Settings(), preparation_id=preparation.preparation_id)
+
+    summary = result["run_payload"]["summary"]["presentation"]
+    report = result["run_payload"]["report_markdown"]
+    assert summary["watch_first_tickers"] == ["T00"]
+    assert summary["excluded_worth_reviewing_tickers"] == ["ALAB"]
+    assert "## Watch first\n### T00" in report
+    assert "## Excluded — worth reviewing\n\n### ALAB" in report
+    assert "12-week price change is -16.3%; required <= -20.0%." in report
+    assert "12-week price change must be <= -20.0%." in report
+    assert "$100.10" in report  # The trigger remains technical-only, not requalification.
+    assert "Complete current qualitative confirmation" not in report
 
 
 def test_resumed_production_fixture_rebuilds_the_same_canonical_blocked_candidate(monkeypatch) -> None:

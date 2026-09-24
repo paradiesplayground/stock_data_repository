@@ -21,9 +21,9 @@ from app.services.daily_stock_alert_candidate_contract import (
     normalize_candidate_state,
 )
 from app.services.daily_stock_alert_report import (
+    candidate_presentation,
+    presentation_groups,
     report_enrichment,
-    report_focus_sort_key,
-    ticker_specific_explanation,
 )
 
 
@@ -256,13 +256,21 @@ def _default_candidate(
     technical = bool(gates["price_at_or_above_trigger"])
     distance = snapshot.get("distance_to_trigger_pct")
     status = "NOT_ELIGIBLE" if rejected else "RADAR"
+    default_buy_condition = (
+        f"Close above ${Decimal(str(snapshot['suggested_trigger_price'])):.2f} after all eligibility requirements pass."
+        if research and snapshot.get("suggested_trigger_price") is not None
+        else "Establish a valid technical trigger after all eligibility requirements pass."
+    )
     base = {
         "ticker": snapshot["ticker"],
         "screen_bucket": "dropped" if dropped else ("rejected" if rejected else "qualified"),
         "technical_state": "confirmed" if technical else "developing",
         "buyability_status": status,
         "status_reason": "Deterministic-only classification; current qualitative confirmation is required before an actionable status." if not research else "Finalized from saved qualitative research.",
-        "buy_conditions": ["Complete current qualitative confirmation before any actionable decision."],
+        "buy_conditions": [
+            default_buy_condition if research else
+            "Complete current qualitative confirmation before any actionable decision."
+        ],
         "remaining_gate_count": 0,
         "current_price": metrics.get("close"),
         "trigger_price": snapshot.get("suggested_trigger_price"),
@@ -271,6 +279,7 @@ def _default_candidate(
         "technical_gate_passed": technical,
         "market_regime_gate_passed": gates["market_regime_gate_passed"],
         "metrics": metrics,
+        "deterministic_risk_flags": list(snapshot.get("deterministic_risk_flags") or []),
         "payload": {
             "in_raw_pool": not dropped,
             "qualitative_evidence_status": (
@@ -301,14 +310,12 @@ def _default_candidate(
         fresh_checkpoint=fresh_research_checkpoint,
     )
     normalized.update(report_enrichment(snapshot=snapshot, plan=plan, research=research))
-    why, next_condition = ticker_specific_explanation(normalized)
-    # Display copy must not overwrite contract-owned reason/conditions after
-    # normalization. Validation reconstructs those canonical fields from the
-    # saved setup payload, while renderers consume this separate enrichment.
+    presentation = candidate_presentation(normalized)
+    # Presentation is canonical structured data consumed by the shared report;
+    # it is never inferred separately by delivery destinations.
     normalized["payload"] = {
         **(normalized.get("payload") or {}),
-        "report_why": why,
-        "report_next": next_condition,
+        "presentation": presentation,
     }
     return normalized
 
@@ -389,23 +396,20 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
         created_at = getattr(preparation, "created_at_utc", None)
         if created_at is not None:
             preparation_scope["preparation_created_at_utc"] = created_at.isoformat()
-    lines = ["# Daily Stock Alert", "", "## Closest setups"]
-    focus_tickers = {item["ticker"] for item in snapshot.get("report_focus_queue", [])}
-    if not focus_tickers:
-        focus_tickers = {item["ticker"] for item in candidates}
-    focus_candidates = sorted(
-        (item for item in candidates if item["ticker"] in focus_tickers),
-        key=report_focus_sort_key,
-    )[:5]
+    groups = presentation_groups(candidates, snapshot["report_scope"]["detailed_tickers"])
+    payload["summary"]["presentation"] = {
+        "watch_first_tickers": [item["ticker"] for item in groups["watch_first"]],
+        "excluded_worth_reviewing_tickers": [item["ticker"] for item in groups["excluded_worth_reviewing"]],
+    }
     payload["summary"]["report_focus_queue"] = [
         {"ticker": item["ticker"], "setup_score": item["setup_score"]}
-        for item in focus_candidates
+        for item in groups["watch_first"]
     ]
-    for item in focus_candidates:
+    lines = ["# Daily Stock Alert", "", "## Watch first"]
+    def render_candidate(item: dict[str, Any]) -> list[str]:
         item_payload = item.get("payload") or {}
-        setup_status = str(
-            item_payload.get("setup_buyability_status") or item["buyability_status"]
-        ).upper()
+        presentation = item_payload["presentation"]
+        setup_status = str(item_payload.get("setup_buyability_status") or item["buyability_status"]).upper()
         company = (payload["summary"]["preparation_scope"].get("company_names") or {}).get(item["ticker"])
         market_blocked = not item["market_regime_gate_passed"] and setup_status != "NOT_ELIGIBLE"
         decision_text = (
@@ -415,22 +419,39 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
         )
         targets = item.get("structural_targets") or []
         target_text = "; ".join(
-            f"${Decimal(target['price']):.2f} ({target['basis']}, {target['r_multiple']}R)"
+            f"${Decimal(target['price']):.2f} ({target['basis']}, {Decimal(target['r_multiple']):.2f}R)"
             for target in targets
         ) or "No structural target available from current saved levels"
         def money(value: Any) -> str:
             return f"${Decimal(str(value)):.2f}" if value is not None else "not available"
         distance = item.get("distance_to_trigger_pct")
         distance_text = f"{Decimal(str(distance)):.1f}% below trigger" if distance is not None else "trigger distance not available"
-        lines.extend([
+        blockers = presentation["blockers"]
+        blocker_text = "\n".join(
+            f"- {blocker['gate']}: {blocker['reason']} Clear when: {blocker['clear_condition']}"
+            for blocker in blockers
+        ) or "- None."
+        return [
             f"### {item['ticker']}{' — ' + company if company else ''}",
             f"{decision_text} · Setup score **{item['setup_score']}/100**",
             f"Current {money(item.get('current_price'))} · Trigger {money(item.get('trigger_price'))} · {distance_text} · Stop {money(item.get('invalidation_price'))}",
             f"Targets: {target_text}",
-            f"Why: {item_payload.get('report_why') or item['status_reason']}",
-            f"Next: {item_payload.get('report_next') or item['buy_conditions'][0]}",
+            f"Decision: {presentation['classification']}",
+            "Why it remains interesting: " + "; ".join(presentation["positive_factors"]),
+            "Blocking gates:\n" + blocker_text,
+            f"Technical trigger after eligibility: {presentation['technical_trigger']}",
+            f"Invalidation level: {presentation['invalidation_level']}",
             "",
-        ])
+        ]
+    if groups["watch_first"]:
+        for item in groups["watch_first"]:
+            lines.extend(render_candidate(item))
+    else:
+        lines.extend(["No BUY_NOW, ALMOST_READY, or RADAR candidates are in the detailed scope.", ""])
+    if groups["excluded_worth_reviewing"]:
+        lines.extend(["## Excluded — worth reviewing", ""])
+        for item in groups["excluded_worth_reviewing"]:
+            lines.extend(render_candidate(item))
     compact = len(snapshot["report_scope"]["compact_summary_tickers"])
     if compact:
         lines.append(f"- {compact} additional tracked stocks are retained in the canonical record as a compact summary.")
