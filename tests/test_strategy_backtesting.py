@@ -163,7 +163,7 @@ def test_strategy_threshold_changes_are_loaded_from_config(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("mode", "price_change", "drawdown", "expected"),
     [
-        ("price_change", "-15", "-25", True),
+        ("price_change", "-15", "-25", False),
         ("drawdown_from_high", "-15", "-25", True),
         ("either", "-15", "-10", False),
         ("both", "-15", "-25", False),

@@ -263,6 +263,10 @@ def ticker_specific_explanation(candidate: dict[str, Any]) -> tuple[str, str]:
     """Compatibility view of the canonical structured presentation model."""
     presentation = candidate_presentation(candidate)
     why = presentation["classification"] + " Positive factors: " + "; ".join(presentation["positive_factors"])
+    if presentation["blockers"]:
+        why += " Blocking factors: " + "; ".join(
+            item["reason"] for item in presentation["blockers"]
+        )
     return why, presentation["technical_trigger"]
 
 

@@ -147,7 +147,9 @@ def run_decline_filter_comparison(
 ) -> dict[str, Any]:
     """Run the fixed decline-screen experiment without altering production rules."""
     results = []
-    feature_version = None
+    feature_version = load_strategy_profile(base_profile)["strategy"][
+        "feature_calculation_version"
+    ]
     calendar_months = max(
         1, (end_date.year - start_date.year) * 12 + end_date.month - start_date.month + 1
     )
@@ -163,9 +165,6 @@ def run_decline_filter_comparison(
             resume=resume,
         )
         simulation = result["simulation"]["summary"]
-        feature_version = result["configuration"]["strategy_configuration"]["strategy"][
-            "feature_calculation_version"
-        ]
         results.append({
             "scenario": name,
             "decline_filter": thresholds,
