@@ -267,7 +267,10 @@ def ticker_specific_explanation(candidate: dict[str, Any]) -> tuple[str, str]:
         why += " Blocking factors: " + "; ".join(
             item["reason"] for item in presentation["blockers"]
         )
-    return why, presentation["technical_trigger"]
+    next_condition = presentation["technical_trigger"]
+    if candidate.get("invalidation_price") is not None:
+        next_condition += " Invalidate below " + _money(candidate["invalidation_price"]) + "."
+    return why, next_condition
 
 
 def presentation_groups(candidates: list[dict[str, Any]], detailed_tickers: list[str]) -> dict[str, list[dict[str, Any]]]:
