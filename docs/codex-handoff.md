@@ -13,7 +13,7 @@
 - **Implemented:** Added configurable 12-week decline modes (`price_change`, `drawdown_from_high`, `either`, and `both`) with price-change and drawdown thresholds for deterministic replay/backtesting only. Decline-only exclusions are retained as rejected counterfactual opportunities without becoming simulated signals.
 - **Implemented:** Added a fixed six-scenario comparison runner plus forward 5/10/20/30-session rejected-opportunity outcomes: trigger hits, MFE/MAE in R, 2R/3R-before-stop, and later mechanical eligibility. Its returned report includes candidate-days and the requested portfolio metrics while holding all non-decline settings constant.
 - **Verified and deployed:** The guarded Unraid suite passed 211 tests plus Ruff after compatibility repairs. Functional commit `d9dec20` is deployed; API health returned OK after the normal container-startup race. No production strategy, alert, or publication was changed.
-- **In progress:** The first six-case comparison execution showed that a no-signal scenario aborted the batch after persisting the first immutable simulation. The comparison runner now reports no-signal cases as zero rows so the complete report can finish; this follow-up needs deployment and execution.
+- **Execution boundary:** The no-signal repair was deployed and the guarded suite then passed 212 tests plus Ruff. The price-change `<= -20%` baseline completed for 2026-01-20 through 2026-07-20 (4 signals, 1 fill/closed trade, -3.01% return); the remaining comparison batch could not be verified because the Unraid SSH endpoint became unreachable during execution. The runner is idempotent and preserves the completed immutable record; no production strategy change occurred.
 
 ## 2026-09-23 — Deterministic report enrichment
 
