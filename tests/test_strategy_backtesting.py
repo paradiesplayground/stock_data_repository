@@ -529,6 +529,27 @@ def test_decline_comparison_keeps_all_non_decline_parameters_constant(monkeypatc
     assert report["scenarios"][0]["candidate_days"] == 3
 
 
+def test_decline_comparison_reports_empty_signal_scenario(monkeypatch) -> None:
+    def run(*_args, **_kwargs):
+        raise RuntimeError("No actionable deterministic replay signals were found; run replay-strategy first")
+
+    monkeypatch.setattr("app.services.strategy_scenarios.run_strategy_scenario", run)
+    monkeypatch.setattr(
+        "app.services.strategy_scenarios.replay_strategy_range",
+        lambda *_args, **_kwargs: {"raw_candidate_count": 2},
+    )
+    monkeypatch.setattr(
+        "app.services.strategy_scenarios.rejected_opportunity_analysis",
+        lambda *_args, **_kwargs: {"forward_outcomes": {}},
+    )
+    report = run_decline_filter_comparison(
+        object(), date(2026, 1, 1), date(2026, 2, 1)
+    )
+
+    assert all(item["simulation_status"] == "no_actionable_signals" for item in report["scenarios"])
+    assert all(item["signals"] == 0 for item in report["scenarios"])
+
+
 def test_constructive_volume_requirement_blocks_low_volume() -> None:
     configuration = replay_configuration()
     configuration["scoring"]["actionable"]["require_constructive_volume"] = True

@@ -12,7 +12,8 @@
 - **Implemented:** Updated the `fallen-growth-swing-v1.2.0` historical profile to request feature calculation version `1.5.0`, matching the available simulation snapshots. Production alert configuration was not changed.
 - **Implemented:** Added configurable 12-week decline modes (`price_change`, `drawdown_from_high`, `either`, and `both`) with price-change and drawdown thresholds for deterministic replay/backtesting only. Decline-only exclusions are retained as rejected counterfactual opportunities without becoming simulated signals.
 - **Implemented:** Added a fixed six-scenario comparison runner plus forward 5/10/20/30-session rejected-opportunity outcomes: trigger hits, MFE/MAE in R, 2R/3R-before-stop, and later mechanical eligibility. Its returned report includes candidate-days and the requested portfolio metrics while holding all non-decline settings constant.
-- **Status:** Code and regression coverage are in progress locally. No production strategy, alert, publication, or deployment has been changed by this framework work.
+- **Verified and deployed:** The guarded Unraid suite passed 211 tests plus Ruff after compatibility repairs. Functional commit `d9dec20` is deployed; API health returned OK after the normal container-startup race. No production strategy, alert, or publication was changed.
+- **In progress:** The first six-case comparison execution showed that a no-signal scenario aborted the batch after persisting the first immutable simulation. The comparison runner now reports no-signal cases as zero rows so the complete report can finish; this follow-up needs deployment and execution.
 
 ## 2026-09-23 — Deterministic report enrichment
 

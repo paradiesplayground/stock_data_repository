@@ -154,20 +154,56 @@ def run_decline_filter_comparison(
         1, (end_date.year - start_date.year) * 12 + end_date.month - start_date.month + 1
     )
     for name, thresholds in DECLINE_COMPARISON_SCENARIOS:
-        result = run_strategy_scenario(
-            session,
-            start_date,
-            end_date,
-            base_profile,
-            f"{strategy_version_prefix}-{name}",
-            {"hard_thresholds": thresholds},
-            simulation_overrides,
-            resume=resume,
-        )
+        version = f"{strategy_version_prefix}-{name}"
+        overrides = {"hard_thresholds": thresholds}
+        try:
+            result = run_strategy_scenario(
+                session,
+                start_date,
+                end_date,
+                base_profile,
+                version,
+                overrides,
+                simulation_overrides,
+                resume=resume,
+            )
+            simulation_status = "completed"
+        except RuntimeError as error:
+            if not str(error).startswith("No actionable deterministic replay signals"):
+                raise
+            resolved = resolve_strategy_scenario(
+                base_profile, version, overrides, simulation_overrides
+            )
+            strategy = resolved["strategy_configuration"]
+            replay = replay_strategy_range(
+                session,
+                start_date,
+                end_date,
+                resume=True,
+                configuration={
+                    key: value
+                    for key, value in strategy.items()
+                    if key != "configuration_fingerprint"
+                },
+            )
+            result = {
+                "replay": replay,
+                "simulation": {"summary": {
+                    "signals": 0, "filled_trades": 0, "closed_trades": 0,
+                    "expectancy_r": None, "win_rate_pct": None,
+                    "profit_factor": None, "total_return_pct": "0",
+                    "maximum_drawdown_pct": "0",
+                }},
+                "rejected_opportunity_analysis": rejected_opportunity_analysis(
+                    session, start_date, end_date, configuration=strategy
+                ),
+            }
+            simulation_status = "no_actionable_signals"
         simulation = result["simulation"]["summary"]
         results.append({
             "scenario": name,
             "decline_filter": thresholds,
+            "simulation_status": simulation_status,
             "candidate_days": result["replay"]["raw_candidate_count"],
             "signals": simulation["signals"],
             "fills": simulation["filled_trades"],
