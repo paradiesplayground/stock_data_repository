@@ -58,6 +58,7 @@ from app.services.strategy_config import (
 )
 from app.services.strategy_scenarios import (
     resolve_strategy_scenario,
+    run_decline_filter_comparison as execute_decline_filter_comparison,
     run_strategy_scenario as execute_strategy_scenario,
 )
 
@@ -360,6 +361,28 @@ if settings.mcp_enable_strategy_writes:
                 strategy_version,
                 strategy_overrides,
                 simulation_overrides,
+                resume=resume,
+            )
+
+    @mcp.tool()
+    def run_decline_filter_comparison(
+        start_date: str,
+        end_date: str,
+        simulation_overrides: dict[str, Any] | None = None,
+        resume: bool = True,
+    ) -> dict[str, Any]:
+        """Run six fixed historical decline-screen scenarios; production is unchanged."""
+        try:
+            start = date.fromisoformat(start_date)
+            end = date.fromisoformat(end_date)
+        except ValueError as error:
+            raise ValueError("start_date and end_date must be YYYY-MM-DD") from error
+        with SessionLocal() as session:
+            return execute_decline_filter_comparison(
+                session,
+                start,
+                end,
+                simulation_overrides=simulation_overrides,
                 resume=resume,
             )
 

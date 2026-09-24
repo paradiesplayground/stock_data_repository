@@ -7,6 +7,13 @@
 - **Implemented:** Mechanical screen explanations use the configured thresholds. The ALAB regression fixture for preparation `242477b3-2eca-4653-9f12-6354747f8ee9` confirms that a `-16.3394%` 12-week change explicitly fails the required `<= -20.0%` threshold and cannot be cured by crossing the technical trigger alone. Fresh research no longer renders the stale generic qualitative-confirmation condition.
 - **Verified locally:** Ruff and Git whitespace checks pass. Focused pytest could not run because the checked-in Windows virtualenv references a removed Python interpreter; no alert was finalized, published, emailed, or deployed in this session.
 
+## 2026-09-24 — Historical decline-screen experiment framework
+
+- **Implemented:** Updated the `fallen-growth-swing-v1.2.0` historical profile to request feature calculation version `1.5.0`, matching the available simulation snapshots. Production alert configuration was not changed.
+- **Implemented:** Added configurable 12-week decline modes (`price_change`, `drawdown_from_high`, `either`, and `both`) with price-change and drawdown thresholds for deterministic replay/backtesting only. Decline-only exclusions are retained as rejected counterfactual opportunities without becoming simulated signals.
+- **Implemented:** Added a fixed six-scenario comparison runner plus forward 5/10/20/30-session rejected-opportunity outcomes: trigger hits, MFE/MAE in R, 2R/3R-before-stop, and later mechanical eligibility. Its returned report includes candidate-days and the requested portfolio metrics while holding all non-decline settings constant.
+- **Status:** Code and regression coverage are in progress locally. No production strategy, alert, publication, or deployment has been changed by this framework work.
+
 ## 2026-09-23 — Deterministic report enrichment
 
 - **Implemented:** Added a server-owned 0–100 setup score for every prepared candidate, including deterministic-only names. The score uses saved growth, trend, liquidity, drawdown, trigger proximity, observed risk/reward, and available qualitative confidence; it does not change actionability.

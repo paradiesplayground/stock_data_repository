@@ -7,8 +7,12 @@ import pytest
 
 import app.services.strategy_simulation as strategy_simulation
 from app.services.strategy_config import list_strategy_profiles, with_nested_overrides
-from app.services.strategy_replay import replay_configuration, score_feature
-from app.services.strategy_scenarios import resolve_strategy_scenario
+from app.services.strategy_replay import decline_screen, replay_configuration, score_feature
+from app.services.strategy_scenarios import (
+    DECLINE_COMPARISON_SCENARIOS,
+    resolve_strategy_scenario,
+    run_decline_filter_comparison,
+)
 from app.services.strategy_simulation import (
     Bar,
     EquityPoint,
@@ -35,6 +39,7 @@ def _feature(**overrides):
         "revenue_ttm_yoy_pct": D("100"),
         "latest_quarter_revenue_yoy_pct": D("100"),
         "price_change_12w_pct": D("-30"),
+        "drawdown_12w_high_pct": D("-25"),
         "drawdown_52w_pct": D("-40"),
         "avg_dollar_volume_20d": D("120000000"),
         "cash_runway_months": D("30"),
@@ -155,6 +160,49 @@ def test_strategy_threshold_changes_are_loaded_from_config(tmp_path) -> None:
     assert candidate["action"] == "keep-watching"
 
 
+@pytest.mark.parametrize(
+    ("mode", "price_change", "drawdown", "expected"),
+    [
+        ("price_change", "-15", "-25", True),
+        ("drawdown_from_high", "-15", "-25", True),
+        ("either", "-15", "-10", False),
+        ("both", "-15", "-25", False),
+        ("either", "-25", "-25", True),
+    ],
+)
+def test_decline_filter_modes_are_deterministic(
+    mode, price_change, drawdown, expected
+) -> None:
+    result = decline_screen(
+        _feature(
+            price_change_12w_pct=D(price_change),
+            drawdown_12w_high_pct=D(drawdown),
+        ),
+        {
+            "maximum_price_change_12w_pct": "-20",
+            "maximum_drawdown_12w_high_pct": "-20",
+            "decline_filter_mode": mode,
+        },
+    )
+
+    assert result["passed"] is expected
+
+
+def test_decline_only_rejection_is_retained_for_forward_analysis() -> None:
+    configuration = replay_configuration()
+    candidate = score_feature(
+        _feature(price_change_12w_pct=D("-16")),
+        constructive_volume=True,
+        excluded_sic_prefixes=configuration["universe"]["excluded_sic_prefixes"],
+        configuration=configuration,
+    )
+
+    assert candidate["stage"] == "rejected"
+    assert candidate["reasons"] == ["decline_screen_failed"]
+    assert candidate["payload"]["rejected_opportunity"] is True
+    assert candidate["trade_plan"] is not None
+
+
 def test_scenario_resolves_nested_config_and_simulation_overrides() -> None:
     resolved = resolve_strategy_scenario(
         "fallen-growth-swing-v1.1.0.json",
@@ -224,7 +272,7 @@ def test_default_profile_owns_daily_move_reporting_policy() -> None:
     daily_move = configuration["reporting"]["daily_move"]
 
     assert configuration["strategy"]["version"] == "1.2.0"
-    assert configuration["strategy"]["feature_calculation_version"] == "1.4.0"
+    assert configuration["strategy"]["feature_calculation_version"] == "1.5.0"
     assert daily_move == {
         "enabled": True,
         "lookback_sessions": 1,
@@ -450,6 +498,35 @@ def test_scenario_materializes_optional_constructive_volume_requirement() -> Non
 
     actionable = resolved["strategy_configuration"]["scoring"]["actionable"]
     assert actionable["require_constructive_volume"] is True
+
+
+def test_decline_comparison_keeps_all_non_decline_parameters_constant(monkeypatch) -> None:
+    calls = []
+
+    def run(_session, start, end, profile, version, overrides, simulation, *, resume):
+        calls.append((start, end, profile, version, overrides, simulation, resume))
+        return {
+            "replay": {"raw_candidate_count": 3},
+            "simulation": {"summary": {
+                "signals": 2, "filled_trades": 1, "closed_trades": 1,
+                "expectancy_r": "1", "win_rate_pct": "100", "profit_factor": "2",
+                "total_return_pct": "3", "maximum_drawdown_pct": "-1",
+            }},
+            "rejected_opportunity_analysis": {"forward_outcomes": {"5": {}}},
+        }
+
+    monkeypatch.setattr("app.services.strategy_scenarios.run_strategy_scenario", run)
+    report = run_decline_filter_comparison(
+        object(), date(2026, 1, 1), date(2026, 2, 1),
+        simulation_overrides={"slippage_pct": "0.05"},
+    )
+
+    assert len(calls) == len(DECLINE_COMPARISON_SCENARIOS) == 6
+    assert {call[4]["hard_thresholds"]["decline_filter_mode"] for call in calls} == {
+        "price_change", "drawdown_from_high", "either"
+    }
+    assert all(call[5] == {"slippage_pct": "0.05"} for call in calls)
+    assert report["scenarios"][0]["candidate_days"] == 3
 
 
 def test_constructive_volume_requirement_blocks_low_volume() -> None:

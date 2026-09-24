@@ -394,6 +394,12 @@ configuration, replays the strategy, runs the portfolio simulation, and returns 
 one call. Unknown override keys are rejected. No JSON file needs to be created or copied into a
 container.
 
+`run_decline_filter_comparison` runs six immutable historical scenarios from the v1.2.0 profile
+with every non-decline rule and simulation parameter held constant. It compares price-change and
+drawdown-from-12-week-high decline gates, returns candidate-days through portfolio metrics, and
+includes forward 5/10/20/30-session outcomes for opportunities excluded only by the decline rule.
+It never changes the production alert definition.
+
 `query_security_features` applies caller-provided thresholds and sorting to deterministic fields.
 Its preferred `exclude_industry_groups` argument accepts readable labels or stable keys returned by
 `get_industry_hierarchy`, such as `Healthcare`, `Manufacturing`, or `Oil and Gas Extraction`.

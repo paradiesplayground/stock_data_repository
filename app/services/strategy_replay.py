@@ -84,6 +84,48 @@ def _risk_tier(market_cap: Decimal, configuration: dict[str, Any]) -> dict[str, 
     raise ValueError("risk_tiers must cover the configured minimum market cap")
 
 
+def decline_screen(feature: SecurityDailyFeature, thresholds: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate the configured 12-week decline rule without changing other screens."""
+    mode = str(thresholds.get("decline_filter_mode", "price_change"))
+    price_threshold = Decimal(str(thresholds["maximum_price_change_12w_pct"]))
+    drawdown_threshold = (
+        Decimal(str(thresholds["maximum_drawdown_12w_high_pct"]))
+        if thresholds.get("maximum_drawdown_12w_high_pct") is not None
+        else None
+    )
+    price_value = feature.price_change_12w_pct
+    drawdown_value = feature.drawdown_12w_high_pct
+    price_passed = price_value is not None and price_value <= price_threshold
+    drawdown_passed = (
+        drawdown_value is not None
+        and drawdown_threshold is not None
+        and drawdown_value <= drawdown_threshold
+    )
+    passed = {
+        "price_change": price_passed,
+        "drawdown_from_high": drawdown_passed,
+        "either": price_passed or drawdown_passed,
+        "both": price_passed and drawdown_passed,
+    }[mode]
+    available = {
+        "price_change": price_value is not None,
+        "drawdown_from_high": drawdown_value is not None,
+        "either": price_value is not None or drawdown_value is not None,
+        "both": price_value is not None and drawdown_value is not None,
+    }[mode]
+    return {
+        "mode": mode,
+        "passed": passed,
+        "available": available,
+        "price_change_12w_pct": _json_decimal(price_value),
+        "maximum_price_change_12w_pct": _json_decimal(price_threshold),
+        "price_change_passed": price_passed,
+        "drawdown_12w_high_pct": _json_decimal(drawdown_value),
+        "maximum_drawdown_12w_high_pct": _json_decimal(drawdown_threshold),
+        "drawdown_from_high_passed": drawdown_passed,
+    }
+
+
 def score_feature(
     feature: SecurityDailyFeature,
     *,
@@ -96,12 +138,12 @@ def score_feature(
     universe = configuration["universe"]
     thresholds = configuration["hard_thresholds"]
     scoring = configuration["scoring"]
+    decline = decline_screen(feature, thresholds)
     required_values = (
         feature.close,
         feature.approximate_market_cap,
         feature.revenue_ttm_yoy_pct,
         feature.latest_quarter_revenue_yoy_pct,
-        feature.price_change_12w_pct,
         feature.avg_dollar_volume_20d,
     )
     if any(value is None for value in required_values):
@@ -117,8 +159,6 @@ def score_feature(
         < Decimal(str(thresholds["minimum_ttm_revenue_growth_pct"]))
         or feature.latest_quarter_revenue_yoy_pct
         < Decimal(str(thresholds["minimum_quarter_revenue_growth_pct"]))
-        or feature.price_change_12w_pct
-        > Decimal(str(thresholds["maximum_price_change_12w_pct"]))
         or feature.avg_dollar_volume_20d
         < Decimal(str(thresholds["minimum_avg_dollar_volume_20d"]))
     ):
@@ -130,6 +170,12 @@ def score_feature(
 
     reasons: list[str] = []
     warnings: list[str] = []
+    decline_rejected = not decline["passed"]
+    if decline_rejected:
+        reasons.append(
+            "decline_screen_failed"
+            if decline["available"] else "decline_screen_unavailable"
+        )
     revenue_points = _band_points(
         feature.revenue_ttm_yoy_pct, scoring["growth_bands"], "minimum_pct"
     ) + _band_points(
@@ -277,7 +323,7 @@ def score_feature(
     action = "remove" if rejected else "actionable" if actionable else "keep-watching"
 
     trade_plan = None
-    if not incomplete and not rejected:
+    if not incomplete and (not rejected or decline_rejected):
         entry_model = configuration["entry_model"]
         trigger = feature.high_20d * (
             Decimal("1")
@@ -338,6 +384,7 @@ def score_feature(
             feature.latest_quarter_revenue_yoy_pct
         ),
         "price_change_12w_pct": _json_decimal(feature.price_change_12w_pct),
+        "drawdown_12w_high_pct": _json_decimal(feature.drawdown_12w_high_pct),
         "drawdown_52w_pct": _json_decimal(feature.drawdown_52w_pct),
         "avg_dollar_volume_20d": _json_decimal(feature.avg_dollar_volume_20d),
         "cash_runway_months": _json_decimal(feature.cash_runway_months),
@@ -349,6 +396,7 @@ def score_feature(
         metrics["relative_return_20d_vs_qqq_pct"] = _json_decimal(
             feature.relative_return_20d_vs_qqq_pct
         )
+    decline_only_rejection = reasons == ["decline_screen_failed"]
 
     return {
         "ticker": feature.ticker,
@@ -364,6 +412,8 @@ def score_feature(
             "in_qualified_watchlist": stage == "qualified",
             "mechanical_replay": True,
             "qualitative_review_performed": False,
+            "decline_screen": decline,
+            "rejected_opportunity": decline_only_rejection,
         },
     }
 
@@ -567,8 +617,8 @@ def replay_strategy_range(
         completed.append(market_date.isoformat())
         actionable += result["actionable_count"]
         raw_candidates += result["raw_candidate_count"]
-    source_runs = session.scalars(
-        select(StrategyRun.payload_hash)
+    source_run_rows = session.execute(
+        select(StrategyRun.payload_hash, StrategyRun.summary)
         .where(
             StrategyRun.run_type == "backtest",
             StrategyRun.as_of_date.between(start_date, end_date),
@@ -580,6 +630,7 @@ def replay_strategy_range(
         )
         .order_by(StrategyRun.as_of_date)
     ).all()
+    source_runs = [row[0] for row in source_run_rows]
     source_runs_hash = hashlib.sha256(
         json.dumps(source_runs, separators=(",", ":")).encode()
     ).hexdigest()
@@ -596,6 +647,14 @@ def replay_strategy_range(
         "skipped_sessions": len(skipped),
         "raw_candidates_in_completed_sessions": raw_candidates,
         "actionable_signals_in_completed_sessions": actionable,
+        "raw_candidate_count": sum(
+            int((summary or {}).get("raw_candidate_count") or 0)
+            for _, summary in source_run_rows
+        ),
+        "actionable_signal_count": sum(
+            int((summary or {}).get("actionable_count") or 0)
+            for _, summary in source_run_rows
+        ),
         "source_runs_hash": source_runs_hash,
         "completed_dates": completed,
         "skipped_dates": skipped,

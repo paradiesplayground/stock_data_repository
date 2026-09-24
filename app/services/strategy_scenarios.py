@@ -1,5 +1,6 @@
 import copy
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -16,7 +17,18 @@ from app.services.strategy_config import (
     with_nested_overrides,
 )
 from app.services.strategy_replay import replay_configuration, replay_strategy_range
+from app.services.strategy_decline_analysis import rejected_opportunity_analysis
 from app.services.strategy_simulation import SimulationParameters, run_simulation
+
+
+DECLINE_COMPARISON_SCENARIOS = (
+    ("price_change_le_neg20", {"maximum_price_change_12w_pct": "-20", "maximum_drawdown_12w_high_pct": "-20", "decline_filter_mode": "price_change"}),
+    ("price_change_le_neg15", {"maximum_price_change_12w_pct": "-15", "maximum_drawdown_12w_high_pct": "-20", "decline_filter_mode": "price_change"}),
+    ("price_change_le_neg10", {"maximum_price_change_12w_pct": "-10", "maximum_drawdown_12w_high_pct": "-20", "decline_filter_mode": "price_change"}),
+    ("drawdown_le_neg20", {"maximum_price_change_12w_pct": "-20", "maximum_drawdown_12w_high_pct": "-20", "decline_filter_mode": "drawdown_from_high"}),
+    ("price_or_drawdown_neg20", {"maximum_price_change_12w_pct": "-20", "maximum_drawdown_12w_high_pct": "-20", "decline_filter_mode": "either"}),
+    ("price_neg15_or_drawdown_neg20", {"maximum_price_change_12w_pct": "-15", "maximum_drawdown_12w_high_pct": "-20", "decline_filter_mode": "either"}),
+)
 
 
 def resolve_strategy_scenario(
@@ -114,4 +126,74 @@ def run_strategy_scenario(
         "configuration": resolved,
         "replay": compact_replay,
         "simulation": simulation,
+        "rejected_opportunity_analysis": rejected_opportunity_analysis(
+            session,
+            start_date,
+            end_date,
+            configuration=strategy,
+        ),
+    }
+
+
+def run_decline_filter_comparison(
+    session: Session,
+    start_date: date,
+    end_date: date,
+    *,
+    base_profile: str = "fallen-growth-swing-v1.2.0.json",
+    strategy_version_prefix: str = "1.2.0-decline-study",
+    simulation_overrides: dict[str, Any] | None = None,
+    resume: bool = True,
+) -> dict[str, Any]:
+    """Run the fixed decline-screen experiment without altering production rules."""
+    results = []
+    feature_version = None
+    calendar_months = max(
+        1, (end_date.year - start_date.year) * 12 + end_date.month - start_date.month + 1
+    )
+    for name, thresholds in DECLINE_COMPARISON_SCENARIOS:
+        result = run_strategy_scenario(
+            session,
+            start_date,
+            end_date,
+            base_profile,
+            f"{strategy_version_prefix}-{name}",
+            {"hard_thresholds": thresholds},
+            simulation_overrides,
+            resume=resume,
+        )
+        simulation = result["simulation"]["summary"]
+        feature_version = result["configuration"]["strategy_configuration"]["strategy"][
+            "feature_calculation_version"
+        ]
+        results.append({
+            "scenario": name,
+            "decline_filter": thresholds,
+            "candidate_days": result["replay"]["raw_candidate_count"],
+            "signals": simulation["signals"],
+            "fills": simulation["filled_trades"],
+            "closed_trades": simulation["closed_trades"],
+            "trades_per_month": str(
+                Decimal(str(simulation["closed_trades"])) / Decimal(calendar_months)
+            ),
+            "expectancy_r": simulation["expectancy_r"],
+            "win_rate_pct": simulation["win_rate_pct"],
+            "profit_factor": simulation["profit_factor"],
+            "total_return_pct": simulation["total_return_pct"],
+            "maximum_drawdown_pct": simulation["maximum_drawdown_pct"],
+            "rejected_opportunity_forward_outcomes": result[
+                "rejected_opportunity_analysis"
+            ]["forward_outcomes"],
+        })
+    return {
+        "report_type": "decline_filter_comparison",
+        "base_profile": base_profile,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "feature_calculation_version": feature_version,
+        "constant_parameters": {
+            "simulation_overrides": simulation_overrides or {},
+            "all_non_decline_strategy_parameters": "base profile unchanged",
+        },
+        "scenarios": results,
     }

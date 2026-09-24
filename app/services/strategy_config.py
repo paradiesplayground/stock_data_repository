@@ -25,6 +25,12 @@ OPTIONAL_ACTIONABLE_RULES = {
     "require_positive_relative_return_20d_vs_qqq": False,
     "require_constructive_volume": False,
 }
+DECLINE_FILTER_MODES = {
+    "price_change",
+    "drawdown_from_high",
+    "either",
+    "both",
+}
 
 
 def _load_json(path: str | Path, label: str) -> dict[str, Any]:
@@ -97,6 +103,23 @@ def validate_strategy_configuration(
             raise ValueError(f"strategy.{field} is required")
     if not configuration["risk_tiers"]:
         raise ValueError("risk_tiers must contain at least one tier")
+    thresholds = configuration["hard_thresholds"]
+    decline_mode = thresholds.get("decline_filter_mode", "price_change")
+    if decline_mode not in DECLINE_FILTER_MODES:
+        raise ValueError(
+            "hard_thresholds.decline_filter_mode must be one of: "
+            + ", ".join(sorted(DECLINE_FILTER_MODES))
+        )
+    if thresholds.get("maximum_price_change_12w_pct") is None:
+        raise ValueError("hard_thresholds.maximum_price_change_12w_pct is required")
+    if (
+        decline_mode in {"drawdown_from_high", "either", "both"}
+        and thresholds.get("maximum_drawdown_12w_high_pct") is None
+    ):
+        raise ValueError(
+            "hard_thresholds.maximum_drawdown_12w_high_pct is required for "
+            + decline_mode
+        )
     market_regime = configuration.get("market_regime")
     if market_regime is not None:
         missing_regime = sorted(DEFAULT_MARKET_REGIME.keys() - market_regime.keys())

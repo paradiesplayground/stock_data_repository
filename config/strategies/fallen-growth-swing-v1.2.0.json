@@ -5,7 +5,7 @@
     "version": "1.2.0",
     "name": "Fallen growth swing — stored daily-return feature",
     "replay_model": "deterministic-replay-v1",
-    "feature_calculation_version": "1.4.0"
+    "feature_calculation_version": "1.5.0"
   },
   "skill": {
     "reference": "swing-trading-stock-screener",
@@ -24,6 +24,8 @@
     "minimum_ttm_revenue_growth_pct": "40",
     "minimum_quarter_revenue_growth_pct": "40",
     "maximum_price_change_12w_pct": "-20",
+    "maximum_drawdown_12w_high_pct": "-20",
+    "decline_filter_mode": "price_change",
     "minimum_avg_dollar_volume_20d": "30000000",
     "minimum_cash_runway_months": "12"
   },
