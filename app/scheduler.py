@@ -17,6 +17,7 @@ from app.services.massive_ingestion import (
 )
 from app.services.sec_ingestion import sync_sec_incremental
 from app.services.runs import recover_stale_ingestion_runs
+from app.services.daily_stock_alert_workflow import advance_eligible_daily_stock_alert_preparations
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,13 @@ def _run_features() -> None:
         calculate_daily_features(session, get_settings())
 
 
+def _advance_daily_alert_preparations() -> None:
+    with SessionLocal() as session:
+        results = advance_eligible_daily_stock_alert_preparations(session, get_settings())
+        if results:
+            logger.info("Advanced %d eligible daily-alert preparation(s)", len(results))
+
+
 def main() -> None:
     configure_logging()
     settings = get_settings()
@@ -75,6 +83,13 @@ def main() -> None:
         id="massive_reference",
         **common,
     )
+    scheduler.add_job(
+        _advance_daily_alert_preparations,
+        CronTrigger(minute="*/5", timezone=settings.timezone),
+        id="daily_alert_preparation_advancer",
+        **common,
+    )
+    _advance_daily_alert_preparations()
     scheduler.add_job(
         _run_market,
         CronTrigger.from_crontab(settings.market_sync_cron, timezone=settings.timezone),

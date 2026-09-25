@@ -531,6 +531,18 @@ class DailyAlertPreparation(Base):
     final_payload: Mapped[dict | None] = mapped_column(JSONB)
     validation: Mapped[dict | None] = mapped_column(JSONB)
     production_run_id: Mapped[str | None] = mapped_column(String(36))
+    # These fields are deliberately separate: a webhook failure must never make
+    # us recreate an immutable strategy run or repeat an acknowledged delivery.
+    stage: Mapped[str] = mapped_column(String(32), nullable=False, server_default="research")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    finalization_status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
+    validation_status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
+    canonical_run_status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
+    website_status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
+    email_status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
+    website_delivery: Mapped[dict | None] = mapped_column(JSONB)
+    email_delivery: Mapped[dict | None] = mapped_column(JSONB)
     created_at_utc: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

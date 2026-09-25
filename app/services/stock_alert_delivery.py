@@ -114,6 +114,9 @@ def _request_strategy_run_delivery(
 
     payload = dict(run)
     payload["delivery_request"] = delivery_request
+    # Stable across worker restarts. The receiving website must treat this as an
+    # idempotency key for the individual destination, not the whole alert.
+    payload["delivery_id"] = f"{run_id}:{delivery_request}"
     if rendering_revision is not None:
         payload["rendering_revision"] = rendering_revision
 
@@ -148,6 +151,30 @@ def publish_strategy_run(
         run_id,
         resend_email=False,
     )
+
+
+def publish_strategy_run_only(session: Session, settings: Settings, run_id: str) -> dict[str, Any]:
+    """Publish the immutable run without requesting email delivery."""
+    result = _request_strategy_run_delivery(
+        session, settings, run_id, delivery_request="publish_only"
+    )
+    return {
+        "status": "published", "run_id": run_id,
+        "website_delivery": result.get("publication") or "published",
+    }
+
+
+def send_strategy_run_email(session: Session, settings: Settings, run_id: str) -> dict[str, Any]:
+    """Request email only after the website has durably published the run."""
+    result = _request_strategy_run_delivery(
+        session, settings, run_id, delivery_request="send_email"
+    )
+    if result.get("email") != "sent":
+        raise RuntimeError("website did not confirm email delivery: " + str(result.get("email") or "missing"))
+    receipt = result.get("email_receipt")
+    if not isinstance(receipt, dict) or not receipt.get("message_id") or int(receipt.get("accepted_count") or 0) < 1:
+        raise RuntimeError("email delivery receipt did not confirm an accepted recipient")
+    return {"status": "sent", "run_id": run_id, "email_delivery": "smtp_accepted", "email_receipt": receipt}
 
 
 def resend_strategy_run_email(

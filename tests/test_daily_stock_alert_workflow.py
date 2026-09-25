@@ -60,6 +60,40 @@ def test_status_and_finalization_resume_after_one_of_five_research_checkpoints(m
         workflow.finalize_daily_stock_alert_preparation(_Session(), Settings(), preparation_id="prep-1")
 
 
+def test_final_research_checkpoint_automatically_starts_server_advancement(monkeypatch) -> None:
+    preparation = SimpleNamespace(preparation_id="prep-auto", snapshot=_snapshot(1))
+    calls = []
+
+    class SessionWithResearchWrite:
+        def scalar(self, _statement):
+            return None
+
+        def add(self, _item):
+            pass
+
+        def commit(self):
+            pass
+
+        def scalars(self, _statement):
+            raise AssertionError("advancement is mocked at the worker boundary")
+
+    monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
+    monkeypatch.setattr(
+        workflow,
+        "advance_daily_stock_alert_preparation",
+        lambda _session, settings, *, preparation_id: calls.append((settings, preparation_id)) or {"status": "pending"},
+    )
+
+    result = workflow.record_daily_stock_alert_research(
+        SessionWithResearchWrite(), settings=Settings(), preparation_id="prep-auto", ticker="T00",
+        evidence=[], required_dimensions={"dimension": True},
+    )
+
+    assert isinstance(calls[0][0], Settings)
+    assert calls[0][1] == "prep-auto"
+    assert result["advancement"] == {"status": "pending"}
+
+
 def test_finalization_after_completed_checkpoint_builds_all_candidates_and_is_idempotent(monkeypatch) -> None:
     preparation = SimpleNamespace(preparation_id="prep-2", snapshot=_snapshot(48), final_payload=None, validation=None, production_run_id=None)
     monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
@@ -442,13 +476,65 @@ def test_validation_failure_does_not_save_final_payload_or_produce(monkeypatch) 
 
 
 def test_repeated_production_uses_existing_idempotent_production_path(monkeypatch) -> None:
-    preparation = SimpleNamespace(preparation_id="prep-4", snapshot=_snapshot(1), final_payload={"payload": "validated"}, validation={"status": "valid"}, production_run_id=None)
+    preparation = SimpleNamespace(
+        preparation_id="prep-4", snapshot=_snapshot(1), final_payload={"payload": "validated"},
+        validation={"status": "valid"}, production_run_id=None, website_status="pending",
+        email_status="pending", stage="canonical_run", status="pending", last_error=None,
+    )
     calls = []
     monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
-    monkeypatch.setattr(workflow, "run_daily_stock_alert", lambda _session, _settings, **kwargs: calls.append(kwargs) or {"run_id": "run-1", "status": "completed", "idempotent_replay": len(calls) > 1})
+    monkeypatch.setattr(workflow, "_research_by_ticker", lambda *_args: _research(["T00"]))
+    monkeypatch.setattr(workflow, "record_strategy_run", lambda *_args, **kwargs: calls.append(kwargs) or {"run_id": "run-1", "payload_hash": "hash"})
+    monkeypatch.setattr(workflow, "get_strategy_run", lambda *_args: {"found": True, "payload_hash": "hash"})
+    monkeypatch.setattr(workflow, "publish_strategy_run_only", lambda *_args: {"status": "published"})
+    monkeypatch.setattr(workflow, "send_strategy_run_email", lambda *_args: {"status": "sent"})
 
     first = workflow.run_finalized_daily_stock_alert_preparation(_Session(), Settings(), preparation_id="prep-4")
     second = workflow.run_finalized_daily_stock_alert_preparation(_Session(), Settings(), preparation_id="prep-4")
 
-    assert first["run_id"] == second["run_id"] == "run-1"
-    assert all(call["verify_mailbox"] is False for call in calls)
+    assert preparation.production_run_id == "run-1"
+    assert preparation.website_status == preparation.email_status == "complete"
+    assert len(calls) == 1
+    assert first["production_status"] == second["production_status"] == "completed"
+
+
+@pytest.mark.parametrize("failure_stage", ["canonical_run", "website", "email"])
+def test_delivery_transition_failure_preserves_the_canonical_run_and_retries_only_that_stage(monkeypatch, failure_stage: str) -> None:
+    preparation = SimpleNamespace(
+        preparation_id=f"failure-{failure_stage}", snapshot=_snapshot(1), final_payload={"payload": "validated"},
+        validation={"status": "valid"}, production_run_id="run-1" if failure_stage != "canonical_run" else None,
+        canonical_run_status="complete" if failure_stage != "canonical_run" else "pending",
+        website_status="complete" if failure_stage == "email" else "pending", email_status="pending",
+        stage=failure_stage, status="pending", last_error=None,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
+    monkeypatch.setattr(workflow, "_research_by_ticker", lambda *_args: _research(["T00"]))
+    def persist(*_args, **_kwargs):
+        calls.append("persist")
+        if failure_stage == "canonical_run" and calls.count("persist") == 1:
+            raise RuntimeError("database down")
+        return {"run_id": "run-1", "payload_hash": "hash"}
+    monkeypatch.setattr(workflow, "record_strategy_run", persist)
+    monkeypatch.setattr(workflow, "get_strategy_run", lambda *_args: {"found": True, "payload_hash": "hash"})
+    def website(*_args):
+        calls.append("website")
+        if failure_stage == "website" and calls.count("website") == 1:
+            raise RuntimeError("website down")
+        return {"status": "published"}
+    def email(*_args):
+        calls.append("email")
+        if failure_stage == "email" and calls.count("email") == 1:
+            raise RuntimeError("smtp down")
+        return {"status": "sent"}
+    monkeypatch.setattr(workflow, "publish_strategy_run_only", website)
+    monkeypatch.setattr(workflow, "send_strategy_run_email", email)
+
+    first = workflow.advance_daily_stock_alert_preparation(_Session(), Settings(), preparation_id=preparation.preparation_id)
+    second = workflow.advance_daily_stock_alert_preparation(_Session(), Settings(), preparation_id=preparation.preparation_id)
+
+    assert first["status"] == "failed"
+    assert second["production_status"] == "completed"
+    assert calls.count("persist") == (2 if failure_stage == "canonical_run" else 1)
+    assert calls.count("website") == (2 if failure_stage == "website" else 1)
+    assert calls.count("email") == (2 if failure_stage == "email" else 1)

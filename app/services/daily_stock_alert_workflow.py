@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import DailyAlertPreparation, DailyAlertPreparationResearch
-from app.services.daily_stock_alert import run_daily_stock_alert, validate_daily_stock_alert
+from app.services.daily_stock_alert import validate_daily_stock_alert
 from app.services.daily_stock_alert_candidate_contract import (
     fresh_research_checkpoint,
     normalize_candidate_state,
@@ -25,6 +25,8 @@ from app.services.daily_stock_alert_report import (
     presentation_groups,
     report_enrichment,
 )
+from app.services.stock_alert_delivery import publish_strategy_run_only, send_strategy_run_email
+from app.services.strategy_tracking import get_strategy_run, record_strategy_run
 
 
 _PREPARATION_REVISION_REASON: ContextVar[str | None] = ContextVar(
@@ -179,6 +181,7 @@ def _research_by_ticker(session: Session, preparation_id: str) -> dict[str, Dail
 def record_daily_stock_alert_research(
     session: Session,
     *,
+    settings: Settings | None = None,
     preparation_id: str,
     ticker: str,
     evidence: list[dict[str, Any]],
@@ -219,7 +222,14 @@ def record_daily_stock_alert_research(
         ))
         reused = False
     session.commit()
-    return {"status": "research_recorded", "preparation_id": preparation_id, "ticker": normalized_ticker, "idempotent_update": reused}
+    # The MCP caller's responsibility ends at evidence checkpointing.  Once the
+    # last checkpoint exists, production is advanced by the server from here.
+    advancement = (
+        advance_daily_stock_alert_preparation(session, settings=settings, preparation_id=preparation_id)
+        if hasattr(session, "scalars")
+        else None
+    )
+    return {"status": "research_recorded", "preparation_id": preparation_id, "ticker": normalized_ticker, "idempotent_update": reused, "advancement": advancement}
 
 
 def daily_stock_alert_preparation_status(session: Session, *, preparation_id: str) -> dict[str, Any]:
@@ -235,11 +245,48 @@ def daily_stock_alert_preparation_status(session: Session, *, preparation_id: st
         "expected_ticker_count": len(snapshot["run_template"]["summary"]["preparation_scope"]["expected_candidate_tickers"]),
         "completed_deep_research_tickers": completed,
         "outstanding_deep_research_tickers": sorted(set(deep) - set(completed)),
+        "stage": getattr(preparation, "stage", "research"),
+        "status": getattr(preparation, "status", "pending"),
         "finalization_complete": preparation.final_payload is not None,
-        "validation_status": (preparation.validation or {}).get("status", "not_validated"),
-        "production_status": "completed" if preparation.production_run_id else "not_run",
+        "finalization_status": getattr(preparation, "finalization_status", "complete" if preparation.final_payload else "pending"),
+        "validation_status": getattr(preparation, "validation_status", (preparation.validation or {}).get("status", "not_validated")),
+        "canonical_run_status": getattr(preparation, "canonical_run_status", "complete" if preparation.production_run_id else "pending"),
+        "website_status": getattr(preparation, "website_status", "pending"),
+        "email_status": getattr(preparation, "email_status", "pending"),
+        "production_status": "completed" if getattr(preparation, "email_status", None) == "complete" else ("canonical_run_complete" if preparation.production_run_id else "not_run"),
         "production_run_id": preparation.production_run_id,
+        "last_error": getattr(preparation, "last_error", None),
+        "next_action": _next_action(preparation, len(deep) - len(completed)),
     }
+
+
+def _next_action(preparation: DailyAlertPreparation, outstanding_research: int) -> str:
+    if outstanding_research:
+        return "record required deep research"
+    if preparation.final_payload is None:
+        return "finalize and validate"
+    if (preparation.validation or {}).get("status") != "valid":
+        return "retry finalization after correcting validation"
+    if not preparation.production_run_id:
+        return "persist canonical run"
+    if getattr(preparation, "website_status", "pending") != "complete":
+        return "publish website"
+    if getattr(preparation, "email_status", "pending") != "complete":
+        return "send email"
+    return "complete"
+
+
+def _failed(preparation: DailyAlertPreparation, stage: str, error: Exception, session: Session) -> dict[str, Any]:
+    preparation.stage, preparation.status = stage, "failed"
+    preparation.last_error = str(error)
+    if stage == "finalization":
+        preparation.finalization_status = "failed"
+        preparation.validation_status = "failed"
+        preparation.validation = {"status": "invalid", "error": str(error)}
+    else:
+        setattr(preparation, f"{stage}_status", "failed")
+    session.commit()
+    return {"status": "failed", "preparation_id": preparation.preparation_id, "stage": stage, "last_error": str(error)}
 
 
 def _default_candidate(
@@ -456,18 +503,93 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
     if compact:
         lines.append(f"- {compact} additional tracked stocks are retained in the canonical record as a compact summary.")
     payload["report_markdown"] = "\n".join(lines)
-    validation = validate_daily_stock_alert(session, settings, as_of_date=snapshot["as_of_date"], run_payload=payload)
+    preparation.stage, preparation.status, preparation.last_error = "finalization", "running", None
+    session.commit()
+    try:
+        validation = validate_daily_stock_alert(session, settings, as_of_date=snapshot["as_of_date"], run_payload=payload)
+    except Exception as error:
+        _failed(preparation, "finalization", error, session)
+        raise
     preparation.final_payload = validation["validated_run_payload"]
     preparation.validation = {"status": validation["status"], "payload_hash": validation["payload_hash"]}
+    preparation.finalization_status = "complete"
+    preparation.validation_status = "pass"
+    preparation.stage, preparation.status, preparation.last_error = "canonical_run", "pending", None
     session.commit()
     return {"status": "finalized", "preparation_id": preparation_id, "validated": preparation.validation, "run_payload": preparation.final_payload, "idempotent_replay": False}
 
 
-def run_finalized_daily_stock_alert_preparation(session: Session, settings: Settings, *, preparation_id: str) -> dict[str, Any]:
+def advance_daily_stock_alert_preparation(
+    session: Session, settings: Settings | None, *, preparation_id: str
+) -> dict[str, Any]:
+    """Advance one stored preparation; every completed transition is a no-op on replay."""
     preparation = _preparation(session, preparation_id)
-    if preparation.final_payload is None or (preparation.validation or {}).get("status") != "valid":
-        raise ValueError("preparation must be finalized and validated before production")
-    result = run_daily_stock_alert(session, settings, as_of_date=preparation.snapshot["as_of_date"], run_payload=preparation.final_payload, verify_mailbox=False)
-    preparation.production_run_id = result["run_id"]
-    session.commit()
-    return result
+    snapshot = preparation.snapshot
+    deep = {item["ticker"] for item in snapshot["deep_research_queue"]}
+    if deep - set(_research_by_ticker(session, preparation_id)):
+        return daily_stock_alert_preparation_status(session, preparation_id=preparation_id)
+    if preparation.final_payload is None:
+        if settings is None:
+            # Recording the final checkpoint must be safe in a request that did
+            # not receive runtime settings (unit seams); the worker will resume.
+            return daily_stock_alert_preparation_status(session, preparation_id=preparation_id)
+        try:
+            finalize_daily_stock_alert_preparation(session, settings, preparation_id=preparation_id)
+        except Exception:
+            return daily_stock_alert_preparation_status(session, preparation_id=preparation_id)
+        preparation = _preparation(session, preparation_id)
+    if (preparation.validation or {}).get("status") != "valid":
+        return daily_stock_alert_preparation_status(session, preparation_id=preparation_id)
+    if settings is None:
+        return daily_stock_alert_preparation_status(session, preparation_id=preparation_id)
+    if not preparation.production_run_id:
+        preparation.stage, preparation.status, preparation.last_error = "canonical_run", "running", None
+        session.commit()
+        try:
+            # This is the exact validated payload loaded from storage, never an
+            # MCP-provided reconstruction.
+            recorded = record_strategy_run(session, **preparation.final_payload, publish=False)
+            run_id = str(recorded["run_id"])
+            persisted = get_strategy_run(session, run_id)
+            if not persisted.get("found") or persisted.get("payload_hash") != recorded.get("payload_hash"):
+                raise RuntimeError("canonical run could not be read back with its stored payload hash")
+            preparation.production_run_id = run_id
+            preparation.canonical_run_status = "complete"
+            preparation.stage, preparation.status = "website", "pending"
+            session.commit()
+        except Exception as error:
+            return _failed(preparation, "canonical_run", error, session)
+    if getattr(preparation, "website_status", "pending") != "complete":
+        preparation.stage, preparation.status, preparation.last_error = "website", "running", None
+        session.commit()
+        try:
+            preparation.website_delivery = publish_strategy_run_only(session, settings, preparation.production_run_id)
+            preparation.website_status = "complete"
+            preparation.stage, preparation.status = "email", "pending"
+            session.commit()
+        except Exception as error:
+            return _failed(preparation, "website", error, session)
+    if getattr(preparation, "email_status", "pending") != "complete":
+        preparation.stage, preparation.status, preparation.last_error = "email", "running", None
+        session.commit()
+        try:
+            preparation.email_delivery = send_strategy_run_email(session, settings, preparation.production_run_id)
+            preparation.email_status = "complete"
+            preparation.stage, preparation.status, preparation.last_error = "complete", "complete", None
+            session.commit()
+        except Exception as error:
+            return _failed(preparation, "email", error, session)
+    return daily_stock_alert_preparation_status(session, preparation_id=preparation_id)
+
+
+def advance_eligible_daily_stock_alert_preparations(session: Session, settings: Settings) -> list[dict[str, Any]]:
+    """Restart-safe worker entry point for incomplete preparations."""
+    preparations = session.scalars(
+        select(DailyAlertPreparation).where(DailyAlertPreparation.status != "complete")
+    ).all()
+    return [advance_daily_stock_alert_preparation(session, settings, preparation_id=item.preparation_id) for item in preparations]
+
+
+def run_finalized_daily_stock_alert_preparation(session: Session, settings: Settings, *, preparation_id: str) -> dict[str, Any]:
+    """Administrative recovery endpoint; normal MCP flow ends at research."""
+    return advance_daily_stock_alert_preparation(session, settings, preparation_id=preparation_id)

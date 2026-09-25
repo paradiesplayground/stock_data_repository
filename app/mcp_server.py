@@ -540,7 +540,7 @@ if settings.mcp_enable_strategy_writes:
         """Durably checkpoint one completed deep-research ticker."""
         with SessionLocal() as session:
             return record_daily_alert_research_workflow(
-                session, preparation_id=preparation_id, ticker=ticker, evidence=evidence,
+                session, settings=get_settings(), preparation_id=preparation_id, ticker=ticker, evidence=evidence,
                 required_dimensions=required_dimensions,
                 qualitative_blockers=qualitative_blockers, qualitative_flags=qualitative_flags,
                 candidate_decision=candidate_decision,
@@ -579,16 +579,20 @@ if settings.mcp_enable_strategy_writes:
             dict[str, Any],
             Field(
                 description=(
-                    "Complete v0.8 production run payload, including candidates and "
-                    "report_markdown. Set validation_only=true inside this payload to execute "
-                    "the exact contract checks without persistence or delivery. Otherwise the "
-                    "service records, verifies, publishes, and emails it."
+                    "Payload for legacy validation only. Set validation_only=true to execute "
+                    "the exact contract checks without persistence or delivery. Production "
+                    "payloads are rejected; stored preparations are advanced by the worker."
                 )
             ),
         ],
         verify_mailbox: bool = False,
     ) -> dict[str, Any]:
-        """Complete one prepared daily alert through a single idempotent server-side call."""
+        """Legacy validation-only endpoint; production advances stored preparations."""
+        if run_payload.get("validation_only") is not True:
+            raise ValueError(
+                "production daily alerts must advance a stored DailyAlertPreparation; "
+                "MCP callers cannot submit a production payload"
+            )
         with SessionLocal() as session:
             return execute_daily_stock_alert(
                 session,

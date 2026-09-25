@@ -1,5 +1,14 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-09-25 — Durable daily-alert production state machine
+
+- **Implemented:** Extended `DailyAlertPreparation` with explicit overall stage/status, last error, and independent finalization, validation, canonical-run, website, and email completion states. The status endpoint now provides a compact operational view and next action without reconstructing state from MCP history.
+- **Implemented:** Recording the final required deep-research checkpoint asks the server to advance the stored preparation. The worker also advances every incomplete preparation at startup and every five minutes, so a container restart, validation failure, persistence failure, or delivery failure resumes from the durable boundary.
+- **Implemented:** Production now records only the stored validated `final_payload`; MCP production payload submission is rejected. Canonical persistence is read-back checked before independent website-only and email-only requests. Delivery requests carry a stable destination-specific idempotency key, and acknowledged website/email receipts are stored separately.
+- **Implemented:** Normal scheduled ChatGPT workflow now ends after `record_daily_stock_alert_research`; finalization and the administrative recovery endpoint remain server-owned/manual recovery tools. Explicit same-date revisions remain limited to `create_daily_stock_alert_revision`.
+- **Regression coverage:** Added transition-retry tests for canonical persistence, website publication, and email failure. A retry preserves one canonical run and skips already-complete destinations.
+- **Verified locally:** Python compilation and Git whitespace checks pass. The checked-in virtualenv references a removed interpreter, the bundled runtime has no pytest/Ruff, and Docker is unavailable on this workstation; the full test suite and deployment remain unverified. No preparation, production run, publication, or email was executed.
+
 ## 2026-09-24 — Canonical Daily Stock Alert presentation
 
 - **Implemented:** Replaced generic report prose with a structured candidate presentation model shared by the canonical Markdown delivered to both the website and email. `BUY_NOW`, `ALMOST_READY`, and `RADAR` detailed candidates appear under **Watch first**; `NOT_ELIGIBLE` detailed candidates appear separately under **Excluded — worth reviewing**.
