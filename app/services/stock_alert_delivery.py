@@ -155,9 +155,17 @@ def publish_strategy_run(
 
 def publish_strategy_run_only(session: Session, settings: Settings, run_id: str) -> dict[str, Any]:
     """Publish the immutable run without requesting email delivery."""
-    result = _request_strategy_run_delivery(
-        session, settings, run_id, delivery_request="publish_only"
-    )
+    try:
+        result = _request_strategy_run_delivery(
+            session, settings, run_id, delivery_request="publish_only"
+        )
+    except RuntimeError as error:
+        # A previous successful request may have reached the website before a
+        # worker crash persisted its receipt. The immutable run already exists,
+        # so a duplicate is positive publication confirmation, not a retry.
+        if "duplicate" not in str(error).lower():
+            raise
+        result = {"publication": "existing"}
     return {
         "status": "published", "run_id": run_id,
         "website_delivery": result.get("publication") or "published",

@@ -9,6 +9,7 @@
 - **Regression coverage:** Added transition-retry tests for canonical persistence, website publication, and email failure. A retry preserves one canonical run and skips already-complete destinations. Guarded contract testing caught and corrected only test expectations for already-persisted delivery stages before the final deployment retry.
 - **Verified locally:** Python compilation and Git whitespace checks pass. The checked-in virtualenv references a removed interpreter and the bundled runtime has no pytest/Ruff. No preparation, production run, publication, or email was executed.
 - **Deployment recovery:** The guarded contract image later passed 216 tests plus Ruff, but the migration stopped cleanly before service recreation because its revision identifier exceeded the existing 32-character Alembic version column. The migration was rolled back transactionally; a shortened revision identifier is being deployed next.
+- **Compatibility recovery:** The first state-machine worker startup exposed 10 legacy preparations that had completed under the old combined-delivery model but had no destination receipts. The worker was stopped before further retries; a follow-up migration marks only those legacy/default-or-failed delivery rows complete, avoiding historical publication or email replay. The receiving website now supports destination-specific delivery.
 
 ## 2026-09-24 — Canonical Daily Stock Alert presentation
 
