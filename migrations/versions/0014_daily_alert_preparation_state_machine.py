@@ -1,6 +1,6 @@
 """add resumable daily alert production state
 
-Revision ID: 0014_daily_alert_preparation_state_machine
+Revision ID: 0014_alert_state
 Revises: 0013_daily_alert_preparations
 """
 
@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "0014_daily_alert_preparation_state_machine"
+revision = "0014_alert_state"
 down_revision = "0013_daily_alert_preparations"
 branch_labels = None
 depends_on = None

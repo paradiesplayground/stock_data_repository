@@ -8,6 +8,7 @@
 - **Implemented:** Normal scheduled ChatGPT workflow now ends after `record_daily_stock_alert_research`; finalization and the administrative recovery endpoint remain server-owned/manual recovery tools. Explicit same-date revisions remain limited to `create_daily_stock_alert_revision`.
 - **Regression coverage:** Added transition-retry tests for canonical persistence, website publication, and email failure. A retry preserves one canonical run and skips already-complete destinations. Guarded contract testing caught and corrected only test expectations for already-persisted delivery stages before the final deployment retry.
 - **Verified locally:** Python compilation and Git whitespace checks pass. The checked-in virtualenv references a removed interpreter and the bundled runtime has no pytest/Ruff. No preparation, production run, publication, or email was executed.
+- **Deployment recovery:** The guarded contract image later passed 216 tests plus Ruff, but the migration stopped cleanly before service recreation because its revision identifier exceeded the existing 32-character Alembic version column. The migration was rolled back transactionally; a shortened revision identifier is being deployed next.
 
 ## 2026-09-24 — Canonical Daily Stock Alert presentation
 
