@@ -114,66 +114,84 @@ def rejected_opportunity_analysis(
     source data nor promotes a rejected candidate into the simulated portfolio.
     """
     feature_version = configuration["strategy"]["feature_calculation_version"]
-    features = session.scalars(
-        select(SecurityDailyFeature)
+    # Never materialize the full historical feature range as ORM objects.
+    # A two-year study contains millions of SecurityDailyFeature rows and the
+    # previous range-wide .all() could exhaust the host's memory. Process one
+    # market date at a time so peak memory is bounded to a single snapshot.
+    market_dates = session.scalars(
+        select(SecurityDailyFeature.as_of_date)
         .where(
             SecurityDailyFeature.as_of_date.between(start_date, end_date),
             SecurityDailyFeature.price_date == SecurityDailyFeature.as_of_date,
             SecurityDailyFeature.calculation_version == feature_version,
         )
-        .order_by(SecurityDailyFeature.as_of_date, SecurityDailyFeature.ticker)
+        .distinct()
+        .order_by(SecurityDailyFeature.as_of_date)
     ).all()
     opportunities: list[dict[str, Any]] = []
-    for feature in features:
-        candidate = score_feature(
-            feature,
-            constructive_volume=False,
-            excluded_sic_prefixes=configuration["universe"]["excluded_sic_prefixes"],
-            configuration=configuration,
-        )
-        if not candidate or not candidate["payload"].get("rejected_opportunity"):
-            continue
-        # A decline-only opportunity can carry no unrelated rejection reason.
-        if candidate["reasons"] != ["decline_screen_failed"]:
-            continue
-        future_sessions = _future_sessions(session, feature.as_of_date, max(HORIZONS))
-        bars = _forward_bars(session, feature.ticker, future_sessions)
-        forward = {
-            str(horizon): _outcome(bars, candidate, horizon) for horizon in HORIZONS
-        }
-        later_eligibility = {}
-        for horizon in HORIZONS:
-            if len(future_sessions) < horizon:
-                later_eligibility[str(horizon)] = None
+    for market_date in market_dates:
+        features = session.scalars(
+            select(SecurityDailyFeature)
+            .where(
+                SecurityDailyFeature.as_of_date == market_date,
+                SecurityDailyFeature.price_date == market_date,
+                SecurityDailyFeature.calculation_version == feature_version,
+            )
+            .order_by(SecurityDailyFeature.ticker)
+        ).all()
+        for feature in features:
+            candidate = score_feature(
+                feature,
+                constructive_volume=False,
+                excluded_sic_prefixes=configuration["universe"]["excluded_sic_prefixes"],
+                configuration=configuration,
+            )
+            if not candidate or not candidate["payload"].get("rejected_opportunity"):
                 continue
-            later_feature = session.scalar(
-                select(SecurityDailyFeature).where(
-                    SecurityDailyFeature.ticker == feature.ticker,
-                    SecurityDailyFeature.as_of_date == future_sessions[horizon - 1],
-                    SecurityDailyFeature.price_date == future_sessions[horizon - 1],
-                    SecurityDailyFeature.calculation_version == feature_version,
+            # A decline-only opportunity can carry no unrelated rejection reason.
+            if candidate["reasons"] != ["decline_screen_failed"]:
+                continue
+            future_sessions = _future_sessions(session, feature.as_of_date, max(HORIZONS))
+            bars = _forward_bars(session, feature.ticker, future_sessions)
+            forward = {
+                str(horizon): _outcome(bars, candidate, horizon) for horizon in HORIZONS
+            }
+            later_eligibility = {}
+            for horizon in HORIZONS:
+                if len(future_sessions) < horizon:
+                    later_eligibility[str(horizon)] = None
+                    continue
+                later_feature = session.scalar(
+                    select(SecurityDailyFeature).where(
+                        SecurityDailyFeature.ticker == feature.ticker,
+                        SecurityDailyFeature.as_of_date == future_sessions[horizon - 1],
+                        SecurityDailyFeature.price_date == future_sessions[horizon - 1],
+                        SecurityDailyFeature.calculation_version == feature_version,
+                    )
                 )
-            )
-            later_candidate = (
-                score_feature(
-                    later_feature,
-                    constructive_volume=False,
-                    excluded_sic_prefixes=configuration["universe"]["excluded_sic_prefixes"],
-                    configuration=configuration,
+                later_candidate = (
+                    score_feature(
+                        later_feature,
+                        constructive_volume=False,
+                        excluded_sic_prefixes=configuration["universe"]["excluded_sic_prefixes"],
+                        configuration=configuration,
+                    )
+                    if later_feature is not None
+                    else None
                 )
-                if later_feature is not None
-                else None
-            )
-            later_eligibility[str(horizon)] = bool(
-                later_candidate and later_candidate["action"] == "actionable"
-            )
-        opportunities.append({
-            "ticker": feature.ticker,
-            "signal_date": feature.as_of_date.isoformat(),
-            "decline_screen": candidate["payload"]["decline_screen"],
-            "forward": forward,
-            "subsequent_eligibility": later_eligibility,
-        })
+                later_eligibility[str(horizon)] = bool(
+                    later_candidate and later_candidate["action"] == "actionable"
+                )
+            opportunities.append({
+                "ticker": feature.ticker,
+                "signal_date": feature.as_of_date.isoformat(),
+                "decline_screen": candidate["payload"]["decline_screen"],
+                "forward": forward,
+                "subsequent_eligibility": later_eligibility,
+            })
+        # Drop the only strong reference to this day's ORM snapshot before
+        # loading the next one; SQLAlchemy's identity map can then release it.
+        del features
 
     horizon_summary = {}
     for horizon in HORIZONS:
