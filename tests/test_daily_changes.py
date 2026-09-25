@@ -154,7 +154,7 @@ def test_daily_changes_markdown_is_idempotently_attached() -> None:
 
     assert once == twice
     assert twice.count("## What changed since yesterday?") == 1
-    assert "No material candidate" in render_daily_changes(changes)
+    assert "No material setup changes since the previous alert." in render_daily_changes(changes)
 
 
 def test_daily_changes_suppress_wording_only_and_undated_research(monkeypatch) -> None:
@@ -208,3 +208,20 @@ def test_daily_changes_curates_material_score_and_trigger_moves(monkeypatch) -> 
     assert len(changes["meaningful_changes"]) <= 8
     assert "KLIC improved from 2.8% to 0.1% below trigger." in rendered
     assert "KLIC setup score improved from 71 to 79." in rendered
+
+
+def test_daily_changes_formats_trigger_precision_and_ignores_research_only_downgrade(monkeypatch) -> None:
+    prior_candidate = _candidate("KLIC", "RADAR", "15.11432217908248185792340544", "90", [])
+    prior_candidate["payload"]["qualitative_evidence_status"] = "fresh_researched"
+    current_candidate = _candidate("KLIC", "NOT_ELIGIBLE", "14.01432217908248185792340544", "90", [])
+    current_candidate["payload"]["qualitative_evidence_status"] = "missing"
+    prior = {"run_id": "prior", "as_of_date": "2026-08-20", "candidates": [prior_candidate], "evidence": []}
+    monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
+
+    changes = build_daily_changes(object(), payload={"strategy_key": "dynamic_swing_buy_alerts", "as_of_date": "2026-08-21", "candidates": [current_candidate], "evidence": []})
+    rendered = render_daily_changes(changes)
+
+    assert changes["classification_changes"] == []
+    assert "15.1%" in rendered
+    assert "14.0%" in rendered
+    assert "15.114322" not in rendered

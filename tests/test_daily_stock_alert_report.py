@@ -1,4 +1,5 @@
 from app.services.daily_stock_alert_report import (
+    candidate_presentation,
     report_enrichment,
     report_focus_sort_key,
     structural_targets,
@@ -16,6 +17,7 @@ def _snapshot() -> dict:
         "deterministic_metrics": {
             "close": "99.9", "high_60d": "130", "drawdown_52w_pct": "-37.5625", "drawdown_12w_high_pct": "-25",
             "revenue_ttm_yoy_pct": "70", "latest_quarter_revenue_yoy_pct": "80",
+            "price_change_12w_pct": "-30",
             "relative_return_20d_vs_qqq_pct": "8", "relative_volume_20d": "1.2",
             "avg_dollar_volume_20d": "100000000",
         },
@@ -69,4 +71,34 @@ def test_ticker_explanation_uses_snapshot_facts_not_workflow_boilerplate() -> No
     assert "latest-quarter revenue growth" in why
     assert "cash runway unavailable" in why
     assert "$100.00" in next_condition
-    assert "$90.00" in next_condition
+
+
+def test_presentation_keeps_ticker_specific_research_and_score_context() -> None:
+    snapshot = _snapshot()
+    candidate = {
+        **snapshot,
+        "metrics": snapshot["deterministic_metrics"],
+        "trigger_price": "100",
+        "invalidation_price": "90",
+        "technical_gate_passed": False,
+        "market_regime_gate_passed": True,
+        "buyability_status": "RADAR",
+        "setup_score": 43,
+        "score_components": {"growth": 8, "trend": 4, "risk_reward": 10, "qualitative_confidence": 0},
+        "structural_targets": [{"price": "130", "basis": "60-day resistance", "r_multiple": "3.00"}],
+        "payload": {
+            "qualitative_evidence_status": "fresh_researched",
+            "qualitative_evidence": [{"evidence_type": "filing_review"}],
+        },
+    }
+
+    presentation = candidate_presentation(candidate)
+
+    assert "Finalized from saved qualitative research" not in presentation["why"]
+    assert "20-day relative strength" in presentation["why"]
+    assert "close above $100.00" in presentation["next"]
+    assert "Setup quality 43/100" in presentation["score_summary"]
+    assert "R multiples describe observed payoff geometry, not setup quality" in presentation["score_summary"]
+    assert presentation["research_summary"] == "Fresh qualitative research: filing review."
+    assert presentation["score"] == 43
+    assert presentation["targets"][0]["r_multiple"] == "3.00"

@@ -246,11 +246,57 @@ def candidate_presentation(candidate: dict[str, Any]) -> dict[str, Any]:
         classification = "ALMOST_READY: exactly one represented gate remains before eligibility."
     else:
         classification = "RADAR: the setup remains watchable, but eligibility requirements are still incomplete."
+    # This is display data, intentionally separate from the validator-owned
+    # decision fields. Renderers must not infer a second explanation from them.
+    primary_blocker = blockers[0] if blockers else None
+    why = "; ".join(positive_factors[:3])
+    if not why:
+        why = "No positive deterministic factor is currently available."
+    if primary_blocker:
+        why += "; key constraint: " + primary_blocker["reason"]
+    next_step = primary_blocker["clear_condition"] if primary_blocker else (
+        "Maintain the planned entry and risk levels while all represented gates remain open."
+    )
+    components = candidate.get("score_components") or {}
+    labels = {
+        "growth": "growth", "trend": "trend/relative strength", "liquidity": "liquidity",
+        "setup_quality": "base quality", "trigger_proximity": "trigger proximity",
+        "risk_reward": "observed payoff geometry", "qualitative_confidence": "qualitative confidence",
+    }
+    ranked = sorted(
+        ((str(key), int(value)) for key, value in components.items() if isinstance(value, (int, float))),
+        key=lambda item: item[1], reverse=True,
+    )
+    strongest = ", ".join(labels.get(key, key.replace("_", " ")) for key, value in ranked[:2] if value > 0)
+    weak = ", ".join(labels.get(key, key.replace("_", " ")) for key, value in ranked[-2:] if value == 0)
+    score_summary = f"Setup quality {candidate.get('setup_score', 0)}/100"
+    if strongest:
+        score_summary += f"; strongest contributors: {strongest}"
+    if weak:
+        score_summary += f"; weakest: {weak}"
+    if candidate.get("structural_targets"):
+        score_summary += "; R multiples describe observed payoff geometry, not setup quality"
+    evidence = payload.get("qualitative_evidence") or []
+    evidence_types = sorted({str(item.get("evidence_type") or "").replace("_", " ") for item in evidence if isinstance(item, dict)})
+    research_summary = None
+    if evidence_status in {"fresh_researched", "reused_current"}:
+        source = "Fresh qualitative research" if evidence_status == "fresh_researched" else "Current carry-forward qualitative evidence"
+        research_summary = source + (f": {', '.join(evidence_types[:2])}." if evidence_types else " is recorded.")
     return {
         "group": "watch_first" if status in {"BUY_NOW", "ALMOST_READY", "RADAR"} else "excluded_worth_reviewing",
         "classification": classification,
         "positive_factors": positive_factors or ["No positive deterministic factors are currently available."],
         "blockers": blockers,
+        "why": why,
+        "next": next_step,
+        "score_summary": score_summary,
+        "research_summary": research_summary,
+        # Keep these renderer-facing copies with the explanation.  The raw
+        # candidate fields remain the analytical record; destinations need not
+        # reconstruct targets, score, or R multiples from them.
+        "score": candidate.get("setup_score"),
+        "score_components": components,
+        "targets": candidate.get("structural_targets") or [],
         "technical_trigger": (
             f"After eligibility requirements are satisfied, close above {_money(trigger)}."
             if trigger is not None else "Establish a valid 20-day breakout trigger after eligibility requirements are satisfied."
@@ -262,15 +308,7 @@ def candidate_presentation(candidate: dict[str, Any]) -> dict[str, Any]:
 def ticker_specific_explanation(candidate: dict[str, Any]) -> tuple[str, str]:
     """Compatibility view of the canonical structured presentation model."""
     presentation = candidate_presentation(candidate)
-    why = presentation["classification"] + " Positive factors: " + "; ".join(presentation["positive_factors"])
-    if presentation["blockers"]:
-        why += " Blocking factors: " + "; ".join(
-            item["reason"] for item in presentation["blockers"]
-        )
-    next_condition = presentation["technical_trigger"]
-    if candidate.get("invalidation_price") is not None:
-        next_condition += " Invalidate below " + _money(candidate["invalidation_price"]) + "."
-    return why, next_condition
+    return presentation["why"], presentation["next"]
 
 
 def presentation_groups(candidates: list[dict[str, Any]], detailed_tickers: list[str]) -> dict[str, list[dict[str, Any]]]:

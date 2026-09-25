@@ -397,6 +397,10 @@ def test_report_uses_one_watch_first_policy_and_keeps_alab_screen_failure_visibl
     assert "12-week price change must be <= -20.0%." in report
     assert "$100.10" in report  # The trigger remains technical-only, not requalification.
     assert "Complete current qualitative confirmation" not in report
+    canonical = result["run_payload"]["candidates"][0]["payload"]["presentation"]
+    assert f"Why: {canonical['why']}" in report
+    assert f"Next: {canonical['next']}" in report
+    assert f"Score: {canonical['score_summary']}" in report
 
 
 def test_resumed_production_fixture_rebuilds_the_same_canonical_blocked_candidate(monkeypatch) -> None:

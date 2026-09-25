@@ -77,6 +77,28 @@ def _score(candidate: dict[str, Any]) -> Decimal | None:
     return _decimal(candidate.get("setup_score", candidate.get("score")))
 
 
+def _research_scope_only_status_change(before: dict[str, Any], now: dict[str, Any]) -> bool:
+    """Avoid treating an absent refresh as a stock-specific downgrade."""
+    old_payload = before.get("payload") if isinstance(before.get("payload"), dict) else {}
+    new_payload = now.get("payload") if isinstance(now.get("payload"), dict) else {}
+    old_evidence = old_payload.get("qualitative_evidence_status")
+    new_evidence = new_payload.get("qualitative_evidence_status")
+    if old_evidence not in {"fresh_researched", "reused_current"} or new_evidence not in {"missing", "stale_researched"}:
+        return False
+    # The status is presentation-only when the observed setup and all
+    # deterministic gates are otherwise unchanged.
+    fields = (
+        "distance_to_trigger_pct", "current_price", "trigger_price",
+        "invalidation_price", "setup_score", "score", "technical_gate_passed",
+        "market_regime_gate_passed", "remaining_gate_count",
+    )
+    return (
+        all(before.get(field) == now.get(field) for field in fields)
+        and before.get("metrics") == now.get("metrics")
+        and _blockers(before) == _blockers(now)
+    )
+
+
 def _format_pct(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.1'))}%"
 
@@ -162,7 +184,7 @@ def build_daily_changes(
     for ticker in shared:
         now, before = current[ticker], previous[ticker]
         current_status, prior_status = _status(now), _status(before)
-        if current_status != prior_status:
+        if current_status != prior_status and not _research_scope_only_status_change(before, now):
             old_priority = STATUS_PRIORITY.get(prior_status or "", 99)
             new_priority = STATUS_PRIORITY.get(current_status or "", 99)
             direction = "promoted" if new_priority < old_priority else "demoted"
@@ -358,7 +380,7 @@ def render_daily_changes(changes: dict[str, Any]) -> str:
     if changes.get("meaningful_changes") is not None:
         entries = [str(item["text"]) for item in changes["meaningful_changes"]]
         if not entries:
-            entries.append("No material candidate, score, trigger, or stop changes.")
+            entries.append("No material setup changes since the previous alert.")
         return "\n".join(lines + [""] + ["- " + entry for entry in entries] + ["<!-- daily-changes:end -->"])
     entries: list[str] = []
     if changes["new_candidates"]:
