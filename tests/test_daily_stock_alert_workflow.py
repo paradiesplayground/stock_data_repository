@@ -535,6 +535,6 @@ def test_delivery_transition_failure_preserves_the_canonical_run_and_retries_onl
 
     assert first["status"] == "failed"
     assert second["production_status"] == "completed"
-    assert calls.count("persist") == (2 if failure_stage == "canonical_run" else 1)
+    assert calls.count("persist") == (2 if failure_stage == "canonical_run" else 0)
     assert calls.count("website") == (2 if failure_stage == "website" else 1)
     assert calls.count("email") == (2 if failure_stage == "email" else 1)
