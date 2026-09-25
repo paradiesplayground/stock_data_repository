@@ -66,6 +66,7 @@ services:
     pull_policy: never
     container_name: stock-data-worker
     restart: unless-stopped
+    mem_limit: 8g
     env_file: .env
     command: ["python", "-m", "app.scheduler"]
     volumes:
@@ -81,6 +82,7 @@ services:
     pull_policy: never
     container_name: stock-data-mcp
     restart: unless-stopped
+    mem_limit: 8g
     env_file: .env
     command: ["python", "-m", "app.mcp_server"]
     ports:
