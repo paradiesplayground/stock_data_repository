@@ -96,7 +96,7 @@ def _research_scope_only_status_change(before: dict[str, Any], now: dict[str, An
         all(before.get(field) == now.get(field) for field in fields)
         and before.get("metrics") == now.get("metrics")
         and _blockers(before) == _blockers(now)
-    )
+    ) or bool(old_evidence and new_evidence)
 
 
 def _format_pct(value: Decimal) -> str:
@@ -436,10 +436,7 @@ def render_daily_changes(changes: dict[str, Any]) -> str:
         )
         entries.append("New evidence reviewed for: " + ", ".join(tickers) + ".")
     if not entries:
-        entries.append(
-            "No material candidate, classification, trigger, stop, blocker, or "
-            "evidence changes."
-        )
+        entries.append("No material setup changes since the previous alert.")
     return "\n".join(
         lines
         + [""]

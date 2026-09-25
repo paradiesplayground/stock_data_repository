@@ -254,6 +254,10 @@ def candidate_presentation(candidate: dict[str, Any]) -> dict[str, Any]:
         why = "No positive deterministic factor is currently available."
     if primary_blocker:
         why += "; key constraint: " + primary_blocker["reason"]
+    if candidate.get("primary_risk"):
+        risk_text = str(candidate["primary_risk"]).strip().rstrip(".")
+        if risk_text and risk_text not in why:
+            why += "; risk review: " + risk_text + "."
     next_step = primary_blocker["clear_condition"] if primary_blocker else (
         "Maintain the planned entry and risk levels while all represented gates remain open."
     )
