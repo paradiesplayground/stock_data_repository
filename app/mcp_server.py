@@ -1,4 +1,6 @@
+from contextlib import contextmanager
 from datetime import date
+from threading import Lock
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -63,6 +65,25 @@ from app.services.strategy_scenarios import (
 )
 
 settings = get_settings()
+
+# FastMCP can service more than one request concurrently.  Historical replay
+# and comparison requests are intentionally exclusive so their bounded memory
+# budget cannot be multiplied by simultaneous callers.
+_scenario_run_lock = Lock()
+
+
+@contextmanager
+def _exclusive_scenario_run():
+    if not _scenario_run_lock.acquire(blocking=False):
+        raise RuntimeError(
+            "A historical scenario is already running; wait for it to finish before starting another"
+        )
+    try:
+        yield
+    finally:
+        _scenario_run_lock.release()
+
+
 mcp = FastMCP(
     "Stock Data Repository",
     instructions=(
@@ -352,17 +373,18 @@ if settings.mcp_enable_strategy_writes:
             end = date.fromisoformat(end_date)
         except ValueError as error:
             raise ValueError("start_date and end_date must be YYYY-MM-DD") from error
-        with SessionLocal() as session:
-            return execute_strategy_scenario(
-                session,
-                start,
-                end,
-                base_profile,
-                strategy_version,
-                strategy_overrides,
-                simulation_overrides,
-                resume=resume,
-            )
+        with _exclusive_scenario_run():
+            with SessionLocal() as session:
+                return execute_strategy_scenario(
+                    session,
+                    start,
+                    end,
+                    base_profile,
+                    strategy_version,
+                    strategy_overrides,
+                    simulation_overrides,
+                    resume=resume,
+                )
 
     @mcp.tool()
     def run_decline_filter_comparison(
@@ -377,14 +399,15 @@ if settings.mcp_enable_strategy_writes:
             end = date.fromisoformat(end_date)
         except ValueError as error:
             raise ValueError("start_date and end_date must be YYYY-MM-DD") from error
-        with SessionLocal() as session:
-            return execute_decline_filter_comparison(
-                session,
-                start,
-                end,
-                simulation_overrides=simulation_overrides,
-                resume=resume,
-            )
+        with _exclusive_scenario_run():
+            with SessionLocal() as session:
+                return execute_decline_filter_comparison(
+                    session,
+                    start,
+                    end,
+                    simulation_overrides=simulation_overrides,
+                    resume=resume,
+                )
 
     @mcp.tool()
     def record_strategy_run(
