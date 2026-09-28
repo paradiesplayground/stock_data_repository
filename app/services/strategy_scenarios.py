@@ -30,6 +30,21 @@ DECLINE_COMPARISON_SCENARIOS = (
     ("price_neg15_or_drawdown_neg20", {"maximum_price_change_12w_pct": "-15", "maximum_drawdown_12w_high_pct": "-20", "decline_filter_mode": "either"}),
 )
 
+# A scenario replays and analyzes every market session in its requested window.
+# Two calendar years covers the supported comparison without admitting an
+# accidental multi-year host-sized job through MCP or the CLI.
+MAX_SCENARIO_DAYS = 732
+
+
+def validate_scenario_date_range(start_date: date, end_date: date) -> None:
+    if start_date > end_date:
+        raise ValueError("Scenario start date must be on or before end date")
+    if (end_date - start_date).days > MAX_SCENARIO_DAYS:
+        raise ValueError(
+            "Scenario date range exceeds the supported two-calendar-year limit "
+            f"({MAX_SCENARIO_DAYS} days)"
+        )
+
 
 def resolve_strategy_scenario(
     base_profile: str,
@@ -89,6 +104,7 @@ def run_strategy_scenario(
     *,
     resume: bool = True,
 ) -> dict[str, Any]:
+    validate_scenario_date_range(start_date, end_date)
     resolved = resolve_strategy_scenario(
         base_profile,
         strategy_version,
@@ -146,6 +162,7 @@ def run_decline_filter_comparison(
     resume: bool = True,
 ) -> dict[str, Any]:
     """Run the fixed decline-screen experiment without altering production rules."""
+    validate_scenario_date_range(start_date, end_date)
     results = []
     feature_version = load_strategy_profile(base_profile)["strategy"][
         "feature_calculation_version"
