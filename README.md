@@ -398,7 +398,10 @@ container.
 with every non-decline rule and simulation parameter held constant. It compares price-change and
 drawdown-from-12-week-high decline gates, returns candidate-days through portfolio metrics, and
 includes forward 5/10/20/30-session outcomes for opportunities excluded only by the decline rule.
-It never changes the production alert definition.
+It never changes the production alert definition. Historical scenario requests are limited to two
+calendar years and run one at a time; a second request is rejected until the active run completes.
+The Compose stack also uses hard memory limits so an analytical job is contained to the stock
+services rather than consuming the whole host.
 
 `query_security_features` applies caller-provided thresholds and sorting to deterministic fields.
 Its preferred `exclude_industry_groups` argument accepts readable labels or stable keys returned by
