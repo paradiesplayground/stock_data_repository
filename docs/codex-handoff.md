@@ -1,5 +1,12 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-09-28 — Historical scenario host-memory containment
+
+- **Implemented:** Capped the active stock stack at approximately 12.25 GB: PostgreSQL 2 GB, API 1 GB, worker 3 GB, MCP 6 GB, and tunnel 256 MB (with a temporary 1 GB migration cap). This replaces the previous two 8 GB limits plus unbounded database/API processes and preserves host headroom for Unraid and other services.
+- **Implemented:** Historical scenario and decline-comparison requests are now single-flight within MCP, and the service layer rejects invalid or more-than-two-year date windows. The previously requested August 2024–August 2026 comparison remains supported.
+- **Implemented:** The guarded Unraid updater now reports each stock container's enforced memory limit, OOM-kill state, and restart count after recreation.
+- **Pending verification:** Run the guarded Unraid contract suite and deploy this change before starting the historical comparison. No scenario, production alert, publication, or email has been invoked in this session.
+
 ## 2026-09-25 — Durable daily-alert production state machine
 
 - **Implemented (presentation):** Canonical v0.8 candidate presentation now persists renderer-ready Why, Next, score summary, score/components, observed targets/R multiples, positive factors, blockers, and research summary. Markdown consumes those fields directly; legacy decision text remains compatibility-only.
