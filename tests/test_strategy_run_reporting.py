@@ -109,6 +109,21 @@ def test_record_strategy_run_schema_and_service_use_top_level_report_markdown(
     sys.modules.pop("app.mcp_server", None)
 
 
+def test_historical_scenario_lock_rejects_overlapping_runs(monkeypatch) -> None:
+    monkeypatch.setenv("MCP_ENABLE_STRATEGY_WRITES", "true")
+    get_settings.cache_clear()
+    sys.modules.pop("app.mcp_server", None)
+    mcp_server = importlib.import_module("app.mcp_server")
+
+    with mcp_server._exclusive_scenario_run():
+        with pytest.raises(RuntimeError, match="already running"):
+            with mcp_server._exclusive_scenario_run():
+                pass
+
+    get_settings.cache_clear()
+    sys.modules.pop("app.mcp_server", None)
+
+
 def test_validate_only_checks_immutable_definition_without_writing() -> None:
     class ValidationSession:
         def __init__(self) -> None:
