@@ -5,6 +5,8 @@ services:
     image: postgres:16-alpine
     container_name: stock-data-postgres
     restart: unless-stopped
+    # Keep an expensive analytical query from competing with the rest of Unraid.
+    mem_limit: 2g
     shm_size: 1gb
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-stockdata}
@@ -24,6 +26,7 @@ services:
     build: .
     image: stock-data-repository:local
     container_name: stock-data-migrate
+    mem_limit: 1g
     env_file: .env
     command: ["alembic", "upgrade", "head"]
     depends_on:
@@ -44,6 +47,7 @@ services:
     pull_policy: never
     container_name: stock-data-api
     restart: unless-stopped
+    mem_limit: 1g
     env_file: .env
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
@@ -66,7 +70,7 @@ services:
     pull_policy: never
     container_name: stock-data-worker
     restart: unless-stopped
-    mem_limit: 8g
+    mem_limit: 3g
     env_file: .env
     command: ["python", "-m", "app.scheduler"]
     volumes:
@@ -82,7 +86,10 @@ services:
     pull_policy: never
     container_name: stock-data-mcp
     restart: unless-stopped
-    mem_limit: 8g
+    # Historical scenarios run here.  The implementation processes one market
+    # date at a time, so this is deliberately below the host-wide budget while
+    # retaining ample room for the two-year comparison.
+    mem_limit: 6g
     env_file: .env
     command: ["python", "-m", "app.mcp_server"]
     ports:
@@ -107,6 +114,7 @@ services:
     image: stock-data-tunnel-client:0.0.10
     container_name: stock-data-tunnel
     restart: unless-stopped
+    mem_limit: 256m
     environment:
       CONTROL_PLANE_TUNNEL_ID: ${OPENAI_TUNNEL_ID:?Set OPENAI_TUNNEL_ID in .env}
       CONTROL_PLANE_API_KEY: ${OPENAI_TUNNEL_API_KEY:?Set OPENAI_TUNNEL_API_KEY in .env}
