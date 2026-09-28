@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -10,8 +10,10 @@ from app.services.strategy_config import list_strategy_profiles, with_nested_ove
 from app.services.strategy_replay import decline_screen, replay_configuration, score_feature
 from app.services.strategy_scenarios import (
     DECLINE_COMPARISON_SCENARIOS,
+    MAX_SCENARIO_DAYS,
     resolve_strategy_scenario,
     run_decline_filter_comparison,
+    validate_scenario_date_range,
 )
 from app.services.strategy_simulation import (
     Bar,
@@ -548,6 +550,21 @@ def test_decline_comparison_reports_empty_signal_scenario(monkeypatch) -> None:
 
     assert all(item["simulation_status"] == "no_actionable_signals" for item in report["scenarios"])
     assert all(item["signals"] == 0 for item in report["scenarios"])
+
+
+def test_scenario_range_rejects_invalid_and_oversized_windows() -> None:
+    with pytest.raises(ValueError, match="start date"):
+        validate_scenario_date_range(date(2026, 2, 2), date(2026, 2, 1))
+
+    with pytest.raises(ValueError, match="two-calendar-year"):
+        validate_scenario_date_range(
+            date(2024, 1, 1),
+            date(2024, 1, 1) + timedelta(days=MAX_SCENARIO_DAYS + 1),
+        )
+
+
+def test_scenario_range_allows_supported_two_year_window() -> None:
+    validate_scenario_date_range(date(2024, 8, 5), date(2026, 8, 5))
 
 
 def test_constructive_volume_requirement_blocks_low_volume() -> None:
