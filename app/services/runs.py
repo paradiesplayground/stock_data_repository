@@ -1,11 +1,15 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.models import IngestionRun
 
 DEFAULT_STALE_RUN_AGE = timedelta(hours=6)
+SCHEDULER_SHUTDOWN_ERROR = (
+    "Interrupted during scheduler shutdown; the scheduler may safely run it again."
+)
 
 
 def recover_stale_ingestion_runs(
@@ -35,6 +39,42 @@ def recover_stale_ingestion_runs(
     if rows:
         session.commit()
     return {run.job_name for run in rows}
+
+
+def interrupt_running_ingestion_runs(
+    session: Session,
+    *,
+    now: datetime | None = None,
+) -> set[str]:
+    """Close active runs before a scheduler process exits cleanly."""
+    now = now or datetime.now(timezone.utc)
+    rows = (
+        session.query(IngestionRun)
+        .filter(IngestionRun.status == "running")
+        .all()
+    )
+    for run in rows:
+        run.status = "failed"
+        run.completed_at_utc = now
+        run.error_message = SCHEDULER_SHUTDOWN_ERROR
+    if rows:
+        session.commit()
+    return {run.job_name for run in rows}
+
+
+def latest_run_was_interrupted(session: Session, job_name: str) -> bool:
+    """Return whether the latest run was stopped by a clean scheduler shutdown."""
+    run = session.scalar(
+        select(IngestionRun)
+        .where(IngestionRun.job_name == job_name)
+        .order_by(desc(IngestionRun.started_at_utc))
+        .limit(1)
+    )
+    return bool(
+        run
+        and run.status == "failed"
+        and run.error_message == SCHEDULER_SHUTDOWN_ERROR
+    )
 
 
 class RunTracker:

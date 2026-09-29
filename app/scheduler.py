@@ -16,7 +16,11 @@ from app.services.massive_ingestion import (
     sync_reference_data,
 )
 from app.services.sec_ingestion import sync_sec_incremental
-from app.services.runs import recover_stale_ingestion_runs
+from app.services.runs import (
+    interrupt_running_ingestion_runs,
+    latest_run_was_interrupted,
+    recover_stale_ingestion_runs,
+)
 from app.services.daily_stock_alert_workflow import advance_eligible_daily_stock_alert_preparations
 
 logger = logging.getLogger(__name__)
@@ -68,11 +72,17 @@ def main() -> None:
     settings = get_settings()
     with SessionLocal() as session:
         recovered = recover_stale_ingestion_runs(session)
+        retry_interrupted_features = latest_run_was_interrupted(
+            session, "derived_features"
+        )
         if recovered:
             logger.warning("Recovered stale ingestion job(s) at startup: %s", sorted(recovered))
     if "massive_corporate_actions" in recovered:
         logger.warning("Immediately rerunning recovered corporate-actions sync")
         _run_corporate_actions()
+    if "derived_features" in recovered or retry_interrupted_features:
+        logger.warning("Immediately rerunning interrupted derived-features sync")
+        _run_features()
     scheduler = BlockingScheduler(timezone=settings.timezone)
     common = {"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600}
     scheduler.add_job(
@@ -121,7 +131,16 @@ def main() -> None:
     )
     signal.signal(signal.SIGTERM, lambda *_: scheduler.shutdown(wait=False))
     logger.info("Starting ingestion scheduler in %s", settings.timezone)
-    scheduler.start()
+    try:
+        scheduler.start()
+    finally:
+        with SessionLocal() as session:
+            interrupted = interrupt_running_ingestion_runs(session)
+        if interrupted:
+            logger.warning(
+                "Marked active ingestion job(s) interrupted during scheduler shutdown: %s",
+                sorted(interrupted),
+            )
 
 
 if __name__ == "__main__":
