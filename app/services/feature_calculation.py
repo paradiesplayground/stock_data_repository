@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 CALCULATION_VERSION = "1.5.0"
 HUNDRED = Decimal("100")
+FEATURE_CALCULATION_BATCH_SIZE = 100
 
 REFERENCE_FIELDS = (
     "name",
@@ -1005,131 +1006,149 @@ def calculate_daily_features(
 
         securities = _feature_universe(session, effective_date)
         seen = len(securities)
-        tickers = {security.ticker for security in securities}
-        ciks = {security.cik for security in securities if security.cik}
         cik_ticker_counts: dict[str, int] = defaultdict(int)
         for security in securities:
             if security.cik:
                 cik_ticker_counts[security.cik] += 1
         history_start = effective_date - timedelta(days=400)
 
-        price_query_tickers = tickers | {"QQQ"}
-        price_rows = session.scalars(
+        qqq_history = session.scalars(
             select(DailyPriceBar)
             .where(
-                DailyPriceBar.ticker.in_(price_query_tickers),
+                DailyPriceBar.ticker == "QQQ",
                 DailyPriceBar.trade_date.between(history_start, effective_date),
             )
-            .order_by(DailyPriceBar.ticker, DailyPriceBar.trade_date)
+            .order_by(DailyPriceBar.trade_date)
         ).all()
-        prices_by_ticker: dict[str, list[DailyPriceBar]] = defaultdict(list)
-        for row in price_rows:
-            prices_by_ticker[row.ticker].append(row)
-        qqq_history = prices_by_ticker.get("QQQ", [])
         benchmark_20d_return = None
         if qqq_history:
             benchmark_metrics, _ = _price_metrics(qqq_history, effective_date)
             benchmark_20d_return = benchmark_metrics["price_change_20d_pct"]
 
-        fact_rows = session.scalars(
-            select(FinancialFact).where(
-                FinancialFact.cik.in_(ciks),
-                or_(
-                    FinancialFact.concept.in_(FEATURE_FACT_CONCEPTS),
-                    func.lower(FinancialFact.label).in_(
-                        tuple(label.casefold() for label in CUSTOM_CASH_CAPEX_LABELS)
-                    ),
-                ),
-                FinancialFact.period_end >= effective_date - timedelta(days=900),
-                FinancialFact.period_end <= effective_date,
-                or_(
-                    FinancialFact.filed_date.is_(None),
-                    FinancialFact.filed_date <= effective_date,
-                ),
-            )
-        ).all()
-        facts_by_cik: dict[str, dict[str, list[FinancialFact]]] = defaultdict(
-            lambda: defaultdict(list)
-        )
-        for fact in fact_rows:
-            facts_by_cik[fact.cik][fact.concept].append(fact)
-
-        output_rows: list[dict[str, Any]] = []
         source_cutoff = datetime.now(timezone.utc)
-        for position, security in enumerate(securities, start=1):
-            price_history = prices_by_ticker.get(security.ticker, [])
-            if not price_history:
-                continue
-            price_metrics, price_flags = _price_metrics(
-                price_history, effective_date, benchmark_20d_return
-            )
-            financial_metrics, financial_flags = _financial_metrics(
-                facts_by_cik.get(security.cik or "", {}),
-                effective_date,
-                price_metrics["close"],
-            )
-            metadata_flags = []
-            if not security.cik:
-                metadata_flags.append("missing_cik")
-            if not security.sic_code:
-                metadata_flags.append("missing_sic")
-            if security.cik and cik_ticker_counts[security.cik] > 1:
-                metadata_flags.append("shared_cik_multiple_tickers")
-            if security.reference_metadata_imputed:
-                metadata_flags.append("reference_metadata_imputed")
-            if not security.current_active:
-                metadata_flags.append("historical_active_inferred_from_price_bar")
-            flags = sorted(set(price_flags + financial_flags + metadata_flags))
-            output_rows.append(
-                {
-                    "ticker": security.ticker,
-                    "as_of_date": effective_date,
-                    "reference_name": security.name,
-                    "reference_primary_exchange": security.primary_exchange,
-                    "reference_security_type": security.security_type,
-                    "reference_active": security.active,
-                    "reference_sic_code": security.sic_code,
-                    "reference_sic_description": security.sic_description,
-                    **price_metrics,
-                    **financial_metrics,
-                    "calculation_version": CALCULATION_VERSION,
-                    "quality_flags": flags,
-                    "source_data_cutoff_utc": source_cutoff,
-                    "source_manifest": {
-                        "market_source": "massive",
-                        "market_date": price_metrics["price_date"].isoformat(),
-                        "financial_source": "sec-edgar",
-                        "financial_filing_cutoff_date": effective_date.isoformat(),
-                        "benchmark": "QQQ",
-                        "feature_universe": "exact-session-price-bar-v2",
-                        "security_reference": {
-                            "name": security.name,
-                            "primary_exchange": security.primary_exchange,
-                            "security_type": security.security_type,
-                            "active": security.active,
-                            "current_active": security.current_active,
-                            "sic_code": security.sic_code,
-                            "sic_description": security.sic_description,
-                            "metadata_imputed": security.reference_metadata_imputed,
-                            "observed_at_utc": (
-                                security.reference_observed_at_utc.isoformat()
-                                if security.reference_observed_at_utc
-                                else None
-                            ),
-                        },
-                    },
-                }
-            )
-            if position % 1000 == 0:
-                logger.info(
-                    "Calculated features for %s/%s securities",
-                    position,
-                    len(securities),
+        price_rows_read = len(qqq_history)
+        financial_facts_read = 0
+        for offset in range(0, len(securities), FEATURE_CALCULATION_BATCH_SIZE):
+            security_batch = securities[offset : offset + FEATURE_CALCULATION_BATCH_SIZE]
+            batch_tickers = {security.ticker for security in security_batch}
+            price_rows = session.scalars(
+                select(DailyPriceBar)
+                .where(
+                    DailyPriceBar.ticker.in_(batch_tickers),
+                    DailyPriceBar.trade_date.between(history_start, effective_date),
                 )
+                .order_by(DailyPriceBar.ticker, DailyPriceBar.trade_date)
+            ).all()
+            price_rows_read += len(price_rows)
+            prices_by_ticker: dict[str, list[DailyPriceBar]] = defaultdict(list)
+            for row in price_rows:
+                prices_by_ticker[row.ticker].append(row)
 
-        for start in range(0, len(output_rows), 500):
-            batch = output_rows[start : start + 500]
-            statement = insert(SecurityDailyFeature).values(batch)
+            batch_ciks = {security.cik for security in security_batch if security.cik}
+            fact_rows: list[FinancialFact] = []
+            if batch_ciks:
+                fact_rows = session.scalars(
+                    select(FinancialFact).where(
+                        FinancialFact.cik.in_(batch_ciks),
+                        or_(
+                            FinancialFact.concept.in_(FEATURE_FACT_CONCEPTS),
+                            func.lower(FinancialFact.label).in_(
+                                tuple(
+                                    label.casefold()
+                                    for label in CUSTOM_CASH_CAPEX_LABELS
+                                )
+                            ),
+                        ),
+                        FinancialFact.period_end >= effective_date - timedelta(days=900),
+                        FinancialFact.period_end <= effective_date,
+                        or_(
+                            FinancialFact.filed_date.is_(None),
+                            FinancialFact.filed_date <= effective_date,
+                        ),
+                    )
+                ).all()
+            financial_facts_read += len(fact_rows)
+            facts_by_cik: dict[str, dict[str, list[FinancialFact]]] = defaultdict(
+                lambda: defaultdict(list)
+            )
+            for fact in fact_rows:
+                facts_by_cik[fact.cik][fact.concept].append(fact)
+
+            output_rows: list[dict[str, Any]] = []
+            for position, security in enumerate(security_batch, start=offset + 1):
+                price_history = prices_by_ticker.get(security.ticker, [])
+                if not price_history:
+                    continue
+                price_metrics, price_flags = _price_metrics(
+                    price_history, effective_date, benchmark_20d_return
+                )
+                financial_metrics, financial_flags = _financial_metrics(
+                    facts_by_cik.get(security.cik or "", {}),
+                    effective_date,
+                    price_metrics["close"],
+                )
+                metadata_flags = []
+                if not security.cik:
+                    metadata_flags.append("missing_cik")
+                if not security.sic_code:
+                    metadata_flags.append("missing_sic")
+                if security.cik and cik_ticker_counts[security.cik] > 1:
+                    metadata_flags.append("shared_cik_multiple_tickers")
+                if security.reference_metadata_imputed:
+                    metadata_flags.append("reference_metadata_imputed")
+                if not security.current_active:
+                    metadata_flags.append("historical_active_inferred_from_price_bar")
+                flags = sorted(set(price_flags + financial_flags + metadata_flags))
+                output_rows.append(
+                    {
+                        "ticker": security.ticker,
+                        "as_of_date": effective_date,
+                        "reference_name": security.name,
+                        "reference_primary_exchange": security.primary_exchange,
+                        "reference_security_type": security.security_type,
+                        "reference_active": security.active,
+                        "reference_sic_code": security.sic_code,
+                        "reference_sic_description": security.sic_description,
+                        **price_metrics,
+                        **financial_metrics,
+                        "calculation_version": CALCULATION_VERSION,
+                        "quality_flags": flags,
+                        "source_data_cutoff_utc": source_cutoff,
+                        "source_manifest": {
+                            "market_source": "massive",
+                            "market_date": price_metrics["price_date"].isoformat(),
+                            "financial_source": "sec-edgar",
+                            "financial_filing_cutoff_date": effective_date.isoformat(),
+                            "benchmark": "QQQ",
+                            "feature_universe": "exact-session-price-bar-v2",
+                            "security_reference": {
+                                "name": security.name,
+                                "primary_exchange": security.primary_exchange,
+                                "security_type": security.security_type,
+                                "active": security.active,
+                                "current_active": security.current_active,
+                                "sic_code": security.sic_code,
+                                "sic_description": security.sic_description,
+                                "metadata_imputed": security.reference_metadata_imputed,
+                                "observed_at_utc": (
+                                    security.reference_observed_at_utc.isoformat()
+                                    if security.reference_observed_at_utc
+                                    else None
+                                ),
+                            },
+                        },
+                    }
+                )
+                if position % 1000 == 0:
+                    logger.info(
+                        "Calculated features for %s/%s securities",
+                        position,
+                        len(securities),
+                    )
+
+            if not output_rows:
+                continue
+            statement = insert(SecurityDailyFeature).values(output_rows)
             excluded = statement.excluded
             update_values = {
                 column.name: getattr(excluded, column.name)
@@ -1150,7 +1169,7 @@ def calculate_daily_features(
             )
             session.execute(statement)
             session.commit()
-            written += len(batch)
+            written += len(output_rows)
 
         tracker.succeed(
             seen,
@@ -1162,8 +1181,8 @@ def calculate_daily_features(
                 "feature_universe_rows": seen,
                 "feature_universe": "exact-session-price-bar-v2",
                 "calculation_version": CALCULATION_VERSION,
-                "price_rows_read": len(price_rows),
-                "financial_facts_read": len(fact_rows),
+                "price_rows_read": price_rows_read,
+                "financial_facts_read": financial_facts_read,
             },
         )
         return seen, written
