@@ -1,5 +1,13 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-09-29 — Derived-feature recovery and memory containment
+
+- **Problem diagnosed:** Sep. 28 market bars were current, but the feature snapshot remained Sep. 25 because the scheduled feature process was cleanly interrupted 15 seconds after it began. Its run row remained `running`, so the replacement scheduler had no same-day catch-up. A manual recovery then exposed the underlying capacity failure: loading the complete price and SEC-fact universe at once exceeded the worker's 3 GiB cgroup limit and the kernel OOM-killed the calculation process.
+- **Implemented:** A clean scheduler shutdown now marks active ingestion runs failed with an explicit retry-safe interruption marker. On startup, the worker immediately retries an interrupted or stale derived-feature run; ordinary calculation failures are not retried by that path.
+- **Implemented:** Feature calculation now loads price history and financial facts in 100-security batches, upserting each completed batch. It preserves the existing calculation version, source inputs, feature-universe contract, and idempotent `(ticker, as_of_date, calculation_version)` writes while avoiding full-universe ORM materialization.
+- **Verified / deployed:** Commits `15bc5fb` and `f59c0b5` were deployed to Unraid. The authoritative container suite passed **223 tests** and Ruff. The recovery ran successfully for Sep. 28 with **5,161** feature rows, matching the feature universe; market data had 12,570 source rows. API health returned OK. No daily alert was prepared, finalized, published, or emailed.
+- **Current status:** The former orphaned runs are retained as failed with an explicit interruption reason; the latest derived-feature run is succeeded for Sep. 28, so the market and feature freshness gate can resolve ready for that expected date. The duplicate idempotent recovery execution during deployment wrote the same keys and both completed successfully.
+
 ## 2026-09-28 — Historical scenario host-memory containment
 
 - **Implemented:** Capped the active stock stack at approximately 12.25 GB: PostgreSQL 2 GB, API 1 GB, worker 3 GB, MCP 6 GB, and tunnel 256 MB (with a temporary 1 GB migration cap). This replaces the previous two 8 GB limits plus unbounded database/API processes and preserves host headroom for Unraid and other services.
