@@ -96,11 +96,14 @@ def archive_stale_lifecycles(
     )).all()
     archived: list[str] = []
     for row in rows:
-        if row.ticker.upper() in observed_tickers or row.last_discovery_screen_date is None:
+        if row.ticker.upper() in observed_tickers:
+            continue
+        stale_anchor = row.last_discovery_screen_date or row.first_discovered_date
+        if stale_anchor is None:
             continue
         sessions_absent = trading_sessions_since(
             session,
-            start_date=row.last_discovery_screen_date,
+            start_date=stale_anchor,
             end_date=as_of_date,
         )
         if sessions_absent < timeout_trading_sessions:

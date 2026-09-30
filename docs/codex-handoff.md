@@ -1,5 +1,11 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-09-30 — Phase 2 stale-timeout bootstrap correction
+
+- **Implemented:** Stale lifecycle archival now falls back from a null `last_discovery_screen_date` to `first_discovered_date`. This covers rollout-era dropped/reassessed candidates without changing historical alert payloads or exempting them from timeout enforcement.
+- **Regression coverage:** The null-anchor case remains active at 29 stored sessions and archives at 30 with `STALE_TIMEOUT`, archive date/reason, and cleared `active_trigger`. The complete local suite passes 243 tests and Ruff passes.
+- **Status:** Deployment is pending for this correction; no production alert, publication, or email was run.
+
 ## 2026-09-30 — Phase 2 stale lifecycle timeout
 
 - **Implemented:** Candidate lifecycle persistence now archives a tracked candidate as `INVALIDATED` after it has been absent from the discovery universe for a configurable number of stored market sessions. The initial default is 30 sessions, configured with `CANDIDATE_LIFECYCLE_STALE_TIMEOUT_TRADING_SESSIONS`.

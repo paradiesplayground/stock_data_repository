@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -118,6 +119,47 @@ def test_stale_lifecycle_does_not_archive_before_timeout(monkeypatch):
         session, strategy_key="dynamic_swing_buy_alerts", as_of_date="2026-09-15",
         observed_tickers=set(), timeout_trading_sessions=30,
     ) == []
+
+
+def test_stale_lifecycle_bootstraps_timeout_from_first_discovered_date(monkeypatch):
+    row = SimpleNamespace(
+        ticker="KLIC",
+        lifecycle_state="RECOVERING",
+        first_discovered_date=date(2026, 8, 1),
+        last_discovery_screen_date=None,
+        lifecycle_state_since=None,
+        last_material_event=None,
+        last_material_event_date=None,
+        archive_reason=None,
+        archived_date=None,
+        active_trigger=Decimal("91.94"),
+    )
+    session = SimpleNamespace(scalars=lambda statement: SimpleNamespace(all=lambda: [row]))
+    anchors = []
+    session_counts = iter((29, 30))
+
+    def count_sessions(*args, **kwargs):
+        anchors.append(kwargs["start_date"])
+        return next(session_counts)
+
+    monkeypatch.setattr("app.services.candidate_lifecycle.trading_sessions_since", count_sessions)
+
+    assert archive_stale_lifecycles(
+        session, strategy_key="dynamic_swing_buy_alerts", as_of_date=date(2026, 9, 15),
+        observed_tickers=set(), timeout_trading_sessions=30,
+    ) == []
+    assert row.lifecycle_state == "RECOVERING"
+
+    assert archive_stale_lifecycles(
+        session, strategy_key="dynamic_swing_buy_alerts", as_of_date=date(2026, 9, 15),
+        observed_tickers=set(), timeout_trading_sessions=30,
+    ) == ["KLIC"]
+    assert anchors == [date(2026, 8, 1), date(2026, 8, 1)]
+    assert row.lifecycle_state == "INVALIDATED"
+    assert row.last_material_event == "STALE_TIMEOUT"
+    assert row.archived_date == date(2026, 9, 15)
+    assert row.archive_reason == "candidate absent from discovery for 30 trading sessions"
+    assert row.active_trigger is None
 
 
 def test_canonical_finalization_preserves_active_trigger_and_recalculates_gates():
