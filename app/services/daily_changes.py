@@ -94,23 +94,34 @@ def _discovery_decline(candidate: dict[str, Any]) -> Decimal | None:
     return _decimal((candidate.get("metrics") or {}).get("price_change_12w_pct"))
 
 
-def _deterministic_gate_failures(candidate: dict[str, Any]) -> set[str]:
-    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
-    values: list[Any] = []
-    for key in ("deterministic_gate_failures", "failed_deterministic_gates", "deterministic_failures"):
-        values.extend(candidate.get(key) or [])
-        values.extend(payload.get(key) or [])
-    return {str(value).strip().lower() for value in values if str(value).strip()}
-
-
 def _recovery_is_meaningful_reason(before: dict[str, Any], now: dict[str, Any]) -> bool:
-    """Use canonical deterministic gate data; reporting must not recreate strategy thresholds."""
-    prior_failures = _deterministic_gate_failures(before)
-    current_failures = _deterministic_gate_failures(now)
-    decline_names = {"decline_screen", "price_change_12w", "price_change_12w_pct", "discovery_decline"}
-    if not (prior_failures & decline_names) or current_failures:
+    """Recognize a recovery exit from the canonical candidate transition only."""
+    before_payload = before.get("payload") if isinstance(before.get("payload"), dict) else {}
+    now_payload = now.get("payload") if isinstance(now.get("payload"), dict) else {}
+    if not (
+        before_payload.get("in_raw_pool") is True
+        and now_payload.get("in_raw_pool") is False
+        and str(before.get("screen_bucket") or "").lower() == "qualified"
+        and str(now.get("screen_bucket") or "").lower() == "dropped"
+    ):
         return False
-    return not _blockers(now) and not (now.get("deterministic_risk_flags") or [])
+    presentation = now_payload.get("presentation") if isinstance(now_payload.get("presentation"), dict) else {}
+    presentation_blockers = presentation.get("blockers") if isinstance(presentation, dict) else []
+    blocker_text = [
+        " ".join(str(blocker.get(key) or "") for key in ("gate", "reason", "clear_condition")).lower()
+        for blocker in presentation_blockers or []
+        if isinstance(blocker, dict)
+    ]
+    decline_failure = any("12-week price change" in text or "decline screen" in text for text in blocker_text)
+    independent_screen_failure = any(
+        text.startswith("screen:") and "12-week price change" not in text and "decline screen" not in text
+        for text in blocker_text
+    )
+    independent_risk_failure = bool(now.get("deterministic_risk_flags")) or any(
+        text.startswith("deterministic risk review:") or text.startswith("risk review:")
+        for text in blocker_text
+    )
+    return decline_failure and not independent_screen_failure and not independent_risk_failure
 
 
 def _is_already_breached(candidate: dict[str, Any]) -> bool:
@@ -134,9 +145,9 @@ def _report_candidate(candidate: dict[str, Any], event: dict[str, Any]) -> dict[
     conditions = [str(value) for value in candidate.get("buy_conditions") or [] if value]
     condition_text = " ".join(conditions).lower()
     if "LEFT_DISCOVERY_DUE_TO_RECOVERY" in event_types:
-        next_step = "Monitor after the recovery exit; rebuild a qualifying setup before considering entry."
+        next_step = "Continue tracking the recovery; watch for breakout confirmation and remaining entry gates."
     elif "ENTERED_NEAR_TRIGGER" in event_types:
-        next_step = "Confirm breakout above the active trigger."
+        next_step = "Confirm breakout above the current trigger."
     elif "RISK_CHANGE" in event_types or any(word in condition_text for word in ("financing", "dilution")):
         next_step = "Resolve financing/dilution risk before entry."
     elif "market gate" in condition_text or candidate.get("market_regime_gate_passed") is False:

@@ -229,7 +229,8 @@ def test_daily_changes_formats_trigger_precision_and_ignores_research_only_downg
 
 def test_klic_recovery_exit_is_prominent_and_not_a_generic_removal(monkeypatch) -> None:
     prior_candidate = _candidate("KLIC", "RADAR", "8", "88", [])
-    prior_candidate["payload"]["deterministic_gate_failures"] = ["decline_screen"]
+    prior_candidate["payload"].update({"in_raw_pool": True})
+    prior_candidate["screen_bucket"] = "qualified"
     prior_candidate["metrics"].update({
         "price_change_12w_pct": "-22",
         "revenue_ttm_yoy_pct": "70",
@@ -237,6 +238,15 @@ def test_klic_recovery_exit_is_prominent_and_not_a_generic_removal(monkeypatch) 
         "avg_dollar_volume_20d": "100000000",
     })
     current_candidate = _candidate("KLIC", "NOT_ELIGIBLE", "4", "93.72", [])
+    current_candidate["payload"].update({
+        "in_raw_pool": False,
+        "presentation": {"blockers": [{
+            "gate": "Screen: 12-week price change",
+            "reason": "12-week price change is -11.5%; required <= -20.0%.",
+            "clear_condition": "12-week price change must be <= -20.0%.",
+        }]},
+    })
+    current_candidate["screen_bucket"] = "dropped"
     current_candidate["metrics"].update({
         "price_change_12w_pct": "-11.5",
         "revenue_ttm_yoy_pct": "70",
@@ -263,12 +273,23 @@ def test_klic_recovery_exit_is_prominent_and_not_a_generic_removal(monkeypatch) 
     assert "RECOVERY_PROGRESS" in changes["events"][0]["event_types"]
     assert changes["report_sections"]["needs_attention_today"][0]["ticker"] == "KLIC"
     assert "recovered out of the original 12-week decline screen" in render_daily_changes(changes)
+    assert changes["report_sections"]["needs_attention_today"][0]["what_matters_next"] == "Continue tracking the recovery; watch for breakout confirmation and remaining entry gates."
 
 
 def test_recovery_exit_is_not_labeled_recovery_when_another_hard_failure_remains(monkeypatch) -> None:
     prior_candidate = _candidate("KLIC", "RADAR", "8", "88", [])
-    prior_candidate["payload"]["deterministic_gate_failures"] = ["decline_screen"]
-    current_candidate = _candidate("KLIC", "NOT_ELIGIBLE", "4", "93", ["resolve financing risk"])
+    prior_candidate["payload"].update({"in_raw_pool": True})
+    prior_candidate["screen_bucket"] = "qualified"
+    current_candidate = _candidate("KLIC", "NOT_ELIGIBLE", "4", "93", [])
+    current_candidate["payload"].update({
+        "in_raw_pool": False,
+        "presentation": {"blockers": [
+            {"gate": "Screen: 12-week price change", "reason": "12-week price change is -11%; required <= -20.0%.", "clear_condition": "12-week price change must be <= -20.0%."},
+            {"gate": "Deterministic risk review", "reason": "share count growth at or above 15 pct.", "clear_condition": "Year-over-year share-count growth must be below 15.0%."},
+        ]},
+    })
+    current_candidate["screen_bucket"] = "dropped"
+    current_candidate["deterministic_risk_flags"] = ["share_count_growth_at_or_above_15_pct"]
     current_candidate["metrics"]["price_change_12w_pct"] = "-11"
     prior = {"run_id": "prior", "as_of_date": "2026-09-28", "candidates": [prior_candidate], "evidence": []}
     monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
@@ -325,7 +346,7 @@ def test_report_next_step_uses_specific_event_action(monkeypatch) -> None:
     })
 
     item = changes["report_sections"]["needs_attention_today"][0]
-    assert item["what_matters_next"] == "Confirm breakout above the active trigger."
+    assert item["what_matters_next"] == "Confirm breakout above the current trigger."
 
 
 def test_rendered_sections_consolidate_events_and_keep_recovery_watch_separate(monkeypatch) -> None:
