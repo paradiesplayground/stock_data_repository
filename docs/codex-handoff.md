@@ -1,5 +1,12 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-09-30 — Phase 3 decline-rule comparison
+
+- **Executed:** Ran the bounded, resumable six-scenario historical comparison on the deployed stack for 2024-08-05 through 2026-08-05 using feature calculation version 1.5.0. Coverage was confirmed from 2024-08-05 through 2026-09-29 across 540 stored sessions before the run.
+- **Results:** All six scenarios completed. `price_change <= -15%` was the strongest simulated result in this window: 9 closed trades, 14.86% total return, 0.396R expectancy, 44.4% win rate, 2.27 profit factor, and -4.04% maximum drawdown. `price_change <= -10%` produced 14 closed trades but lower 0.192R expectancy and -9.74% maximum drawdown. Drawdown-based and either-condition variants each produced 15 closed trades, 0.118R expectancy, 8.35% total return, and -7.33% maximum drawdown.
+- **Boundary:** This is historical/replay evidence only, with non-decline parameters held to the base profile. Production strategy configuration, daily alerts, publication, and email were not changed or run. Results remain exploratory because the sample contains 9–15 closed trades per scenario.
+- **Verified / deployed:** The comparison used the already deployed safeguarded implementation; live API health/readiness passed and the feature snapshot was current before execution. No code deployment was needed for this run. Phase 3 controlled comparison is complete; any production decline-threshold change would require a separate explicit decision and validation.
+
 ## 2026-09-30 — Phase 2 observation snapshot integrity correction
 
 - **Corrected:** Lifecycle transition observations are now appended after the lifecycle row calculates its resulting active trigger, rolling trigger, and trigger distance. Observations preserve the prior state separately and use `payload.rolling_trigger` for the rolling reference.
