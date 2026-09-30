@@ -1,7 +1,9 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 from app.services.candidate_lifecycle import apply_active_trigger, transition_state
 from app.services.daily_stock_alert_candidate_contract import normalize_candidate_state
+from app.services import strategy_tracking
 
 
 def _candidate(*, status="RADAR", distance="8", decline="-18", risk=None):
@@ -96,3 +98,76 @@ def test_canonical_finalization_preserves_active_trigger_and_recalculates_gates(
     assert normalized["distance_to_trigger_pct"] == str(((Decimal("91.94") - Decimal("93.00")) / Decimal("91.94")) * 100)
     assert normalized["technical_gate_passed"] is True
     assert normalized["payload"]["active_trigger"] == "91.94"
+
+
+def test_canonical_finalization_drops_stale_rolling_trigger_gates_but_preserves_independent_gates():
+    candidate = {
+        "ticker": "KLIC",
+        "screen_bucket": "qualified",
+        "buyability_status": "RADAR",
+        "current_price": "93.00",
+        "trigger_price": "95.10",
+        "distance_to_trigger_pct": "2.2",
+        "technical_gate_passed": False,
+        "market_regime_gate_passed": False,
+        "remaining_gate_count": 4,
+        "invalidation_price": "88",
+        "metrics": {"close": "93.00"},
+        "payload": {"active_trigger": "91.94", "lifecycle": {"active_trigger": "91.94"}},
+    }
+
+    normalized = normalize_candidate_state(
+        candidate,
+        market_regime_gate_passed=False,
+        fresh_checkpoint=None,
+    )
+
+    assert normalized["trigger_price"] == "91.94"
+    assert normalized["distance_to_trigger_pct"] == str(((Decimal("91.94") - Decimal("93.00")) / Decimal("91.94")) * 100)
+    assert normalized["technical_gate_passed"] is True
+    assert normalized["market_regime_gate_passed"] is False
+    assert normalized["remaining_gate_count"] == 2
+
+
+def test_canonical_run_persists_each_lifecycle_once(monkeypatch):
+    calls = []
+    row = SimpleNamespace(
+        lifecycle_state="RECOVERING",
+        lifecycle_state_since=SimpleNamespace(isoformat=lambda: "2026-09-29"),
+        days_on_watch=1,
+        active_trigger=Decimal("91.94"),
+        active_trigger_set_date=None,
+        rolling_trigger=Decimal("95.10"),
+        current_trigger_distance_pct=Decimal("-1.15"),
+        best_trigger_distance_pct=Decimal("-1.15"),
+        last_material_event=None,
+        archive_reason=None,
+    )
+
+    monkeypatch.setattr(strategy_tracking, "get_lifecycle", lambda *args: None)
+    monkeypatch.setattr(
+        strategy_tracking,
+        "persist_lifecycle",
+        lambda *args, **kwargs: calls.append(kwargs["candidate"]["ticker"]) or row,
+    )
+
+    strategy_tracking._persist_run_lifecycles(
+        SimpleNamespace(),
+        strategy_key="dynamic_swing_buy_alerts",
+        as_of_date="2026-09-29",
+        normalized_candidates=[
+            {
+                "ticker": "KLIC",
+                "decision": {
+                    "buyability_status": "RADAR",
+                    "distance_to_trigger_pct": "-1.15",
+                    "current_price": "93.00",
+                    "trigger_price": "91.94",
+                },
+                "metrics": {},
+                "payload": {},
+            }
+        ],
+    )
+
+    assert calls == ["KLIC"]

@@ -111,6 +111,7 @@ def normalize_candidate_state(
     setup_bucket = str(normalized.get("screen_bucket") or "").strip().lower()
     setup_status = str(normalized.get("buyability_status") or "").strip().upper()
     setup_remaining = int(normalized.get("remaining_gate_count") or 0)
+    previous_represented_remaining = represented_gate_count(normalized)
     _apply_canonical_active_trigger(normalized)
 
     if (
@@ -139,7 +140,8 @@ def normalize_candidate_state(
     normalized["buyability_status"] = setup_status
     normalized["screen_bucket"] = effective_bucket
     represented_remaining = represented_gate_count(normalized)
-    normalized["remaining_gate_count"] = max(setup_remaining, represented_remaining)
+    independent_remaining = max(0, setup_remaining - previous_represented_remaining)
+    normalized["remaining_gate_count"] = independent_remaining + represented_remaining
 
     # ALMOST_READY is not a loose label: v0.8 requires precisely one
     # represented gate plus a structured, near-trigger risk plan. Derive that
