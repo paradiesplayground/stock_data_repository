@@ -13,6 +13,19 @@ STATUS_PRIORITY = {
     "RADAR": 2,
     "NOT_ELIGIBLE": 3,
 }
+EVENT_PRIORITY = {
+    "BECAME_ACTIONABLE": 0,
+    "ENTERED_NEAR_TRIGGER": 1,
+    "LEFT_DISCOVERY_DUE_TO_RECOVERY": 2,
+    "RECOVERY_PROGRESS": 3,
+    "NEW_CANDIDATE": 4,
+    "FUNDAMENTAL_CHANGE": 5,
+    "RISK_CHANGE": 6,
+    "STRUCTURAL_INVALIDATION": 7,
+    "ARCHIVED": 8,
+    "MINOR_CHANGE": 9,
+    "NO_MATERIAL_CHANGE": 10,
+}
 LEGACY_STATUS_EQUIVALENTS = {
     "BUY_SETUP": "BUY_NOW",
     "CONFIRMED_WAIT_FOR_ENTRY": "ALMOST_READY",
@@ -75,6 +88,39 @@ def _stop(candidate: dict[str, Any]) -> Decimal | None:
 
 def _score(candidate: dict[str, Any]) -> Decimal | None:
     return _decimal(candidate.get("setup_score", candidate.get("score")))
+
+
+def _discovery_decline(candidate: dict[str, Any]) -> Decimal | None:
+    return _decimal((candidate.get("metrics") or {}).get("price_change_12w_pct"))
+
+
+def _passes_recovery_screen(candidate: dict[str, Any]) -> bool:
+    """Return whether recovery is the meaningful reason for leaving discovery."""
+    metrics = candidate.get("metrics") or {}
+    if candidate.get("deterministic_risk_flags"):
+        return False
+    return all(
+        _decimal(metrics.get(field)) is not None
+        and _decimal(metrics.get(field)) >= _decimal(threshold)
+        for field, threshold in (
+            ("revenue_ttm_yoy_pct", "40"),
+            ("latest_quarter_revenue_yoy_pct", "40"),
+            ("avg_dollar_volume_20d", "30000000"),
+        )
+    )
+
+
+def _is_already_breached(candidate: dict[str, Any]) -> bool:
+    stop = _stop(candidate)
+    price = _decimal(candidate.get("current_price") or (candidate.get("metrics") or {}).get("close"))
+    return stop is not None and price is not None and price <= stop
+
+
+def _materially_changed_level(previous: Any, current: Any) -> bool:
+    old_level, new_level = _decimal(previous), _decimal(current)
+    if old_level is None or new_level is None:
+        return old_level != new_level
+    return abs(new_level - old_level) >= max(abs(old_level) * Decimal("0.01"), Decimal("0.01"))
 
 
 def _research_scope_only_status_change(before: dict[str, Any], now: dict[str, Any]) -> bool:
@@ -173,6 +219,8 @@ def build_daily_changes(
     blockers = []
     stop_breaches = []
     fundamental_changes = []
+    recovery_exits = []
+    events: list[dict[str, Any]] = []
     attention: dict[str, set[str]] = {}
 
     def attend(ticker: str, reason: str) -> None:
@@ -180,10 +228,38 @@ def build_daily_changes(
 
     for ticker in sorted(current.keys() - previous.keys()):
         attend(ticker, "new_candidate")
+        events.append({
+            "ticker": ticker,
+            "event_type": "NEW_CANDIDATE",
+            "text": f"{ticker} entered the tracked set.",
+        })
 
     for ticker in shared:
         now, before = current[ticker], previous[ticker]
         current_status, prior_status = _status(now), _status(before)
+        prior_decline, current_decline = _discovery_decline(before), _discovery_decline(now)
+        recovery_exit = (
+            prior_decline is not None
+            and current_decline is not None
+            and prior_decline <= Decimal("-20")
+            and current_decline > Decimal("-20")
+            and _passes_recovery_screen(now)
+        )
+        if recovery_exit:
+            recovery_exits.append({
+                "ticker": ticker,
+                "previous_decline_pct": str(prior_decline),
+                "current_decline_pct": str(current_decline),
+            })
+            attend(ticker, "left_discovery_due_to_recovery")
+            events.append({
+                "ticker": ticker,
+                "event_type": "LEFT_DISCOVERY_DUE_TO_RECOVERY",
+                "text": (
+                    f"{ticker} recovered out of the original 12-week decline screen "
+                    f"({_format_pct(prior_decline)} to {_format_pct(current_decline)})."
+                ),
+            })
         if current_status != prior_status and not _research_scope_only_status_change(before, now):
             old_priority = STATUS_PRIORITY.get(prior_status or "", 99)
             new_priority = STATUS_PRIORITY.get(current_status or "", 99)
@@ -197,6 +273,12 @@ def build_daily_changes(
                 }
             )
             attend(ticker, direction)
+            if current_status in {"BUY_NOW", "ALMOST_READY"} and prior_status not in {"BUY_NOW", "ALMOST_READY"}:
+                events.append({
+                    "ticker": ticker,
+                    "event_type": "BECAME_ACTIONABLE",
+                    "text": f"{ticker} became {current_status}.",
+                })
 
         old_distance, new_distance = _distance(before), _distance(now)
         if (
@@ -221,6 +303,12 @@ def build_daily_changes(
                 else "within_10_pct_of_trigger"
             )
             attend(ticker, reason)
+            if old_distance is None or old_distance > Decimal("10"):
+                events.append({
+                    "ticker": ticker,
+                    "event_type": "ENTERED_NEAR_TRIGGER",
+                    "text": f"{ticker} entered the near-trigger range at {_format_pct(new_distance)} below trigger.",
+                })
 
         old_blockers, new_blockers = _blockers(before), _blockers(now)
         resolved = sorted(old_blockers - new_blockers)
@@ -242,6 +330,12 @@ def build_daily_changes(
             prior_stop is not None
             and current_price is not None
             and current_price <= prior_stop
+            and (
+                not _is_already_breached(before)
+                or _materially_changed_level(
+                    prior_stop, now.get("invalidation_price")
+                )
+            )
         ):
             stop_breaches.append(
                 {
@@ -251,6 +345,11 @@ def build_daily_changes(
                 }
             )
             attend(ticker, "stop_breached")
+            events.append({
+                "ticker": ticker,
+                "event_type": "STRUCTURAL_INVALIDATION",
+                "text": f"{ticker} breached its setup invalidation level at {current_price}.",
+            })
 
         old_rs = _decimal(
             (before.get("metrics") or {}).get("relative_return_20d_vs_qqq_pct")
@@ -260,6 +359,15 @@ def build_daily_changes(
         )
         if old_rs is not None and new_rs is not None and old_rs <= 0 < new_rs:
             attend(ticker, "relative_strength_turned_positive")
+
+        old_risk_flags = set(before.get("deterministic_risk_flags") or [])
+        new_risk_flags = set(now.get("deterministic_risk_flags") or [])
+        if old_risk_flags != new_risk_flags:
+            events.append({
+                "ticker": ticker,
+                "event_type": "RISK_CHANGE",
+                "text": f"{ticker} deterministic risk flags changed.",
+            })
 
         prior_metrics = before.get("metrics") or {}
         current_metrics = now.get("metrics") or {}
@@ -283,6 +391,11 @@ def build_daily_changes(
                     }
                 )
                 attend(ticker, category + "_data_changed")
+                events.append({
+                    "ticker": ticker,
+                    "event_type": "FUNDAMENTAL_CHANGE",
+                    "text": f"{ticker} had a material {category} data change.",
+                })
 
     prior_evidence = {
         _evidence_key(item) for item in (prior or {}).get("evidence") or []
@@ -316,12 +429,22 @@ def build_daily_changes(
 
     meaningful: list[dict[str, str | int]] = []
     for ticker in sorted(current.keys() - previous.keys()):
-        meaningful.append({"category": "New", "ticker": ticker, "text": f"{ticker} entered the tracked set.", "priority": 3})
+        meaningful.append({"category": "New", "ticker": ticker, "text": f"{ticker} entered the tracked set.", "priority": 3, "event_type": "NEW_CANDIDATE"})
     for ticker in sorted(previous.keys() - current.keys()):
-        meaningful.append({"category": "Removed", "ticker": ticker, "text": f"{ticker} was removed because it no longer met the tracked screen.", "priority": 3})
+        meaningful.append({"category": "Removed", "ticker": ticker, "text": f"{ticker} was removed because it no longer met the tracked screen.", "priority": 3, "event_type": "ARCHIVED"})
+    for item in events:
+        if item["event_type"] == "NEW_CANDIDATE":
+            continue
+        meaningful.append({
+            "category": item["event_type"].replace("_", " ").title(),
+            "ticker": item["ticker"],
+            "text": item["text"],
+            "priority": EVENT_PRIORITY[item["event_type"]],
+            "event_type": item["event_type"],
+        })
     for item in classifications:
         direction = "Improved" if item["direction"] == "promoted" else "Deteriorated"
-        meaningful.append({"category": direction, "ticker": item["ticker"], "text": f"{item['ticker']} moved from {item['previous']} to {item['current']}.", "priority": 3})
+        meaningful.append({"category": direction, "ticker": item["ticker"], "text": f"{item['ticker']} moved from {item['previous']} to {item['current']}.", "priority": 3, "event_type": "RECOVERY_PROGRESS" if item["direction"] == "promoted" else "MINOR_CHANGE"})
     for item in distances:
         change = _decimal(item["change_percentage_points"])
         if change is not None and abs(change) >= Decimal("0.5"):
@@ -331,6 +454,7 @@ def build_daily_changes(
                 "ticker": item["ticker"],
                 "text": f"{item['ticker']} {direction.lower()} from {_format_pct(_decimal(item['previous_pct']) or Decimal(0))} to {_format_pct(_decimal(item['current_pct']) or Decimal(0))} below trigger.",
                 "priority": 2,
+                "event_type": "RECOVERY_PROGRESS" if change < 0 else "MINOR_CHANGE",
             })
     for ticker in shared:
         before_score, current_score = _score(previous[ticker]), _score(current[ticker])
@@ -341,10 +465,11 @@ def build_daily_changes(
                 "ticker": ticker,
                 "text": f"{ticker} setup score {direction.lower()} from {before_score:.0f} to {current_score:.0f}.",
                 "priority": 2,
+                "event_type": "RECOVERY_PROGRESS" if direction == "Improved" else "MINOR_CHANGE",
             })
     for item in stop_breaches:
-        meaningful.append({"category": "Deteriorated", "ticker": item["ticker"], "text": f"{item['ticker']} breached its prior stop at {item['current_price']}.", "priority": 4})
-    meaningful.sort(key=lambda item: (-int(item["priority"]), str(item["ticker"]), str(item["text"])))
+        meaningful.append({"category": "Deteriorated", "ticker": item["ticker"], "text": f"{item['ticker']} breached its setup invalidation level at {item['current_price']}.", "priority": 4, "event_type": "STRUCTURAL_INVALIDATION"})
+    meaningful.sort(key=lambda item: (EVENT_PRIORITY.get(str(item.get("event_type")), 10), str(item["ticker"]), str(item["text"])))
 
     return {
         "baseline": prior is None,
@@ -358,6 +483,8 @@ def build_daily_changes(
         "blocker_changes": blockers,
         "fundamental_changes": fundamental_changes,
         "evidence_changes": evidence_changes,
+        "recovery_exits": recovery_exits,
+        "events": sorted(events, key=lambda item: (EVENT_PRIORITY[item["event_type"]], item["ticker"])),
         "attention_today": [
             {"ticker": ticker, "reasons": sorted(reasons)}
             for ticker, reasons in sorted(attention.items())

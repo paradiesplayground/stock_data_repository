@@ -225,3 +225,56 @@ def test_daily_changes_formats_trigger_precision_and_ignores_research_only_downg
     assert "15.1%" in rendered
     assert "14.0%" in rendered
     assert "15.114322" not in rendered
+
+
+def test_klic_recovery_exit_is_prominent_and_not_a_generic_removal(monkeypatch) -> None:
+    prior_candidate = _candidate("KLIC", "RADAR", "8", "88", [])
+    prior_candidate["metrics"].update({
+        "price_change_12w_pct": "-22",
+        "revenue_ttm_yoy_pct": "70",
+        "latest_quarter_revenue_yoy_pct": "80",
+        "avg_dollar_volume_20d": "100000000",
+    })
+    current_candidate = _candidate("KLIC", "RADAR", "4", "93.72", [])
+    current_candidate["metrics"].update({
+        "price_change_12w_pct": "-11.5",
+        "revenue_ttm_yoy_pct": "70",
+        "latest_quarter_revenue_yoy_pct": "80",
+        "avg_dollar_volume_20d": "100000000",
+        "relative_return_20d_vs_qqq_pct": "14.1",
+    })
+    prior = {"run_id": "prior", "as_of_date": "2026-09-28", "candidates": [prior_candidate], "evidence": []}
+    monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
+
+    changes = build_daily_changes(object(), payload={
+        "strategy_key": "dynamic_swing_buy_alerts",
+        "as_of_date": "2026-09-29",
+        "candidates": [current_candidate],
+        "evidence": [],
+    })
+
+    assert changes["recovery_exits"] == [{
+        "ticker": "KLIC",
+        "previous_decline_pct": "-22",
+        "current_decline_pct": "-11.5",
+    }]
+    assert changes["events"][0]["event_type"] == "LEFT_DISCOVERY_DUE_TO_RECOVERY"
+    assert changes["meaningful_changes"][0]["event_type"] == "LEFT_DISCOVERY_DUE_TO_RECOVERY"
+    assert "recovered out of the original 12-week decline screen" in render_daily_changes(changes)
+
+
+def test_repeated_setup_invalidation_breach_is_suppressed(monkeypatch) -> None:
+    prior_candidate = _candidate("KLIC", "RADAR", "4", "89", [], stop="90")
+    current_candidate = _candidate("KLIC", "RADAR", "4", "88", [], stop="90")
+    prior = {"run_id": "prior", "as_of_date": "2026-09-28", "candidates": [prior_candidate], "evidence": []}
+    monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
+
+    changes = build_daily_changes(object(), payload={
+        "strategy_key": "dynamic_swing_buy_alerts",
+        "as_of_date": "2026-09-29",
+        "candidates": [current_candidate],
+        "evidence": [],
+    })
+
+    assert changes["stop_breaches"] == []
+    assert changes["events"] == []
