@@ -492,6 +492,42 @@ class StrategyCandidate(Base):
     payload: Mapped[dict | None] = mapped_column(JSONB)
 
 
+class StrategyCandidateLifecycle(Base):
+    """Durable watchlist state independent of a day's discovery result."""
+
+    __tablename__ = "strategy_candidate_lifecycles"
+    __table_args__ = (
+        UniqueConstraint("strategy_key", "ticker", name="uq_strategy_lifecycle_key_ticker"),
+        Index("ix_strategy_lifecycles_state", "lifecycle_state"),
+        {"schema": "strategy_tracking"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    strategy_key: Mapped[str] = mapped_column(String(128))
+    ticker: Mapped[str] = mapped_column(String(32))
+    first_discovered_date: Mapped[date] = mapped_column(Date)
+    last_discovery_screen_date: Mapped[date | None] = mapped_column(Date)
+    lifecycle_state: Mapped[str] = mapped_column(String(32))
+    lifecycle_state_since: Mapped[date] = mapped_column(Date)
+    days_on_watch: Mapped[int] = mapped_column(Integer, default=0)
+    discovery_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    discovery_decline_metric: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    active_trigger: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    active_trigger_set_date: Mapped[date | None] = mapped_column(Date)
+    rolling_trigger: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    current_trigger_distance_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    best_trigger_distance_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    relative_strength_20d: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    previous_relative_strength_20d: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    last_material_event: Mapped[str | None] = mapped_column(String(64))
+    last_material_event_date: Mapped[date | None] = mapped_column(Date)
+    archive_reason: Mapped[str | None] = mapped_column(Text)
+    archived_date: Mapped[date | None] = mapped_column(Date)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class StrategyEvidence(Base):
     __tablename__ = "strategy_evidence"
     __table_args__ = (

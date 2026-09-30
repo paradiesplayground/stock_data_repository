@@ -14,6 +14,7 @@ from app.mcp_queries import (
     query_security_features,
 )
 from app.models import DailyPriceBar
+from app.services.candidate_lifecycle import apply_active_trigger, get_lifecycle
 from app.services.strategy_tracking import (
     configuration_fingerprint,
     get_strategy_run,
@@ -388,6 +389,11 @@ def prepare_daily_stock_alert(
         _deterministic_candidate(item, regime["gate_passed"])
         for item in pool["items"]
     ]
+    for candidate in prepared_candidates:
+        apply_active_trigger(
+            candidate,
+            get_lifecycle(session, STRATEGY_KEY, candidate["ticker"]),
+        )
     research_plans = [
         _research_plan(
             candidate,
@@ -410,6 +416,10 @@ def prepare_daily_stock_alert(
         candidate = _deterministic_candidate(
             feature_item or (prior_candidate.get("metrics") or {"ticker": ticker}),
             regime["gate_passed"],
+        )
+        apply_active_trigger(
+            candidate,
+            get_lifecycle(session, STRATEGY_KEY, ticker),
         )
         plan = _research_plan(
             candidate,

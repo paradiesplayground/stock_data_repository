@@ -17,6 +17,7 @@ from app.models import (
     StrategyOutcomeObservation,
     StrategyRun,
 )
+from app.services.candidate_lifecycle import persist_lifecycle, get_lifecycle
 from app.strategy_decisions import (
     DECISION_CONTRACT_VERSION,
     SCREEN_BUCKETS,
@@ -428,6 +429,46 @@ def record_strategy_run(
     )
     session.add(run)
     session.flush()
+    if normalized_run_type == "as_run":
+        lifecycle_date = _date(as_of_date, "as_of_date")
+        for item in normalized_candidates:
+            payload_item = item.get("payload") or {}
+            presentation = payload_item.get("presentation") if isinstance(payload_item.get("presentation"), dict) else {}
+            risk_flags = payload_item.get("deterministic_risk_flags") or [
+                str(blocker.get("reason"))
+                for blocker in presentation.get("blockers") or []
+                if isinstance(blocker, dict) and str(blocker.get("gate") or "").lower().startswith("deterministic risk")
+            ]
+            decision = item.get("decision") or {}
+            candidate = {
+                "ticker": item["ticker"],
+                "buyability_status": decision.get("buyability_status"),
+                "distance_to_trigger_pct": decision.get("distance_to_trigger_pct"),
+                "current_price": decision.get("current_price"),
+                "trigger_price": decision.get("trigger_price"),
+                "metrics": item.get("metrics") or {},
+                "deterministic_risk_flags": risk_flags,
+                "payload": payload_item,
+            }
+            row = persist_lifecycle(
+                session,
+                strategy_key=strategy_key,
+                as_of_date=lifecycle_date,
+                candidate=candidate,
+                previous=get_lifecycle(session, strategy_key, item["ticker"]),
+            )
+            payload_item["lifecycle"] = {
+                "state": row.lifecycle_state,
+                "state_since": row.lifecycle_state_since.isoformat(),
+                "days_on_watch": row.days_on_watch,
+                "active_trigger": str(row.active_trigger) if row.active_trigger is not None else None,
+                "active_trigger_set_date": row.active_trigger_set_date.isoformat() if row.active_trigger_set_date else None,
+                "rolling_trigger": str(row.rolling_trigger) if row.rolling_trigger is not None else None,
+                "current_trigger_distance_pct": str(row.current_trigger_distance_pct) if row.current_trigger_distance_pct is not None else None,
+                "best_trigger_distance_pct": str(row.best_trigger_distance_pct) if row.best_trigger_distance_pct is not None else None,
+                "last_material_event": row.last_material_event,
+                "archive_reason": row.archive_reason,
+            }
     for item in normalized_candidates:
         session.add(
             StrategyCandidate(
@@ -488,6 +529,28 @@ def record_strategy_run(
                 summary=item["summary"],
                 details=item["details"],
             )
+        )
+    if normalized_run_type == "as_run":
+        lifecycle_date = _date(as_of_date, "as_of_date")
+        for item in normalized_candidates:
+            payload_item = item.get("payload") or {}
+            candidate = {
+                "ticker": item["ticker"],
+                "buyability_status": (item.get("decision") or {}).get("buyability_status"),
+                "distance_to_trigger_pct": (item.get("decision") or {}).get("distance_to_trigger_pct"),
+                "current_price": (item.get("decision") or {}).get("current_price"),
+                "trigger_price": (item.get("decision") or {}).get("trigger_price"),
+                "metrics": item.get("metrics") or {},
+                "deterministic_risk_flags": payload_item.get("deterministic_risk_flags") or [],
+                "payload": payload_item,
+            }
+            previous_lifecycle = get_lifecycle(session, strategy_key, item["ticker"])
+            persist_lifecycle(
+                session,
+                strategy_key=strategy_key,
+                as_of_date=lifecycle_date,
+                candidate=candidate,
+                previous=previous_lifecycle,
         )
     session.commit()
     result = {
