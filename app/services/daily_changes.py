@@ -94,20 +94,23 @@ def _discovery_decline(candidate: dict[str, Any]) -> Decimal | None:
     return _decimal((candidate.get("metrics") or {}).get("price_change_12w_pct"))
 
 
-def _passes_recovery_screen(candidate: dict[str, Any]) -> bool:
-    """Return whether recovery is the meaningful reason for leaving discovery."""
-    metrics = candidate.get("metrics") or {}
-    if candidate.get("deterministic_risk_flags"):
+def _deterministic_gate_failures(candidate: dict[str, Any]) -> set[str]:
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    values: list[Any] = []
+    for key in ("deterministic_gate_failures", "failed_deterministic_gates", "deterministic_failures"):
+        values.extend(candidate.get(key) or [])
+        values.extend(payload.get(key) or [])
+    return {str(value).strip().lower() for value in values if str(value).strip()}
+
+
+def _recovery_is_meaningful_reason(before: dict[str, Any], now: dict[str, Any]) -> bool:
+    """Use canonical deterministic gate data; reporting must not recreate strategy thresholds."""
+    prior_failures = _deterministic_gate_failures(before)
+    current_failures = _deterministic_gate_failures(now)
+    decline_names = {"decline_screen", "price_change_12w", "price_change_12w_pct", "discovery_decline"}
+    if not (prior_failures & decline_names) or current_failures:
         return False
-    return all(
-        _decimal(metrics.get(field)) is not None
-        and _decimal(metrics.get(field)) >= _decimal(threshold)
-        for field, threshold in (
-            ("revenue_ttm_yoy_pct", "40"),
-            ("latest_quarter_revenue_yoy_pct", "40"),
-            ("avg_dollar_volume_20d", "30000000"),
-        )
-    )
+    return not _blockers(now) and not (now.get("deterministic_risk_flags") or [])
 
 
 def _is_already_breached(candidate: dict[str, Any]) -> bool:
@@ -127,11 +130,25 @@ def _report_candidate(candidate: dict[str, Any], event: dict[str, Any]) -> dict[
     metrics = candidate.get("metrics") or {}
     payload = candidate.get("payload") or {}
     presentation = payload.get("presentation") if isinstance(payload, dict) else {}
-    next_step = (
-        presentation.get("next")
-        if isinstance(presentation, dict) and presentation.get("next")
-        else (candidate.get("buy_conditions") or ["Continue monitoring the saved setup conditions."])[0]
-    )
+    event_types = set(event.get("event_types") or [event.get("event_type")])
+    conditions = [str(value) for value in candidate.get("buy_conditions") or [] if value]
+    condition_text = " ".join(conditions).lower()
+    if "LEFT_DISCOVERY_DUE_TO_RECOVERY" in event_types:
+        next_step = "Monitor after the recovery exit; rebuild a qualifying setup before considering entry."
+    elif "ENTERED_NEAR_TRIGGER" in event_types:
+        next_step = "Confirm breakout above the active trigger."
+    elif "RISK_CHANGE" in event_types or any(word in condition_text for word in ("financing", "dilution")):
+        next_step = "Resolve financing/dilution risk before entry."
+    elif "market gate" in condition_text or candidate.get("market_regime_gate_passed") is False:
+        next_step = "Wait for the market gate."
+    elif "volume" in condition_text:
+        next_step = "Wait for volume confirmation."
+    elif "ema20" in condition_text or "ema 20" in condition_text:
+        next_step = "Reclaim EMA20."
+    elif isinstance(presentation, dict) and presentation.get("next"):
+        next_step = presentation["next"]
+    else:
+        next_step = conditions[0] if conditions else "Continue monitoring the saved setup conditions."
     return {
         "ticker": candidate.get("ticker"),
         "status": candidate.get("buyability_status") or candidate.get("decision_status"),
@@ -271,7 +288,7 @@ def build_daily_changes(
             and current_decline is not None
             and prior_decline <= Decimal("-20")
             and current_decline > Decimal("-20")
-            and _passes_recovery_screen(now)
+            and _recovery_is_meaningful_reason(before, now)
         )
         if recovery_exit:
             recovery_exits.append({
@@ -478,6 +495,13 @@ def build_daily_changes(
                     "text": f"{ticker} had new {change['category'].replace('_', ' ')} evidence.",
                 })
 
+    for ticker in sorted(previous.keys() - current.keys()):
+        events.append({
+            "ticker": ticker,
+            "event_type": "ARCHIVED",
+            "text": f"{ticker} was archived because it no longer met the tracked screen.",
+        })
+
     by_ticker: dict[str, list[dict[str, Any]]] = {}
     for event in events:
         by_ticker.setdefault(str(event["ticker"]), []).append(event)
@@ -498,27 +522,44 @@ def build_daily_changes(
         key=lambda item: (EVENT_PRIORITY.get(item["event_type"], 10), item["ticker"])
     )
 
-    current_by_ticker = {str(item["ticker"]): item for item in current.values()}
+    report_candidates = {**previous, **current}
     report_items = [
-        _report_candidate(current_by_ticker[item["ticker"]], item)
+        _report_candidate(report_candidates[item["ticker"]], item)
         for item in consolidated_events
-        if item["ticker"] in current_by_ticker
+        if item["ticker"] in report_candidates
     ]
     attention_types = {"BECAME_ACTIONABLE", "ENTERED_NEAR_TRIGGER", "LEFT_DISCOVERY_DUE_TO_RECOVERY"}
-    attention_items = [item for item in report_items if item["event_type"] in attention_types][:8]
+    def report_sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        ticker = str(item["ticker"])
+        now, before = current.get(ticker, previous.get(ticker, {})), previous.get(ticker, {})
+        distance = _distance(now)
+        old_distance = _distance(before)
+        improvement = (old_distance - distance) if old_distance is not None and distance is not None else Decimal("-999999")
+        rs = _decimal((now.get("metrics") or {}).get("relative_return_20d_vs_qqq_pct"))
+        old_rs = _decimal((before.get("metrics") or {}).get("relative_return_20d_vs_qqq_pct"))
+        rs_improvement = (rs - old_rs) if rs is not None and old_rs is not None else Decimal("-999999")
+        score = _score(now)
+        return (
+            EVENT_PRIORITY.get(str(item["event_type"]), 10),
+            abs(distance) if distance is not None else Decimal("999999"),
+            -improvement,
+            -(rs if rs is not None else Decimal("-999999")),
+            -rs_improvement,
+            -(score if score is not None else Decimal("-999999")),
+            ticker,
+        )
+
+    attention_items = sorted(
+        (item for item in report_items if item["event_type"] in attention_types),
+        key=report_sort_key,
+    )[:8]
     attention_tickers = {item["ticker"] for item in attention_items}
     recovery_watch = [
         item for item in report_items
         if item["ticker"] not in attention_tickers
         and set(item["event_types"]) & {"LEFT_DISCOVERY_DUE_TO_RECOVERY", "RECOVERY_PROGRESS"}
     ]
-    recovery_watch.sort(
-        key=lambda item: (
-            abs(_decimal(item.get("distance_to_trigger_pct")) or Decimal("999999")),
-            -(_decimal(item.get("relative_strength_20d")) or Decimal("-999999")),
-            item["ticker"],
-        )
-    )
+    recovery_watch.sort(key=report_sort_key)
     material = [
         item for item in report_items
         if item["ticker"] not in attention_tickers
@@ -554,11 +595,11 @@ def build_daily_changes(
                 "priority": 2,
                 "event_type": "RECOVERY_PROGRESS" if change < 0 else "MINOR_CHANGE",
             })
-        for ticker in shared:
-            before_score, current_score = _score(previous[ticker]), _score(current[ticker])
-            if before_score is not None and current_score is not None and abs(current_score - before_score) >= 3:
-                direction = "Improved" if current_score > before_score else "Deteriorated"
-                meaningful.append({
+    for ticker in shared:
+        before_score, current_score = _score(previous[ticker]), _score(current[ticker])
+        if before_score is not None and current_score is not None and abs(current_score - before_score) >= 3:
+            direction = "Improved" if current_score > before_score else "Deteriorated"
+            meaningful.append({
                 "category": direction,
                 "ticker": ticker,
                 "text": f"{ticker} setup score {direction.lower()} from {before_score:.0f} to {current_score:.0f}.",

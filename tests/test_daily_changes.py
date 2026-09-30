@@ -229,13 +229,14 @@ def test_daily_changes_formats_trigger_precision_and_ignores_research_only_downg
 
 def test_klic_recovery_exit_is_prominent_and_not_a_generic_removal(monkeypatch) -> None:
     prior_candidate = _candidate("KLIC", "RADAR", "8", "88", [])
+    prior_candidate["payload"]["deterministic_gate_failures"] = ["decline_screen"]
     prior_candidate["metrics"].update({
         "price_change_12w_pct": "-22",
         "revenue_ttm_yoy_pct": "70",
         "latest_quarter_revenue_yoy_pct": "80",
         "avg_dollar_volume_20d": "100000000",
     })
-    current_candidate = _candidate("KLIC", "RADAR", "4", "93.72", [])
+    current_candidate = _candidate("KLIC", "NOT_ELIGIBLE", "4", "93.72", [])
     current_candidate["metrics"].update({
         "price_change_12w_pct": "-11.5",
         "revenue_ttm_yoy_pct": "70",
@@ -262,6 +263,69 @@ def test_klic_recovery_exit_is_prominent_and_not_a_generic_removal(monkeypatch) 
     assert "RECOVERY_PROGRESS" in changes["events"][0]["event_types"]
     assert changes["report_sections"]["needs_attention_today"][0]["ticker"] == "KLIC"
     assert "recovered out of the original 12-week decline screen" in render_daily_changes(changes)
+
+
+def test_recovery_exit_is_not_labeled_recovery_when_another_hard_failure_remains(monkeypatch) -> None:
+    prior_candidate = _candidate("KLIC", "RADAR", "8", "88", [])
+    prior_candidate["payload"]["deterministic_gate_failures"] = ["decline_screen"]
+    current_candidate = _candidate("KLIC", "NOT_ELIGIBLE", "4", "93", ["resolve financing risk"])
+    current_candidate["metrics"]["price_change_12w_pct"] = "-11"
+    prior = {"run_id": "prior", "as_of_date": "2026-09-28", "candidates": [prior_candidate], "evidence": []}
+    monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
+
+    changes = build_daily_changes(object(), payload={
+        "strategy_key": "dynamic_swing_buy_alerts", "as_of_date": "2026-09-29",
+        "candidates": [current_candidate], "evidence": [],
+    })
+
+    assert changes["recovery_exits"] == []
+    assert all(event["event_type"] != "LEFT_DISCOVERY_DUE_TO_RECOVERY" for event in changes["events"])
+
+
+def test_attention_sort_prefers_closer_trigger_before_ticker(monkeypatch) -> None:
+    prior = {
+        "run_id": "prior", "as_of_date": "2026-09-28",
+        "candidates": [_candidate("FAR", "RADAR", "12", "88", []), _candidate("CLOSE", "RADAR", "12", "88", [])],
+        "evidence": [],
+    }
+    current = [_candidate("FAR", "ALMOST_READY", "9", "91", []), _candidate("CLOSE", "ALMOST_READY", "0.5", "99.5", [])]
+    monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
+
+    changes = build_daily_changes(object(), payload={
+        "strategy_key": "dynamic_swing_buy_alerts", "as_of_date": "2026-09-29",
+        "candidates": current, "evidence": [],
+    })
+
+    assert [item["ticker"] for item in changes["report_sections"]["needs_attention_today"]] == ["CLOSE", "FAR"]
+
+
+def test_archived_ticker_is_in_concise_report(monkeypatch) -> None:
+    archived = _candidate("OLD", "RADAR", "12", "88", [])
+    prior = {"run_id": "prior", "as_of_date": "2026-09-28", "candidates": [archived], "evidence": []}
+    monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
+
+    changes = build_daily_changes(object(), payload={
+        "strategy_key": "dynamic_swing_buy_alerts", "as_of_date": "2026-09-29",
+        "candidates": [], "evidence": [],
+    })
+    report = render_daily_changes(changes)
+
+    assert changes["report_sections"]["new_materially_changed"][0]["ticker"] == "OLD"
+    assert "OLD was archived because it no longer met the tracked screen." in report
+
+
+def test_report_next_step_uses_specific_event_action(monkeypatch) -> None:
+    prior = {"run_id": "prior", "as_of_date": "2026-09-28", "candidates": [_candidate("VOL", "RADAR", "12", "88", [])], "evidence": []}
+    current = _candidate("VOL", "RADAR", "4", "94", ["wait for volume confirmation"])
+    monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
+
+    changes = build_daily_changes(object(), payload={
+        "strategy_key": "dynamic_swing_buy_alerts", "as_of_date": "2026-09-29",
+        "candidates": [current], "evidence": [],
+    })
+
+    item = changes["report_sections"]["needs_attention_today"][0]
+    assert item["what_matters_next"] == "Confirm breakout above the active trigger."
 
 
 def test_rendered_sections_consolidate_events_and_keep_recovery_watch_separate(monkeypatch) -> None:
