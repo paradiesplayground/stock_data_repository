@@ -148,27 +148,11 @@ def persist_lifecycle(
         strategy_key=strategy_key, ticker=ticker, first_discovered_date=as_of_date,
         lifecycle_state=state, lifecycle_state_since=as_of_date,
     )
+    from_state = previous.lifecycle_state if previous else None
     if previous and state != previous.lifecycle_state:
         row.lifecycle_state_since = as_of_date
         row.last_material_event = f"{previous.lifecycle_state}_TO_{state}"
         row.last_material_event_date = as_of_date
-        if hasattr(session, "add"):
-            session.add(StrategyCandidateLifecycleObservation(
-                strategy_key=strategy_key,
-                ticker=ticker,
-                observation_date=as_of_date,
-                from_state=previous.lifecycle_state,
-                to_state=state,
-                event=row.last_material_event,
-                outcome_status=state,
-                metrics={
-                    "current_price": candidate.get("current_price"),
-                    "active_trigger": str(row.active_trigger) if row.active_trigger is not None else None,
-                    "rolling_trigger": candidate.get("trigger_price"),
-                    "distance_to_trigger_pct": candidate.get("distance_to_trigger_pct"),
-                },
-                source_run_id=source_run_id,
-            ))
     row.lifecycle_state = state
     row.last_discovery_screen_date = as_of_date if (candidate.get("payload") or {}).get("in_raw_pool", True) else row.last_discovery_screen_date
     row.days_on_watch = max(0, (as_of_date - row.first_discovered_date).days)
@@ -188,5 +172,22 @@ def persist_lifecycle(
     elif row.active_trigger is None and row.current_trigger_distance_pct is not None and Decimal("0") <= row.current_trigger_distance_pct <= Decimal("10"):
         row.active_trigger = row.rolling_trigger
         row.active_trigger_set_date = as_of_date
+    if from_state is not None and state != from_state and hasattr(session, "add"):
+        session.add(StrategyCandidateLifecycleObservation(
+            strategy_key=strategy_key,
+            ticker=ticker,
+            observation_date=as_of_date,
+            from_state=from_state,
+            to_state=state,
+            event=row.last_material_event,
+            outcome_status=state,
+            metrics={
+                "current_price": candidate.get("current_price"),
+                "active_trigger": str(row.active_trigger) if row.active_trigger is not None else None,
+                "rolling_trigger": str(row.rolling_trigger) if row.rolling_trigger is not None else None,
+                "current_trigger_distance_pct": str(row.current_trigger_distance_pct) if row.current_trigger_distance_pct is not None else None,
+            },
+            source_run_id=source_run_id,
+        ))
     session.add(row)
     return row

@@ -187,6 +187,7 @@ def test_lifecycle_transition_writes_one_durable_observation():
         candidate={
             **_candidate(status="RADAR", distance="4", decline="-12"),
             "current_price": "88",
+            "payload": {"rolling_trigger": "95.10"},
         },
         previous=previous,
         source_run_id="run-1",
@@ -198,8 +199,48 @@ def test_lifecycle_transition_writes_one_durable_observation():
     assert observation.to_state == "NEAR_TRIGGER"
     assert observation.event == "FALLEN_TO_NEAR_TRIGGER"
     assert observation.outcome_status == "NEAR_TRIGGER"
-    assert observation.metrics["distance_to_trigger_pct"] == "4"
+    assert observation.metrics["active_trigger"] == "95.10"
+    assert observation.metrics["rolling_trigger"] == "95.10"
+    assert observation.metrics["current_trigger_distance_pct"] == str(row.current_trigger_distance_pct)
     assert observation.source_run_id == "run-1"
+
+
+def test_lifecycle_transition_observation_preserves_anchored_and_rolling_triggers():
+    from app.models import StrategyCandidateLifecycleObservation
+
+    added = []
+    previous = SimpleNamespace(
+        lifecycle_state="FALLEN",
+        first_discovered_date=date(2026, 8, 1),
+        active_trigger=Decimal("91.94"),
+        active_trigger_set_date=date(2026, 8, 20),
+        discovery_price=None,
+        discovery_decline_metric=None,
+        rolling_trigger=Decimal("91.94"),
+        current_trigger_distance_pct=None,
+        best_trigger_distance_pct=None,
+        relative_strength_20d=None,
+        previous_relative_strength_20d=None,
+    )
+    row = persist_lifecycle(
+        SimpleNamespace(add=added.append),
+        strategy_key="dynamic_swing_buy_alerts",
+        as_of_date=date(2026, 9, 15),
+        candidate={
+            **_candidate(status="RADAR", distance="4", decline="-12"),
+            "current_price": "88",
+            "payload": {"rolling_trigger": "95.10"},
+        },
+        previous=previous,
+        source_run_id="run-2",
+    )
+
+    observation = next(item for item in added if isinstance(item, StrategyCandidateLifecycleObservation))
+    assert row.active_trigger == Decimal("91.94")
+    assert row.rolling_trigger == Decimal("95.10")
+    assert observation.metrics["active_trigger"] == "91.94"
+    assert observation.metrics["rolling_trigger"] == "95.10"
+    assert observation.metrics["current_trigger_distance_pct"] == str(row.current_trigger_distance_pct)
 
 
 def test_canonical_finalization_preserves_active_trigger_and_recalculates_gates():

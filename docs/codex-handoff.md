@@ -1,5 +1,11 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-09-30 — Phase 2 observation snapshot integrity correction
+
+- **Corrected:** Lifecycle transition observations are now appended after the lifecycle row calculates its resulting active trigger, rolling trigger, and trigger distance. Observations preserve the prior state separately and use `payload.rolling_trigger` for the rolling reference.
+- **Regression coverage:** Added new-trigger and anchored-trigger transition cases, including active/rolling trigger separation. The stale-timeout observation and canonical run-read coverage remain intact. The complete local suite passes 245 tests and Ruff passes.
+- **Status:** Deployment is pending for this narrow correction; no production alert, publication, or email was run.
+
 ## 2026-09-30 — Phase 2 lifecycle transition observations
 
 - **Implemented:** Added append-only `strategy_candidate_lifecycle_observations` storage. Every actual lifecycle state transition records the ticker, prior/new state, event, outcome status, transition metrics, source canonical run, and observation timestamp. Stale-timeout archival records the same durable observation path.
