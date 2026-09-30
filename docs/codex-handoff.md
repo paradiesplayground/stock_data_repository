@@ -4,7 +4,7 @@
 
 - **Implemented:** Stale lifecycle archival now falls back from a null `last_discovery_screen_date` to `first_discovered_date`. This covers rollout-era dropped/reassessed candidates without changing historical alert payloads or exempting them from timeout enforcement.
 - **Regression coverage:** The null-anchor case remains active at 29 stored sessions and archives at 30 with `STALE_TIMEOUT`, archive date/reason, and cleared `active_trigger`. The complete local suite passes 243 tests and Ruff passes.
-- **Status:** Deployment is pending for this correction; no production alert, publication, or email was run.
+- **Verified / deployed:** Functional commit `252bb4b` was deployed through the guarded Unraid updater. The contract image passed 243 tests and Ruff; API health/readiness and MCP health returned successfully; PostgreSQL, API, worker, MCP, and the tunnel are healthy after the standard tunnel-only startup-race recovery. No production alert, publication, or email was run.
 
 ## 2026-09-30 — Phase 2 stale lifecycle timeout
 
