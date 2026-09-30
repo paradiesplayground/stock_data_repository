@@ -528,6 +528,30 @@ class StrategyCandidateLifecycle(Base):
     updated_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class StrategyCandidateLifecycleObservation(Base):
+    __tablename__ = "strategy_candidate_lifecycle_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_key", "ticker", "observation_date", "event",
+            name="uq_strategy_lifecycle_observation",
+        ),
+        Index("ix_strategy_lifecycle_observations_ticker_date", "ticker", "observation_date"),
+        {"schema": "strategy_tracking"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    strategy_key: Mapped[str] = mapped_column(String(128))
+    ticker: Mapped[str] = mapped_column(String(32))
+    observation_date: Mapped[date] = mapped_column(Date)
+    from_state: Mapped[str | None] = mapped_column(String(32))
+    to_state: Mapped[str] = mapped_column(String(32))
+    event: Mapped[str] = mapped_column(String(64))
+    outcome_status: Mapped[str] = mapped_column(String(32))
+    metrics: Mapped[dict] = mapped_column(JSONB)
+    source_run_id: Mapped[str | None] = mapped_column(String(36))
+    observed_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class StrategyEvidence(Base):
     __tablename__ = "strategy_evidence"
     __table_args__ = (

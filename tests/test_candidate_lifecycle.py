@@ -2,7 +2,7 @@ from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
-from app.services.candidate_lifecycle import apply_active_trigger, archive_stale_lifecycles, transition_state
+from app.services.candidate_lifecycle import apply_active_trigger, archive_stale_lifecycles, persist_lifecycle, transition_state
 from app.services.daily_stock_alert_candidate_contract import normalize_candidate_state
 from app.services import strategy_tracking
 
@@ -160,6 +160,46 @@ def test_stale_lifecycle_bootstraps_timeout_from_first_discovered_date(monkeypat
     assert row.archived_date == date(2026, 9, 15)
     assert row.archive_reason == "candidate absent from discovery for 30 trading sessions"
     assert row.active_trigger is None
+
+
+def test_lifecycle_transition_writes_one_durable_observation():
+    from app.models import StrategyCandidateLifecycleObservation
+
+    added = []
+    session = SimpleNamespace(add=added.append)
+    previous = SimpleNamespace(
+        lifecycle_state="FALLEN",
+        first_discovered_date=date(2026, 8, 1),
+        active_trigger=None,
+        active_trigger_set_date=None,
+        discovery_price=None,
+        discovery_decline_metric=None,
+        rolling_trigger=None,
+        current_trigger_distance_pct=None,
+        best_trigger_distance_pct=None,
+        relative_strength_20d=None,
+        previous_relative_strength_20d=None,
+    )
+    row = persist_lifecycle(
+        session,
+        strategy_key="dynamic_swing_buy_alerts",
+        as_of_date=date(2026, 9, 15),
+        candidate={
+            **_candidate(status="RADAR", distance="4", decline="-12"),
+            "current_price": "88",
+        },
+        previous=previous,
+        source_run_id="run-1",
+    )
+
+    observation = next(item for item in added if isinstance(item, StrategyCandidateLifecycleObservation))
+    assert row.lifecycle_state == "NEAR_TRIGGER"
+    assert observation.from_state == "FALLEN"
+    assert observation.to_state == "NEAR_TRIGGER"
+    assert observation.event == "FALLEN_TO_NEAR_TRIGGER"
+    assert observation.outcome_status == "NEAR_TRIGGER"
+    assert observation.metrics["distance_to_trigger_pct"] == "4"
+    assert observation.source_run_id == "run-1"
 
 
 def test_canonical_finalization_preserves_active_trigger_and_recalculates_gates():

@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import DailyPriceBar, StrategyCandidateLifecycle
+from app.models import DailyPriceBar, StrategyCandidateLifecycle, StrategyCandidateLifecycleObservation
 
 LIFECYCLE_STATES = {"FALLEN", "RECOVERING", "NEAR_TRIGGER", "ACTIONABLE", "INVALIDATED"}
 STALE_TIMEOUT_TRADING_SESSIONS = 30
@@ -86,6 +86,7 @@ def archive_stale_lifecycles(
     as_of_date: date,
     observed_tickers: set[str],
     timeout_trading_sessions: int = STALE_TIMEOUT_TRADING_SESSIONS,
+    source_run_id: str | None = None,
 ) -> list[str]:
     """Archive candidates absent from the current discovery universe after the configured timeout."""
     if timeout_trading_sessions < 1 or not hasattr(session, "scalars"):
@@ -108,6 +109,7 @@ def archive_stale_lifecycles(
         )
         if sessions_absent < timeout_trading_sessions:
             continue
+        previous_state = row.lifecycle_state
         row.lifecycle_state = "INVALIDATED"
         row.lifecycle_state_since = as_of_date
         row.last_material_event = "STALE_TIMEOUT"
@@ -115,11 +117,31 @@ def archive_stale_lifecycles(
         row.archive_reason = STALE_TIMEOUT_REASON.format(sessions=sessions_absent)
         row.archived_date = as_of_date
         row.active_trigger = None
+        if hasattr(session, "add"):
+            session.add(StrategyCandidateLifecycleObservation(
+                strategy_key=strategy_key,
+                ticker=row.ticker,
+                observation_date=as_of_date,
+                from_state=previous_state,
+                to_state="INVALIDATED",
+                event="STALE_TIMEOUT",
+                outcome_status="INVALIDATED",
+                metrics={"sessions_absent": sessions_absent, "archive_reason": row.archive_reason},
+                source_run_id=source_run_id,
+            ))
         archived.append(row.ticker)
     return archived
 
 
-def persist_lifecycle(session: Session, *, strategy_key: str, as_of_date: date, candidate: dict[str, Any], previous: StrategyCandidateLifecycle | None) -> StrategyCandidateLifecycle:
+def persist_lifecycle(
+    session: Session,
+    *,
+    strategy_key: str,
+    as_of_date: date,
+    candidate: dict[str, Any],
+    previous: StrategyCandidateLifecycle | None,
+    source_run_id: str | None = None,
+) -> StrategyCandidateLifecycle:
     ticker = str(candidate["ticker"]).upper()
     state = transition_state(candidate, previous.lifecycle_state if previous else None)
     row = previous or StrategyCandidateLifecycle(
@@ -130,6 +152,23 @@ def persist_lifecycle(session: Session, *, strategy_key: str, as_of_date: date, 
         row.lifecycle_state_since = as_of_date
         row.last_material_event = f"{previous.lifecycle_state}_TO_{state}"
         row.last_material_event_date = as_of_date
+        if hasattr(session, "add"):
+            session.add(StrategyCandidateLifecycleObservation(
+                strategy_key=strategy_key,
+                ticker=ticker,
+                observation_date=as_of_date,
+                from_state=previous.lifecycle_state,
+                to_state=state,
+                event=row.last_material_event,
+                outcome_status=state,
+                metrics={
+                    "current_price": candidate.get("current_price"),
+                    "active_trigger": str(row.active_trigger) if row.active_trigger is not None else None,
+                    "rolling_trigger": candidate.get("trigger_price"),
+                    "distance_to_trigger_pct": candidate.get("distance_to_trigger_pct"),
+                },
+                source_run_id=source_run_id,
+            ))
     row.lifecycle_state = state
     row.last_discovery_screen_date = as_of_date if (candidate.get("payload") or {}).get("in_raw_pool", True) else row.last_discovery_screen_date
     row.days_on_watch = max(0, (as_of_date - row.first_discovered_date).days)

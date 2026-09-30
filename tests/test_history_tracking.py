@@ -205,7 +205,7 @@ def test_get_strategy_run_orders_decision_status_before_score() -> None:
 
         def scalars(self, _statement):
             self.scalar_call += 1
-            rows = {1: candidates, 2: decisions, 3: [], 4: []}[self.scalar_call]
+            rows = {1: candidates, 2: decisions, 3: [], 4: [], 5: []}[self.scalar_call]
             return ScalarResult(rows)
 
     result = get_strategy_run(CapturingSession(), "run-1")

@@ -14,6 +14,7 @@ from app.models import (
     StrategyCandidate,
     StrategyDefinition,
     StrategyEvidence,
+    StrategyCandidateLifecycleObservation,
     StrategyOutcomeObservation,
     StrategyRun,
 )
@@ -220,6 +221,7 @@ def _persist_run_lifecycles(
     as_of_date: str,
     normalized_candidates: list[dict[str, Any]],
     stale_timeout_trading_sessions: int = 30,
+    source_run_id: str | None = None,
 ) -> None:
     """Persist lifecycle state once for the canonical as-run payload."""
     lifecycle_date = _date(as_of_date, "as_of_date")
@@ -248,6 +250,7 @@ def _persist_run_lifecycles(
                 "payload": payload_item,
             },
             previous=get_lifecycle(session, strategy_key, item["ticker"]),
+            source_run_id=source_run_id,
         )
         payload_item["lifecycle"] = {
             "state": row.lifecycle_state,
@@ -267,6 +270,7 @@ def _persist_run_lifecycles(
         as_of_date=lifecycle_date,
         observed_tickers=observed_tickers,
         timeout_trading_sessions=stale_timeout_trading_sessions,
+        source_run_id=source_run_id,
     )
 
 
@@ -495,6 +499,7 @@ def record_strategy_run(
             as_of_date=as_of_date,
             normalized_candidates=normalized_candidates,
             stale_timeout_trading_sessions=get_settings().candidate_lifecycle_stale_timeout_trading_sessions,
+            source_run_id=run.run_id,
         )
     for item in normalized_candidates:
         session.add(
@@ -754,6 +759,14 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
             StrategyOutcomeObservation.ticker,
         )
     ).all()
+    lifecycle_observations = session.scalars(
+        select(StrategyCandidateLifecycleObservation)
+        .where(StrategyCandidateLifecycleObservation.source_run_id == run_id)
+        .order_by(
+            StrategyCandidateLifecycleObservation.observation_date,
+            StrategyCandidateLifecycleObservation.ticker,
+        )
+    ).all()
 
     candidate_items = []
     for item in candidates:
@@ -852,5 +865,19 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
                 "observed_at_utc": item.observed_at_utc.isoformat(),
             }
             for item in outcomes
+        ],
+        "lifecycle_observations": [
+            {
+                "ticker": item.ticker,
+                "observation_date": item.observation_date.isoformat(),
+                "from_state": item.from_state,
+                "to_state": item.to_state,
+                "event": item.event,
+                "outcome_status": item.outcome_status,
+                "metrics": item.metrics,
+                "source_run_id": item.source_run_id,
+                "observed_at_utc": item.observed_at_utc.isoformat(),
+            }
+            for item in lifecycle_observations
         ],
     }

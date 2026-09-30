@@ -1,5 +1,12 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-09-30 — Phase 2 lifecycle transition observations
+
+- **Implemented:** Added append-only `strategy_candidate_lifecycle_observations` storage. Every actual lifecycle state transition records the ticker, prior/new state, event, outcome status, transition metrics, source canonical run, and observation timestamp. Stale-timeout archival records the same durable observation path.
+- **Implemented:** Canonical strategy-run reads now expose lifecycle observations separately from downstream performance outcomes. Historical alert payloads remain immutable.
+- **Regression coverage:** Added transition-persistence coverage and retained the stale-timeout boundary coverage. The complete local suite passes 244 tests and Ruff passes.
+- **Status:** Deployment is pending for migration `0017_lifecycle_observations`; after deployment, Phase 2 lifecycle work is complete. Phase 3 controlled decline-rule comparison remains separate.
+
 ## 2026-09-30 — Phase 2 stale-timeout bootstrap correction
 
 - **Implemented:** Stale lifecycle archival now falls back from a null `last_discovery_screen_date` to `first_discovered_date`. This covers rollout-era dropped/reassessed candidates without changing historical alert payloads or exempting them from timeout enforcement.
