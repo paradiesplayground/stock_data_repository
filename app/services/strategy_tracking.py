@@ -530,28 +530,6 @@ def record_strategy_run(
                 details=item["details"],
             )
         )
-    if normalized_run_type == "as_run":
-        lifecycle_date = _date(as_of_date, "as_of_date")
-        for item in normalized_candidates:
-            payload_item = item.get("payload") or {}
-            candidate = {
-                "ticker": item["ticker"],
-                "buyability_status": (item.get("decision") or {}).get("buyability_status"),
-                "distance_to_trigger_pct": (item.get("decision") or {}).get("distance_to_trigger_pct"),
-                "current_price": (item.get("decision") or {}).get("current_price"),
-                "trigger_price": (item.get("decision") or {}).get("trigger_price"),
-                "metrics": item.get("metrics") or {},
-                "deterministic_risk_flags": payload_item.get("deterministic_risk_flags") or [],
-                "payload": payload_item,
-            }
-            previous_lifecycle = get_lifecycle(session, strategy_key, item["ticker"])
-            persist_lifecycle(
-                session,
-                strategy_key=strategy_key,
-                as_of_date=lifecycle_date,
-                candidate=candidate,
-                previous=previous_lifecycle,
-        )
     session.commit()
     result = {
         "run_id": run.run_id,

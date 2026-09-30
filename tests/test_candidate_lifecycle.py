@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from app.services.candidate_lifecycle import apply_active_trigger, transition_state
+from app.services.daily_stock_alert_candidate_contract import normalize_candidate_state
 
 
 def _candidate(*, status="RADAR", distance="8", decline="-18", risk=None):
@@ -62,3 +63,36 @@ def test_crossed_active_trigger_does_not_reanchor_when_confirmation_is_missing()
 
     assert candidate["trigger_price"] == "91.94"
     assert candidate["payload"]["active_trigger"] == "91.94"
+
+
+def test_invalidated_is_terminal_without_an_explicit_reset():
+    assert transition_state(_candidate(status="RADAR", distance="2"), "INVALIDATED") == "INVALIDATED"
+
+
+def test_canonical_finalization_preserves_active_trigger_and_recalculates_gates():
+    candidate = {
+        "ticker": "KLIC",
+        "screen_bucket": "qualified",
+        "buyability_status": "RADAR",
+        "current_price": "93.00",
+        "trigger_price": "95.10",
+        "distance_to_trigger_pct": "2.2",
+        "technical_gate_passed": True,
+        "market_regime_gate_passed": True,
+        "remaining_gate_count": 0,
+        "invalidation_price": "88",
+        "metrics": {"close": "93.00"},
+        "payload": {"active_trigger": "91.94", "lifecycle": {"active_trigger": "91.94"}},
+        "buy_conditions": ["confirm volume"],
+    }
+
+    normalized = normalize_candidate_state(
+        candidate,
+        market_regime_gate_passed=True,
+        fresh_checkpoint=None,
+    )
+
+    assert normalized["trigger_price"] == "91.94"
+    assert normalized["distance_to_trigger_pct"] == str(((Decimal("91.94") - Decimal("93.00")) / Decimal("91.94")) * 100)
+    assert normalized["technical_gate_passed"] is True
+    assert normalized["payload"]["active_trigger"] == "91.94"

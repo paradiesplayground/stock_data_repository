@@ -21,6 +21,8 @@ def _decimal(value: Any) -> Decimal | None:
 
 
 def transition_state(candidate: dict[str, Any], previous_state: str | None) -> str:
+    if previous_state == "INVALIDATED":
+        return "INVALIDATED"
     status = str(candidate.get("buyability_status") or "").upper()
     if status in {"BUY_NOW", "ALMOST_READY"}:
         return "ACTIONABLE"

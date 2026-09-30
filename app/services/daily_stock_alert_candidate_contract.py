@@ -82,6 +82,22 @@ def represented_gate_count(candidate: dict[str, Any]) -> int:
     )
 
 
+def _apply_canonical_active_trigger(candidate: dict[str, Any]) -> None:
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    lifecycle = payload.get("lifecycle") if isinstance(payload.get("lifecycle"), dict) else {}
+    active_trigger = payload.get("active_trigger") or lifecycle.get("active_trigger")
+    if active_trigger is None:
+        return
+    trigger = Decimal(str(active_trigger))
+    price = candidate.get("current_price") or (candidate.get("metrics") or {}).get("close")
+    if price is None:
+        return
+    distance = ((trigger - Decimal(str(price))) / trigger) * Decimal("100")
+    candidate["trigger_price"] = str(trigger)
+    candidate["distance_to_trigger_pct"] = str(distance)
+    candidate["technical_gate_passed"] = distance <= 0
+
+
 def normalize_candidate_state(
     candidate: dict[str, Any],
     *,
@@ -95,6 +111,7 @@ def normalize_candidate_state(
     setup_bucket = str(normalized.get("screen_bucket") or "").strip().lower()
     setup_status = str(normalized.get("buyability_status") or "").strip().upper()
     setup_remaining = int(normalized.get("remaining_gate_count") or 0)
+    _apply_canonical_active_trigger(normalized)
 
     if (
         setup_status in ACTIONABLE_STATUSES

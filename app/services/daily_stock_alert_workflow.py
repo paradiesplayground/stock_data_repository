@@ -338,6 +338,23 @@ def _default_candidate(
             "qualitative_evidence": deepcopy(research.evidence) if research else [],
         },
     }
+    snapshot_payload = snapshot.get("payload") if isinstance(snapshot.get("payload"), dict) else {}
+    if snapshot_payload.get("active_trigger") is not None or snapshot_payload.get("lifecycle"):
+        base["payload"].update({
+            key: deepcopy(snapshot_payload[key])
+            for key in ("active_trigger", "active_trigger_set_date", "rolling_trigger", "lifecycle")
+            if key in snapshot_payload
+        })
+        lifecycle = snapshot_payload.get("lifecycle") if isinstance(snapshot_payload.get("lifecycle"), dict) else {}
+        anchored = base["payload"].get("active_trigger") or lifecycle.get("active_trigger")
+        if anchored is not None:
+            base["trigger_price"] = anchored
+            price = base.get("current_price") or (base.get("metrics") or {}).get("close")
+            if price is not None:
+                base["distance_to_trigger_pct"] = str(
+                    ((Decimal(str(anchored)) - Decimal(str(price))) / Decimal(str(anchored))) * Decimal("100")
+                )
+                base["technical_gate_passed"] = Decimal(str(base["distance_to_trigger_pct"])) <= 0
     if research and research.candidate_decision:
         # A per-ticker decision is checkpointed, not a caller-assembled run payload.
         base.update(deepcopy(research.candidate_decision))
