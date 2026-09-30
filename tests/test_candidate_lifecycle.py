@@ -1,7 +1,7 @@
 from decimal import Decimal
 from types import SimpleNamespace
 
-from app.services.candidate_lifecycle import apply_active_trigger, transition_state
+from app.services.candidate_lifecycle import apply_active_trigger, archive_stale_lifecycles, transition_state
 from app.services.daily_stock_alert_candidate_contract import normalize_candidate_state
 from app.services import strategy_tracking
 
@@ -69,6 +69,55 @@ def test_crossed_active_trigger_does_not_reanchor_when_confirmation_is_missing()
 
 def test_invalidated_is_terminal_without_an_explicit_reset():
     assert transition_state(_candidate(status="RADAR", distance="2"), "INVALIDATED") == "INVALIDATED"
+
+
+def test_stale_lifecycle_is_archived_after_trading_session_timeout(monkeypatch):
+    row = SimpleNamespace(
+        ticker="KLIC",
+        strategy_key="dynamic_swing_buy_alerts",
+        lifecycle_state="RECOVERING",
+        lifecycle_state_since=None,
+        last_discovery_screen_date="2026-08-01",
+        last_material_event=None,
+        last_material_event_date=None,
+        archive_reason=None,
+        archived_date=None,
+        active_trigger=Decimal("91.94"),
+    )
+    session = SimpleNamespace(
+        scalars=lambda statement: SimpleNamespace(all=lambda: [row]),
+    )
+    monkeypatch.setattr(
+        "app.services.candidate_lifecycle.trading_sessions_since",
+        lambda *args, **kwargs: 30,
+    )
+
+    archived = archive_stale_lifecycles(
+        session,
+        strategy_key="dynamic_swing_buy_alerts",
+        as_of_date="2026-09-15",
+        observed_tickers=set(),
+        timeout_trading_sessions=30,
+    )
+
+    assert archived == ["KLIC"]
+    assert row.lifecycle_state == "INVALIDATED"
+    assert row.last_material_event == "STALE_TIMEOUT"
+    assert row.archive_reason == "candidate absent from discovery for 30 trading sessions"
+    assert row.active_trigger is None
+
+
+def test_stale_lifecycle_does_not_archive_before_timeout(monkeypatch):
+    row = SimpleNamespace(
+        ticker="KLIC", lifecycle_state="RECOVERING", last_discovery_screen_date="2026-08-01",
+    )
+    session = SimpleNamespace(scalars=lambda statement: SimpleNamespace(all=lambda: [row]))
+    monkeypatch.setattr("app.services.candidate_lifecycle.trading_sessions_since", lambda *args, **kwargs: 29)
+
+    assert archive_stale_lifecycles(
+        session, strategy_key="dynamic_swing_buy_alerts", as_of_date="2026-09-15",
+        observed_tickers=set(), timeout_trading_sessions=30,
+    ) == []
 
 
 def test_canonical_finalization_preserves_active_trigger_and_recalculates_gates():

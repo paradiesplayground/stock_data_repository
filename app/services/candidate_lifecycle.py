@@ -4,13 +4,14 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import StrategyCandidateLifecycle
+from app.models import DailyPriceBar, StrategyCandidateLifecycle
 
 LIFECYCLE_STATES = {"FALLEN", "RECOVERING", "NEAR_TRIGGER", "ACTIONABLE", "INVALIDATED"}
 STALE_TIMEOUT_TRADING_SESSIONS = 30
+STALE_TIMEOUT_REASON = "candidate absent from discovery for {sessions} trading sessions"
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -66,6 +67,53 @@ def get_lifecycle(session: Session, strategy_key: str, ticker: str) -> StrategyC
         StrategyCandidateLifecycle.strategy_key == strategy_key,
         StrategyCandidateLifecycle.ticker == ticker,
     ))
+
+
+def trading_sessions_since(session: Session, *, start_date: date, end_date: date) -> int:
+    """Count completed market sessions in the stored price universe."""
+    if end_date <= start_date or not hasattr(session, "scalar"):
+        return 0
+    return int(session.scalar(select(func.count(func.distinct(DailyPriceBar.trade_date))).where(
+        DailyPriceBar.trade_date > start_date,
+        DailyPriceBar.trade_date <= end_date,
+    )) or 0)
+
+
+def archive_stale_lifecycles(
+    session: Session,
+    *,
+    strategy_key: str,
+    as_of_date: date,
+    observed_tickers: set[str],
+    timeout_trading_sessions: int = STALE_TIMEOUT_TRADING_SESSIONS,
+) -> list[str]:
+    """Archive candidates absent from the current discovery universe after the configured timeout."""
+    if timeout_trading_sessions < 1 or not hasattr(session, "scalars"):
+        return []
+    rows = session.scalars(select(StrategyCandidateLifecycle).where(
+        StrategyCandidateLifecycle.strategy_key == strategy_key,
+        StrategyCandidateLifecycle.lifecycle_state != "INVALIDATED",
+    )).all()
+    archived: list[str] = []
+    for row in rows:
+        if row.ticker.upper() in observed_tickers or row.last_discovery_screen_date is None:
+            continue
+        sessions_absent = trading_sessions_since(
+            session,
+            start_date=row.last_discovery_screen_date,
+            end_date=as_of_date,
+        )
+        if sessions_absent < timeout_trading_sessions:
+            continue
+        row.lifecycle_state = "INVALIDATED"
+        row.lifecycle_state_since = as_of_date
+        row.last_material_event = "STALE_TIMEOUT"
+        row.last_material_event_date = as_of_date
+        row.archive_reason = STALE_TIMEOUT_REASON.format(sessions=sessions_absent)
+        row.archived_date = as_of_date
+        row.active_trigger = None
+        archived.append(row.ticker)
+    return archived
 
 
 def persist_lifecycle(session: Session, *, strategy_key: str, as_of_date: date, candidate: dict[str, Any], previous: StrategyCandidateLifecycle | None) -> StrategyCandidateLifecycle:

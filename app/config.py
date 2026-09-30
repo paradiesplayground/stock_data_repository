@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     mcp_host: str = "0.0.0.0"
     mcp_port: int = Field(default=8001, ge=1, le=65535)
     mcp_enable_strategy_writes: bool = False
+    candidate_lifecycle_stale_timeout_trading_sessions: int = Field(default=30, ge=1, le=252)
 
     stock_alert_webhook_url: str = ""
     stock_alert_webhook_token: str = ""

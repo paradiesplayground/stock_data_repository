@@ -17,7 +17,7 @@ from app.models import (
     StrategyOutcomeObservation,
     StrategyRun,
 )
-from app.services.candidate_lifecycle import persist_lifecycle, get_lifecycle
+from app.services.candidate_lifecycle import archive_stale_lifecycles, persist_lifecycle, get_lifecycle
 from app.strategy_decisions import (
     DECISION_CONTRACT_VERSION,
     SCREEN_BUCKETS,
@@ -219,9 +219,11 @@ def _persist_run_lifecycles(
     strategy_key: str,
     as_of_date: str,
     normalized_candidates: list[dict[str, Any]],
+    stale_timeout_trading_sessions: int = 30,
 ) -> None:
     """Persist lifecycle state once for the canonical as-run payload."""
     lifecycle_date = _date(as_of_date, "as_of_date")
+    observed_tickers = {str(item["ticker"]).upper() for item in normalized_candidates}
     for item in normalized_candidates:
         payload_item = item.get("payload") or {}
         presentation = payload_item.get("presentation") if isinstance(payload_item.get("presentation"), dict) else {}
@@ -259,6 +261,13 @@ def _persist_run_lifecycles(
             "last_material_event": row.last_material_event,
             "archive_reason": row.archive_reason,
         }
+    archive_stale_lifecycles(
+        session,
+        strategy_key=strategy_key,
+        as_of_date=lifecycle_date,
+        observed_tickers=observed_tickers,
+        timeout_trading_sessions=stale_timeout_trading_sessions,
+    )
 
 
 def record_strategy_run(
@@ -478,11 +487,14 @@ def record_strategy_run(
     session.add(run)
     session.flush()
     if normalized_run_type == "as_run":
+        from app.config import get_settings
+
         _persist_run_lifecycles(
             session,
             strategy_key=strategy_key,
             as_of_date=as_of_date,
             normalized_candidates=normalized_candidates,
+            stale_timeout_trading_sessions=get_settings().candidate_lifecycle_stale_timeout_trading_sessions,
         )
     for item in normalized_candidates:
         session.add(

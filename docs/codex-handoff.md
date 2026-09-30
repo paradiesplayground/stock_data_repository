@@ -1,5 +1,12 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-09-30 — Phase 2 stale lifecycle timeout
+
+- **Implemented:** Candidate lifecycle persistence now archives a tracked candidate as `INVALIDATED` after it has been absent from the discovery universe for a configurable number of stored market sessions. The initial default is 30 sessions, configured with `CANDIDATE_LIFECYCLE_STALE_TIMEOUT_TRADING_SESSIONS`.
+- **Implemented:** Timeout archival records `STALE_TIMEOUT`, the archival date, an explicit reason, and clears the anchored trigger. Existing invalidation remains terminal, and observed candidates are not changed by the timeout pass.
+- **Regression coverage:** Added timeout-boundary tests; the complete local suite passes 242 tests and Ruff passes. No production alert, publication, email, or lifecycle state was changed.
+- **Status:** Deployment is pending. The next Phase 2 slice remains durable per-transition outcome observations.
+
 ## 2026-09-29 — Derived-feature recovery and memory containment
 
 - **Problem diagnosed:** Sep. 28 market bars were current, but the feature snapshot remained Sep. 25 because the scheduled feature process was cleanly interrupted 15 seconds after it began. Its run row remained `running`, so the replacement scheduler had no same-day catch-up. A manual recovery then exposed the underlying capacity failure: loading the complete price and SEC-fact universe at once exceeded the worker's 3 GiB cgroup limit and the kernel OOM-killed the calculation process.
