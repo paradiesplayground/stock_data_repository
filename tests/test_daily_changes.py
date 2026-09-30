@@ -259,8 +259,58 @@ def test_klic_recovery_exit_is_prominent_and_not_a_generic_removal(monkeypatch) 
         "current_decline_pct": "-11.5",
     }]
     assert changes["events"][0]["event_type"] == "LEFT_DISCOVERY_DUE_TO_RECOVERY"
-    assert changes["meaningful_changes"][0]["event_type"] == "LEFT_DISCOVERY_DUE_TO_RECOVERY"
+    assert "RECOVERY_PROGRESS" in changes["events"][0]["event_types"]
+    assert changes["report_sections"]["needs_attention_today"][0]["ticker"] == "KLIC"
     assert "recovered out of the original 12-week decline screen" in render_daily_changes(changes)
+
+
+def test_rendered_sections_consolidate_events_and_keep_recovery_watch_separate(monkeypatch) -> None:
+    prior_candidate = _candidate("KLIC", "RADAR", "9", "88", [], relative_strength="-2")
+    prior_candidate["metrics"].update({
+        "price_change_12w_pct": "-18", "revenue_ttm_yoy_pct": "70",
+        "latest_quarter_revenue_yoy_pct": "80", "avg_dollar_volume_20d": "100000000",
+    })
+    current_candidate = _candidate("KLIC", "RADAR", "8", "89", [], relative_strength="2")
+    current_candidate["metrics"].update({
+        "price_change_12w_pct": "-17", "revenue_ttm_yoy_pct": "70",
+        "latest_quarter_revenue_yoy_pct": "80", "avg_dollar_volume_20d": "100000000",
+    })
+    prior = {"run_id": "prior", "as_of_date": "2026-09-28", "candidates": [prior_candidate], "evidence": []}
+    monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
+
+    changes = build_daily_changes(object(), payload={
+        "strategy_key": "dynamic_swing_buy_alerts", "as_of_date": "2026-09-29",
+        "candidates": [current_candidate], "evidence": [],
+    })
+    rendered = render_daily_changes(changes)
+
+    assert changes["report_sections"]["needs_attention_today"] == []
+    assert [item["ticker"] for item in changes["report_sections"]["recovery_watch"]] == ["KLIC"]
+    assert rendered.count("| KLIC |") == 1
+    assert "## What changed since yesterday?" in rendered
+    assert "### Recovery Watch" in rendered
+    assert "Why:" not in rendered
+    assert "Blocking gates" not in rendered
+
+
+def test_needs_attention_is_capped_at_eight_names(monkeypatch) -> None:
+    tickers = [f"TICK{i:02d}" for i in range(9)]
+    prior = {
+        "run_id": "prior",
+        "as_of_date": "2026-09-28",
+        "candidates": [_candidate(ticker, "RADAR", "12", "88", []) for ticker in tickers],
+        "evidence": [],
+    }
+    current = [_candidate(ticker, "RADAR", "5", "95", []) for ticker in tickers]
+    monkeypatch.setattr("app.services.daily_changes._previous_run", lambda *_args, **_kwargs: prior)
+
+    changes = build_daily_changes(object(), payload={
+        "strategy_key": "dynamic_swing_buy_alerts", "as_of_date": "2026-09-29",
+        "candidates": current, "evidence": [],
+    })
+
+    assert len(changes["report_sections"]["needs_attention_today"]) == 8
+    assert [item["ticker"] for item in changes["report_sections"]["needs_attention_today"]] == tickers[:8]
 
 
 def test_repeated_setup_invalidation_breach_is_suppressed(monkeypatch) -> None:

@@ -123,6 +123,29 @@ def _materially_changed_level(previous: Any, current: Any) -> bool:
     return abs(new_level - old_level) >= max(abs(old_level) * Decimal("0.01"), Decimal("0.01"))
 
 
+def _report_candidate(candidate: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+    metrics = candidate.get("metrics") or {}
+    payload = candidate.get("payload") or {}
+    presentation = payload.get("presentation") if isinstance(payload, dict) else {}
+    next_step = (
+        presentation.get("next")
+        if isinstance(presentation, dict) and presentation.get("next")
+        else (candidate.get("buy_conditions") or ["Continue monitoring the saved setup conditions."])[0]
+    )
+    return {
+        "ticker": candidate.get("ticker"),
+        "status": candidate.get("buyability_status") or candidate.get("decision_status"),
+        "current_price": candidate.get("current_price") or metrics.get("close"),
+        "trigger": candidate.get("trigger_price"),
+        "distance_to_trigger_pct": candidate.get("distance_to_trigger_pct"),
+        "relative_strength_20d": metrics.get("relative_return_20d_vs_qqq_pct"),
+        "event_type": event["event_type"],
+        "event_types": event["event_types"],
+        "what_changed": event["text"],
+        "what_matters_next": str(next_step),
+    }
+
+
 def _research_scope_only_status_change(before: dict[str, Any], now: dict[str, Any]) -> bool:
     """Avoid treating an absent refresh as a stock-specific downgrade."""
     old_payload = before.get("payload") if isinstance(before.get("payload"), dict) else {}
@@ -147,6 +170,11 @@ def _research_scope_only_status_change(before: dict[str, Any], now: dict[str, An
 
 def _format_pct(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.1'))}%"
+
+
+def _format_money(value: Any) -> str:
+    parsed = _decimal(value)
+    return f"${parsed.quantize(Decimal('0.01'))}" if parsed is not None else "—"
 
 
 def _evidence_key(item: dict[str, Any]) -> tuple[str, ...]:
@@ -296,6 +324,12 @@ def build_daily_changes(
                     "direction": "improved" if change < 0 else "deteriorated",
                 }
             )
+            if change <= Decimal("-0.5"):
+                events.append({
+                    "ticker": ticker,
+                    "event_type": "RECOVERY_PROGRESS",
+                    "text": f"{ticker} improved from {_format_pct(old_distance)} to {_format_pct(new_distance)} below trigger.",
+                })
         if new_distance is not None and Decimal("0") <= new_distance <= Decimal("10"):
             reason = (
                 "within_5_pct_of_trigger"
@@ -359,6 +393,11 @@ def build_daily_changes(
         )
         if old_rs is not None and new_rs is not None and old_rs <= 0 < new_rs:
             attend(ticker, "relative_strength_turned_positive")
+            events.append({
+                "ticker": ticker,
+                "event_type": "RECOVERY_PROGRESS",
+                "text": f"{ticker} relative strength turned positive at {_format_pct(new_rs)}.",
+            })
 
         old_risk_flags = set(before.get("deterministic_risk_flags") or [])
         new_risk_flags = set(now.get("deterministic_risk_flags") or [])
@@ -396,6 +435,13 @@ def build_daily_changes(
                     "event_type": "FUNDAMENTAL_CHANGE",
                     "text": f"{ticker} had a material {category} data change.",
                 })
+        before_score, current_score = _score(before), _score(now)
+        if before_score is not None and current_score is not None and current_score > before_score and current_score - before_score >= 3:
+            events.append({
+                "ticker": ticker,
+                "event_type": "RECOVERY_PROGRESS",
+                "text": f"{ticker} setup score improved from {before_score:.0f} to {current_score:.0f}.",
+            })
 
     prior_evidence = {
         _evidence_key(item) for item in (prior or {}).get("evidence") or []
@@ -426,13 +472,65 @@ def build_daily_changes(
             evidence_changes.append(change)
             if ticker:
                 attend(ticker, "new_" + change["category"] + "_evidence")
+                events.append({
+                    "ticker": ticker,
+                    "event_type": "RISK_CHANGE" if change["category"] in {"dilution_or_financing", "liquidity"} else "FUNDAMENTAL_CHANGE",
+                    "text": f"{ticker} had new {change['category'].replace('_', ' ')} evidence.",
+                })
+
+    by_ticker: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        by_ticker.setdefault(str(event["ticker"]), []).append(event)
+    consolidated_events: list[dict[str, Any]] = []
+    for ticker, ticker_events in by_ticker.items():
+        unique_types = sorted(
+            {str(item["event_type"]) for item in ticker_events},
+            key=lambda value: EVENT_PRIORITY.get(value, 10),
+        )
+        texts = list(dict.fromkeys(str(item["text"]) for item in ticker_events))
+        consolidated_events.append({
+            "ticker": ticker,
+            "event_type": unique_types[0],
+            "event_types": unique_types,
+            "text": " ".join(texts),
+        })
+    consolidated_events.sort(
+        key=lambda item: (EVENT_PRIORITY.get(item["event_type"], 10), item["ticker"])
+    )
+
+    current_by_ticker = {str(item["ticker"]): item for item in current.values()}
+    report_items = [
+        _report_candidate(current_by_ticker[item["ticker"]], item)
+        for item in consolidated_events
+        if item["ticker"] in current_by_ticker
+    ]
+    attention_types = {"BECAME_ACTIONABLE", "ENTERED_NEAR_TRIGGER", "LEFT_DISCOVERY_DUE_TO_RECOVERY"}
+    attention_items = [item for item in report_items if item["event_type"] in attention_types][:8]
+    attention_tickers = {item["ticker"] for item in attention_items}
+    recovery_watch = [
+        item for item in report_items
+        if item["ticker"] not in attention_tickers
+        and set(item["event_types"]) & {"LEFT_DISCOVERY_DUE_TO_RECOVERY", "RECOVERY_PROGRESS"}
+    ]
+    recovery_watch.sort(
+        key=lambda item: (
+            abs(_decimal(item.get("distance_to_trigger_pct")) or Decimal("999999")),
+            -(_decimal(item.get("relative_strength_20d")) or Decimal("-999999")),
+            item["ticker"],
+        )
+    )
+    material = [
+        item for item in report_items
+        if item["ticker"] not in attention_tickers
+        and item["ticker"] not in {entry["ticker"] for entry in recovery_watch}
+    ]
 
     meaningful: list[dict[str, str | int]] = []
     for ticker in sorted(current.keys() - previous.keys()):
         meaningful.append({"category": "New", "ticker": ticker, "text": f"{ticker} entered the tracked set.", "priority": 3, "event_type": "NEW_CANDIDATE"})
     for ticker in sorted(previous.keys() - current.keys()):
         meaningful.append({"category": "Removed", "ticker": ticker, "text": f"{ticker} was removed because it no longer met the tracked screen.", "priority": 3, "event_type": "ARCHIVED"})
-    for item in events:
+    for item in consolidated_events:
         if item["event_type"] == "NEW_CANDIDATE":
             continue
         meaningful.append({
@@ -456,11 +554,11 @@ def build_daily_changes(
                 "priority": 2,
                 "event_type": "RECOVERY_PROGRESS" if change < 0 else "MINOR_CHANGE",
             })
-    for ticker in shared:
-        before_score, current_score = _score(previous[ticker]), _score(current[ticker])
-        if before_score is not None and current_score is not None and abs(current_score - before_score) >= 3:
-            direction = "Improved" if current_score > before_score else "Deteriorated"
-            meaningful.append({
+        for ticker in shared:
+            before_score, current_score = _score(previous[ticker]), _score(current[ticker])
+            if before_score is not None and current_score is not None and abs(current_score - before_score) >= 3:
+                direction = "Improved" if current_score > before_score else "Deteriorated"
+                meaningful.append({
                 "category": direction,
                 "ticker": ticker,
                 "text": f"{ticker} setup score {direction.lower()} from {before_score:.0f} to {current_score:.0f}.",
@@ -484,9 +582,14 @@ def build_daily_changes(
         "fundamental_changes": fundamental_changes,
         "evidence_changes": evidence_changes,
         "recovery_exits": recovery_exits,
-        "events": sorted(events, key=lambda item: (EVENT_PRIORITY[item["event_type"]], item["ticker"])),
+        "events": consolidated_events,
+        "report_sections": {
+                "needs_attention_today": attention_items,
+            "recovery_watch": recovery_watch,
+            "new_materially_changed": material,
+        },
         "attention_today": [
-            {"ticker": ticker, "reasons": sorted(reasons)}
+                {"ticker": ticker, "reasons": sorted(reasons)}
             for ticker, reasons in sorted(attention.items())
         ],
         "meaningful_changes": meaningful[:8],
@@ -504,6 +607,36 @@ def render_daily_changes(changes: dict[str, Any]) -> str:
                 "<!-- daily-changes:end -->",
             ]
         )
+    sections = changes.get("report_sections") or {}
+    if any(sections.get(name) for name in ("needs_attention_today", "recovery_watch", "new_materially_changed")):
+        def render_section(title: str, entries: list[dict[str, Any]]) -> list[str]:
+            if not entries:
+                return []
+            result = [f"### {title}", "", "| Ticker | Status | Current | Trigger | Distance | 20d RS | What changed | What matters next |", "|---|---|---:|---:|---:|---:|---|---|"]
+            for item in entries:
+                result.append(
+                    "| " + " | ".join(
+                        (
+                            str(item.get("ticker") or "—"),
+                            str(item.get("status") or "—"),
+                            _format_money(item.get("current_price")),
+                            _format_money(item.get("trigger")),
+                            _format_pct(_decimal(item.get("distance_to_trigger_pct"))) if _decimal(item.get("distance_to_trigger_pct")) is not None else "—",
+                            _format_pct(_decimal(item.get("relative_strength_20d"))) if _decimal(item.get("relative_strength_20d")) is not None else "—",
+                            str(item.get("what_changed") or "—"),
+                            str(item.get("what_matters_next") or "—"),
+                        )
+                    ) + " |"
+                )
+            return result + [""]
+
+        rendered: list[str] = []
+        rendered.extend(render_section("Needs attention today", sections.get("needs_attention_today") or []))
+        rendered.extend(render_section("Recovery Watch", sections.get("recovery_watch") or []))
+        rendered.extend(render_section("New / materially changed", sections.get("new_materially_changed") or []))
+        if not rendered:
+            rendered.extend(["No other material changes.", ""])
+        return "\n".join(lines + [""] + rendered + ["<!-- daily-changes:end -->"])
     if changes.get("meaningful_changes") is not None:
         entries = [str(item["text"]) for item in changes["meaningful_changes"]]
         if not entries:
