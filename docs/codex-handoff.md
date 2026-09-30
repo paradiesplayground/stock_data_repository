@@ -5,7 +5,7 @@
 - **Implemented:** Added append-only `strategy_candidate_lifecycle_observations` storage. Every actual lifecycle state transition records the ticker, prior/new state, event, outcome status, transition metrics, source canonical run, and observation timestamp. Stale-timeout archival records the same durable observation path.
 - **Implemented:** Canonical strategy-run reads now expose lifecycle observations separately from downstream performance outcomes. Historical alert payloads remain immutable.
 - **Regression coverage:** Added transition-persistence coverage and retained the stale-timeout boundary coverage. The complete local suite passes 244 tests and Ruff passes.
-- **Status:** Deployment is pending for migration `0017_lifecycle_observations`; after deployment, Phase 2 lifecycle work is complete. Phase 3 controlled decline-rule comparison remains separate.
+- **Verified / deployed:** Functional commit `d786e25` and migration `0017_lifecycle_observations` were deployed through the guarded Unraid updater. The contract image passed 244 tests and Ruff; migration completed; API health/readiness and MCP health returned successfully; PostgreSQL, API, worker, MCP, and the tunnel are healthy after the standard tunnel-only startup-race recovery. Phase 2 lifecycle work is complete. Phase 3 controlled decline-rule comparison remains separate.
 
 ## 2026-09-30 — Phase 2 stale-timeout bootstrap correction
 
