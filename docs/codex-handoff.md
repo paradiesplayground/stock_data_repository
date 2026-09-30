@@ -5,7 +5,7 @@
 - **Implemented:** Candidate lifecycle persistence now archives a tracked candidate as `INVALIDATED` after it has been absent from the discovery universe for a configurable number of stored market sessions. The initial default is 30 sessions, configured with `CANDIDATE_LIFECYCLE_STALE_TIMEOUT_TRADING_SESSIONS`.
 - **Implemented:** Timeout archival records `STALE_TIMEOUT`, the archival date, an explicit reason, and clears the anchored trigger. Existing invalidation remains terminal, and observed candidates are not changed by the timeout pass.
 - **Regression coverage:** Added timeout-boundary tests; the complete local suite passes 242 tests and Ruff passes. No production alert, publication, email, or lifecycle state was changed.
-- **Status:** Deployment is pending. The next Phase 2 slice remains durable per-transition outcome observations.
+- **Verified / deployed:** Functional commit `e209cb8` was deployed through the guarded Unraid updater. The contract image passed 242 tests and Ruff; migrations completed; API health/readiness and MCP health returned successfully; PostgreSQL, API, worker, MCP, and the tunnel are healthy after the standard tunnel-only startup-race recovery. No production alert, publication, or email was run. The next Phase 2 slice remains durable per-transition outcome observations.
 
 ## 2026-09-29 — Derived-feature recovery and memory containment
 
