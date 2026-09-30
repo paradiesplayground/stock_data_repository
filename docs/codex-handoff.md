@@ -4,7 +4,7 @@
 
 - **Corrected:** Lifecycle transition observations are now appended after the lifecycle row calculates its resulting active trigger, rolling trigger, and trigger distance. Observations preserve the prior state separately and use `payload.rolling_trigger` for the rolling reference.
 - **Regression coverage:** Added new-trigger and anchored-trigger transition cases, including active/rolling trigger separation. The stale-timeout observation and canonical run-read coverage remain intact. The complete local suite passes 245 tests and Ruff passes.
-- **Status:** Deployment is pending for this narrow correction; no production alert, publication, or email was run.
+- **Verified / deployed:** Functional commit `21c937c` was deployed through the guarded Unraid updater. The contract image passed 245 tests and Ruff; API health/readiness and MCP health returned successfully; PostgreSQL, API, worker, MCP, and the tunnel are healthy after the standard tunnel-only startup-race recovery. No production alert, publication, or email was run.
 
 ## 2026-09-30 — Phase 2 lifecycle transition observations
 
