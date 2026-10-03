@@ -143,6 +143,13 @@ def normalize_candidate_state(
     independent_remaining = max(0, setup_remaining - previous_represented_remaining)
     normalized["remaining_gate_count"] = independent_remaining + represented_remaining
 
+    # RADAR always means at least one explicit condition still blocks actionability.
+    # Anchored-trigger recalculation can legitimately clear every represented gate
+    # after research checkpointing; preserve the saved RADAR judgment as one
+    # residual independent gate instead of emitting the impossible RADAR/0 state.
+    if setup_status == "RADAR" and normalized["remaining_gate_count"] == 0:
+        normalized["remaining_gate_count"] = 1
+
     # ALMOST_READY is not a loose label: v0.8 requires precisely one
     # represented gate plus a structured, near-trigger risk plan. Derive that
     # state from the canonical fields rather than trusting a checkpointed count.
