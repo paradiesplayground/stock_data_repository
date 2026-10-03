@@ -298,6 +298,44 @@ def test_almost_ready_saved_setup_derives_its_one_canonical_remaining_gate() -> 
     assert candidate["invalidation_price"] == "95"
 
 
+def test_radar_with_cleared_anchored_trigger_keeps_one_residual_gate() -> None:
+    """STRL-shaped anchored-trigger repricing cannot emit the invalid RADAR/0 state."""
+    snapshot = _candidate("STRL")
+    snapshot["deterministic_metrics"] = {
+        **snapshot["deterministic_metrics"],
+        "close": "105",
+    }
+    snapshot["payload"] = {
+        "active_trigger": "100",
+        "lifecycle": {"active_trigger": "100"},
+    }
+    snapshot["represented_gates"] = {
+        **snapshot["represented_gates"],
+        "market_regime_gate_passed": True,
+    }
+    research = SimpleNamespace(
+        evidence=[], qualitative_blockers=[], qualitative_flags=[],
+        candidate_decision={
+            "buyability_status": "RADAR",
+            "screen_bucket": "qualified",
+            "technical_state": "confirmed",
+            "remaining_gate_count": 0,
+            "status_reason": "Saved research keeps the setup on radar pending one residual condition.",
+            "buy_conditions": ["Wait for the remaining researched condition to clear."],
+        },
+    )
+
+    candidate = workflow._default_candidate(
+        snapshot, {"reasons": [], "evidence_state": "missing"}, research,
+        {"checkpoint": "fresh"},
+    )
+
+    assert candidate["buyability_status"] == "RADAR"
+    assert candidate["technical_gate_passed"] is True
+    assert candidate["distance_to_trigger_pct"] == "-5.00"
+    assert candidate["remaining_gate_count"] == 1
+
+
 def test_finalized_report_surfaces_market_blocked_setup_quality(monkeypatch) -> None:
     snapshot = _snapshot(1)
     candidate_snapshot = snapshot["candidate_snapshots"]["T00"]
