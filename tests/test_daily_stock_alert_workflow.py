@@ -429,7 +429,7 @@ def test_report_uses_one_watch_first_policy_and_keeps_alab_screen_failure_visibl
     report = result["run_payload"]["report_markdown"]
     assert summary["watch_first_tickers"] == ["T00"]
     assert summary["excluded_worth_reviewing_tickers"] == ["ALAB"]
-    assert "## Watch first\n### T00" in report
+    assert "## No buy today \u2014 closest setups\n### T00" in report
     assert "## Excluded — worth reviewing\n\n### ALAB" in report
     assert "12-week price change is -16.3%; required <= -20.0%." in report
     assert "12-week price change must be <= -20.0%." in report

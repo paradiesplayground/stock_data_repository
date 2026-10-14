@@ -316,10 +316,32 @@ def _research_plan(
             scope == "deep_research" or evidence_state != "reused_current"
         ),
         "reusable_prior_evidence": prior_evidence,
+        "prior_qualitative_blockers": ((prior or {}).get("payload") or {}).get("qualitative_blockers") or [],
+        "prior_qualitative_flags": ((prior or {}).get("payload") or {}).get("qualitative_flags") or [],
         "qualitative_evidence_required": candidate[
             "qualitative_evidence_required"
         ],
     }
+
+
+def research_priority_key(plan: dict[str, Any], candidate: dict[str, Any], closest: set[str]) -> tuple:
+    """Decision relevance before discovery novelty, within the unchanged daily budget."""
+    gates = candidate.get("represented_gates") or {}
+    hard = bool(candidate.get("deterministic_risk_flags") or plan.get("prior_qualitative_blockers") or "dropped_from_raw_pool" in plan["reasons"])
+    if hard:
+        rank = 5
+    elif plan.get("prior_buyability_status") in {"BUY_NOW", "ALMOST_READY"}:
+        rank = 0
+    elif gates and _potentially_actionable(candidate):
+        rank = 1
+    elif plan["ticker"] in closest or plan.get("prior_buyability_status") == "RADAR":
+        rank = 2
+    elif any(reason in plan["reasons"] for reason in ("fresh_source_filing", "material_metric_change", "material_daily_move")):
+        rank = 3
+    else:
+        rank = 4
+    distance = _decimal(candidate.get("distance_to_trigger_pct"))
+    return rank, sum(not value for value in gates.values()), abs(distance) if distance is not None else Decimal("999999"), plan["ticker"]
 
 
 def prepare_daily_stock_alert(
@@ -440,8 +462,23 @@ def prepare_daily_stock_alert(
         )
         research_plans.append(plan)
 
-    priority_order = {"high": 0, "normal": 1, "low": 2}
-    research_plans.sort(key=lambda item: (priority_order[item["priority"]], item["ticker"]))
+    # Review only a bounded closest-setups cohort beyond the strict actionability range.
+    by_ticker = {item["ticker"]: item for item in prepared_candidates}
+    existing_plans = {item["ticker"]: item for item in research_plans}
+    viable = sorted(
+        [item for item in prepared_candidates if not item["deterministic_risk_flags"] and not existing_plans[item["ticker"]].get("prior_qualitative_blockers")],
+        key=lambda item: (sum(not value for value in item["represented_gates"].values()),
+                          abs(_decimal(item.get("distance_to_trigger_pct"))) if _decimal(item.get("distance_to_trigger_pct")) is not None else Decimal("999999"), item["ticker"]),
+    )[:5]
+    closest = {item["ticker"] for item in viable}
+    for plan in research_plans:
+        if plan["ticker"] in closest and plan["evidence_state"] != "reused_current":
+            plan["research_scope"] = "deep_research"
+            plan["reasons"].append("closest_viable_setup_needs_evidence")
+        elif plan["evidence_state"] == "reused_current" and not any(reason in plan["reasons"] for reason in
+                ("fresh_source_filing", "material_metric_change", "material_daily_move")):
+            plan["research_scope"] = "carry_forward"
+    research_plans.sort(key=lambda item: research_priority_key(item, by_ticker.get(item["ticker"], {}), closest))
     deep_budget = BLOCK_DEEP_RESEARCH_BUDGET if regime["status"] == "block" else NORMAL_DEEP_RESEARCH_BUDGET
     qualifying_deep = [item for item in research_plans if item["research_scope"] == "deep_research"]
     deep_research_queue = qualifying_deep[:deep_budget]

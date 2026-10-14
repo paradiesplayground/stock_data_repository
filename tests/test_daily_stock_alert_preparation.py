@@ -377,3 +377,40 @@ def test_unresearched_candidate_cannot_become_actionable() -> None:
         assert "requires fresh qualitative evidence" in str(error)
     else:
         raise AssertionError("unresearched candidate must not become actionable")
+
+
+def test_october_closest_setups_precede_new_distant_hard_blocks(monkeypatch):
+    _prepare_many(monkeypatch, count=1, regime="block")
+    features = []
+    for ticker, close, runway in [("AMPX", "60", "4"), ("HUT", "65", "8"),
+                                  ("STRL", "94", "18"), ("APP", "93", "18"),
+                                  ("LMND", "92", "18"), ("RUN", "91", "18")]:
+        features.append({**_feature(ticker), "close": close, "cash_runway_months": runway})
+    monkeypatch.setattr("app.services.daily_stock_alert_preparation.query_security_features", lambda *_args, **_kwargs:
+        {"as_of_date": "2026-08-21", "calculation_version": "1.5.0", "count": len(features), "items": features, "excluded_industry_groups": [], "excluded_sic_prefixes": []})
+    result = prepare_daily_stock_alert(object(), Settings(), as_of_date="2026-08-21")
+    ranked = [item["ticker"] for item in result["deep_research_queue"]]
+    assert ranked[:4] == ["STRL", "APP", "LMND", "RUN"]
+    assert len(ranked) <= 6
+    assert "closest_viable_setup_needs_evidence" in result["deep_research_queue"][0]["reasons"]
+
+
+def test_server_stamped_evidence_is_reused_only_for_its_ticker_next_preparation(monkeypatch):
+    from app.services.daily_stock_alert_workflow import _normalize_evidence_records
+
+    _prepare_many(monkeypatch, count=1, regime="pass")
+    features = [_feature("STRL"), _feature("APP")]
+    monkeypatch.setattr("app.services.daily_stock_alert_preparation.query_security_features", lambda *_args, **_kwargs:
+        {"as_of_date": "2026-08-21", "calculation_version": "1.5.0", "count": len(features), "items": features, "excluded_industry_groups": [], "excluded_sic_prefixes": []})
+    evidence = _normalize_evidence_records([{"evidence_type": "review", "summary": "Backlog grew 30%",
+        "retrieved_at_utc": "2026-08-20T15:00:00Z"}], " strl ")
+    prior = {"as_of_date": "2026-08-20", "evidence": evidence, "candidates": [
+        {"ticker": feature["ticker"], "buyability_status": "RADAR", "metrics": feature,
+         "payload": {"in_raw_pool": True}} for feature in features]}
+    monkeypatch.setattr("app.services.daily_stock_alert_preparation._prior_run", lambda *_args: prior)
+    result = prepare_daily_stock_alert(object(), Settings(), as_of_date="2026-08-21")
+    assert [item["ticker"] for item in result["carry_forward_queue"]] == ["STRL"]
+    assert result["carry_forward_queue"][0]["evidence_state"] == "reused_current"
+    app = next(item for item in result["all_research_plans"] if item["ticker"] == "APP")
+    assert app["evidence_state"] == "missing"
+    assert app["reusable_prior_evidence"] == []

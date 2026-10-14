@@ -51,14 +51,14 @@ def test_report_enrichment_does_not_manufacture_fixed_r_targets() -> None:
     assert report_enrichment(snapshot=snapshot, plan={})["structural_targets"] == []
 
 
-def test_report_focus_rank_favors_score_then_trigger_proximity() -> None:
+def test_report_focus_rank_favors_trigger_proximity_before_score() -> None:
     candidates = [
         {"ticker": "FAR", "setup_score": 82, "distance_to_trigger_pct": "4"},
         {"ticker": "CLOSE", "setup_score": 82, "distance_to_trigger_pct": "0.2"},
         {"ticker": "LOW", "setup_score": 70, "distance_to_trigger_pct": "0.1"},
     ]
 
-    assert [item["ticker"] for item in sorted(candidates, key=report_focus_sort_key)] == ["CLOSE", "FAR", "LOW"]
+    assert [item["ticker"] for item in sorted(candidates, key=report_focus_sort_key)] == ["LOW", "CLOSE", "FAR"]
 
 
 def test_ticker_explanation_uses_snapshot_facts_not_workflow_boilerplate() -> None:
@@ -99,6 +99,37 @@ def test_presentation_keeps_ticker_specific_research_and_score_context() -> None
     assert "close above $100.00" in presentation["next"]
     assert "Setup quality 43/100" in presentation["score_summary"]
     assert "R multiples describe observed payoff geometry, not setup quality" in presentation["score_summary"]
-    assert presentation["research_summary"] == "Fresh qualitative research: filing review."
+    assert presentation["research_summary"] is None
     assert presentation["score"] == 43
     assert presentation["targets"][0]["r_multiple"] == "3.00"
+
+
+def test_structured_investor_summary_separates_research_and_technical_conditions():
+    snapshot = _snapshot()
+    candidate = {"ticker": "STRL", "metrics": snapshot["deterministic_metrics"],
+        "current_price": "99.9", "trigger_price": "100", "invalidation_price": "90",
+        "distance_to_trigger_pct": "0.1", "buyability_status": "RADAR",
+        "technical_gate_passed": False, "market_regime_gate_passed": True,
+        "structural_targets": [{"price": "130", "basis": "resistance", "r_multiple": "3"}],
+        "payload": {"qualitative_evidence_status": "reused_current", "qualitative_evidence": [
+            {"summary": "Backlog expanded 30%; customer concentration fell.", "source_date": "2026-10-13",
+             "details": {"positive_fundamentals": ["Backlog expanded 30%"], "catalyst": "Confirmed capacity expansion"}}]}}
+    result = candidate_presentation(candidate)
+    assert result["research_status"] == "carry_forward"
+    assert result["research_as_of"] == "2026-10-13"
+    assert result["research_summary"] == "Backlog expanded 30%; customer concentration fell."
+    assert "Backlog expanded 30%" in result["positive_fundamentals"]
+    assert result["fundamental_risks"] == []
+    assert result["data_gaps"] == []
+    assert result["technical_requirements"][0]["gate"] == "Technical confirmation"
+    assert result["planned_stop_after_entry"] == "90"
+    assert result["r_multiples"] == ["3"]
+
+
+def test_hard_block_and_missing_research_cannot_outrank_viable_radar():
+    candidates = [
+        {"ticker": "HUT", "buyability_status": "RADAR", "setup_score": 100, "deterministic_risk_flags": ["cash_runway_below_12_months"]},
+        {"ticker": "AMPX", "buyability_status": "RADAR", "setup_score": 99, "distance_to_trigger_pct": "0", "payload": {"qualitative_evidence_status": "missing"}},
+        {"ticker": "STRL", "buyability_status": "RADAR", "setup_score": 40, "distance_to_trigger_pct": "6", "payload": {"qualitative_evidence_status": "reused_current"}},
+    ]
+    assert [item["ticker"] for item in sorted(candidates, key=report_focus_sort_key)] == ["STRL", "AMPX", "HUT"]

@@ -112,7 +112,7 @@ def test_finalizer_normalizes_already_saved_invalid_evidence(monkeypatch) -> Non
             ticker="TEST",
             evidence=[
                 {
-                    "ticker": "TEST",
+                    "ticker": None,
                     "evidence_type": "This Existing Saved Evidence Type Has Spaces / Punctuation And Is Far Too Long For The Contract",
                     "details": {"checkpoint": "already_saved"},
                 }
@@ -127,6 +127,7 @@ def test_finalizer_normalizes_already_saved_invalid_evidence(monkeypatch) -> Non
 
     def _validate(_session, _settings, **kwargs):
         evidence = kwargs["run_payload"]["evidence"][0]
+        assert evidence["ticker"] == "TEST"
         assert len(evidence["evidence_type"]) <= 64
         assert evidence["evidence_type"] == workflow._normalize_evidence_type(
             evidence["evidence_type"]
@@ -148,3 +149,44 @@ def test_finalizer_normalizes_already_saved_invalid_evidence(monkeypatch) -> Non
 
     assert result["validated"]["status"] == "valid"
     assert result["run_payload"]["evidence"][0]["details"]["checkpoint"] == "already_saved"
+
+
+def test_checkpoint_server_stamps_ticker_even_when_caller_omits_or_mislabels_it(monkeypatch):
+    snapshot = _snapshot()
+    snapshot["deep_research_queue"][0]["ticker"] = "STRL"
+    monkeypatch.setattr(workflow, "_preparation", lambda *_args: SimpleNamespace(snapshot=snapshot))
+    session = _Session()
+    workflow.record_daily_stock_alert_research(session, preparation_id="prep", ticker=" strl ",
+        evidence=[{"evidence_type": "review", "source_date": "2026-10-13"},
+                  {"ticker": "HUT", "evidence_type": "review", "source_date": "2026-10-13"}],
+        required_dimensions={"dimension": True})
+    assert [item["ticker"] for item in session.added.evidence] == ["STRL", "STRL"]
+    assert all(item.get("ticker") == "STRL" for item in workflow._normalize_evidence_records(
+        [{"ticker": None, "evidence_type": "review"}], "STRL"))
+
+
+def test_strl_checkpoint_survives_canonical_finalization_and_reuse(monkeypatch):
+    import json
+    from datetime import date
+    from app.services.daily_stock_alert_preparation import _research_plan
+
+    snapshot = json.loads(json.dumps(_snapshot()).replace("TEST", "STRL"))
+    snapshot["candidate_snapshots"]["STRL"]["qualitative_evidence_required"] = ["dimension"]
+    preparation = SimpleNamespace(preparation_id="prep-strl", snapshot=snapshot, final_payload=None,
+                                  validation=None, production_run_id=None)
+    monkeypatch.setattr(workflow, "_preparation", lambda *_args: preparation)
+    session = _Session()
+    workflow.record_daily_stock_alert_research(session, preparation_id="prep-strl", ticker="strl",
+        evidence=[{"evidence_type": "review", "summary": "Revenue grew 80%",
+                   "retrieved_at_utc": "2026-10-13T15:00:00Z"}], required_dimensions={"dimension": True})
+    monkeypatch.setattr(workflow, "_research_by_ticker", lambda *_args: {"STRL": session.added})
+    monkeypatch.setattr(workflow, "validate_daily_stock_alert", lambda *_args, **kwargs:
+        {"status": "valid", "payload_hash": "hash", "validated_run_payload": kwargs["run_payload"]})
+    canonical = workflow.finalize_daily_stock_alert_preparation(session, Settings(), preparation_id="prep-strl")["run_payload"]
+    assert canonical["evidence"][0]["ticker"] == "STRL"
+    candidate = canonical["candidates"][0]
+    assert candidate["payload"]["qualitative_evidence"][0]["ticker"] == "STRL"
+    plan = _research_plan(snapshot["candidate_snapshots"]["STRL"], candidate, canonical["evidence"],
+                          is_new=False, as_of_date=date(2026, 10, 14))
+    assert plan["evidence_state"] == "reused_current"
+    assert plan["research_scope"] == "carry_forward"

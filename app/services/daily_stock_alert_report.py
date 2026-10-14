@@ -130,10 +130,22 @@ def report_enrichment(
     }
 
 
-def report_focus_sort_key(candidate: dict[str, Any]) -> tuple[int, Decimal, str]:
-    score = int(candidate.get("setup_score") or 0)
-    distance = abs(_decimal(candidate.get("distance_to_trigger_pct")) or Decimal("999999"))
-    return -score, distance, str(candidate.get("ticker") or "")
+def report_focus_sort_key(candidate: dict[str, Any]) -> tuple:
+    """Server-owned decision order; scores never promote an ineligible setup."""
+    payload = candidate.get("payload") or {}
+    status = str(payload.get("setup_buyability_status") or candidate.get("buyability_status") or "RADAR")
+    presentation = payload.get("presentation") or {}
+    hard = bool(candidate.get("deterministic_risk_flags") or payload.get("qualitative_blockers")
+                or presentation.get("screen_failures") or any(item.get("hard_block") for item in presentation.get("fundamental_risks", [])) or payload.get("lifecycle", {}).get("state") == "INVALIDATED")
+    research = payload.get("qualitative_evidence_status")
+    incomplete = research not in {"fresh_researched", "reused_current"}
+    distance = _decimal(candidate.get("distance_to_trigger_pct"))
+    return (
+        4 if hard else 3 if status == "NOT_ELIGIBLE" else {"BUY_NOW": 0, "ALMOST_READY": 1, "RADAR": 2}.get(status, 3),
+        incomplete, int(payload.get("setup_remaining_gate_count", candidate.get("remaining_gate_count") or 0)),
+        abs(distance) if distance is not None else Decimal("999999"),
+        -int(candidate.get("setup_score") or 0), str(candidate.get("ticker") or ""),
+    )
 
 
 def _screen_blockers(metrics: dict[str, Any]) -> list[dict[str, str]]:
@@ -196,6 +208,12 @@ def candidate_presentation(candidate: dict[str, Any]) -> dict[str, Any]:
                 "reason": "No valid breakout trigger is available.",
                 "clear_condition": "Establish a valid 20-day breakout trigger.",
             })
+    if rs is not None and rs <= 0:
+        blockers.append({
+            "gate": "Technical confirmation",
+            "reason": f"20-day relative strength vs QQQ is {_percent(rs)}.",
+            "clear_condition": "20-day relative strength vs QQQ must be positive.",
+        })
     if not bool(candidate.get("market_regime_gate_passed")):
         blockers.append({
             "gate": "Market regime",
@@ -204,7 +222,7 @@ def candidate_presentation(candidate: dict[str, Any]) -> dict[str, Any]:
         })
     payload = candidate.get("payload") or {}
     evidence_status = payload.get("qualitative_evidence_status")
-    if evidence_status != "fresh_researched":
+    if evidence_status not in {"fresh_researched", "reused_current"}:
         blockers.append({
             "gate": "Qualitative confirmation",
             "reason": "Current qualitative confirmation is not complete.",
@@ -216,10 +234,14 @@ def candidate_presentation(candidate: dict[str, Any]) -> dict[str, Any]:
         "cash_runway_below_12_months": "Cash runway must be at least 12 months.",
         "share_count_growth_at_or_above_15_pct": "Year-over-year share-count growth must be below 15.0%.",
     }
+    risk_facts = {
+        "cash_runway_below_12_months": f"Cash runway is {metrics.get('cash_runway_months', 'unavailable')} months; required at least 12 months.",
+        "share_count_growth_at_or_above_15_pct": f"Year-over-year share-count growth is {_percent(metrics.get('share_count_yoy_pct'))}; required below 15.0%.",
+    }
     for flag in candidate.get("deterministic_risk_flags") or []:
         blockers.append({
             "gate": "Deterministic risk review",
-            "reason": str(flag).replace("_", " ") + ".",
+            "reason": risk_facts.get(str(flag), str(flag).replace("_", " ") + "."),
             "clear_condition": risk_clear_conditions.get(
                 str(flag), "Resolve the deterministic risk review finding with current source data."
             ),
@@ -281,13 +303,78 @@ def candidate_presentation(candidate: dict[str, Any]) -> dict[str, Any]:
     if candidate.get("structural_targets"):
         score_summary += "; R multiples describe observed payoff geometry, not setup quality"
     evidence = payload.get("qualitative_evidence") or []
-    evidence_types = sorted({str(item.get("evidence_type") or "").replace("_", " ") for item in evidence if isinstance(item, dict)})
-    research_summary = None
-    if evidence_status in {"fresh_researched", "reused_current"}:
-        source = "Fresh qualitative research" if evidence_status == "fresh_researched" else "Current carry-forward qualitative evidence"
-        research_summary = source + (f": {', '.join(evidence_types[:2])}." if evidence_types else " is recorded.")
+    conclusions = []
+    catalysts = []
+    research_dates = []
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        details = item.get("details") or {}
+        if not isinstance(details, dict):
+            details = {}
+        conclusion = item.get("summary") or details.get("conclusion") or details.get("summary") or details.get("finding")
+        if conclusion:
+            conclusions.append(str(conclusion))
+        if details.get("catalyst"):
+            catalysts.append(str(details["catalyst"]))
+        # Prefer the review/retrieval date over the underlying filing date.
+        reviewed = item.get("retrieved_at_utc") or details.get("reviewed_at") or item.get("source_date") or item.get("accepted_at_utc") or item.get("published_at_utc")
+        if reviewed:
+            research_dates.append(str(reviewed))
+    research_summary = "; ".join(conclusions) or None
+    positive_fundamentals = [factor for factor in positive_factors if "revenue growth" in factor]
+    # Explicitly categorized source conclusions are retained without interpreting a risk as a positive.
+    for item in evidence:
+        details = item.get("details") or {} if isinstance(item, dict) else {}
+        if isinstance(details, dict):
+            positive_fundamentals.extend(str(value) for value in details.get("positive_fundamentals", []) if value)
+    fcf = _decimal(metrics.get("free_cash_flow_ttm"))
+    runway = _decimal(metrics.get("cash_runway_months"))
+    if fcf is not None and fcf > 0:
+        positive_fundamentals.append(f"TTM free cash flow {_money(fcf)}")
+    if runway is not None and runway >= 12:
+        positive_fundamentals.append(f"Cash runway {runway} months")
+    technical_requirements = [item for item in blockers if item["gate"] in {"Technical confirmation", "Market regime"}]
+    screen_failures = [item for item in blockers if item["gate"].startswith("Screen:")]
+    data_gaps = [item["reason"] for item in blockers if item["gate"] == "Qualitative confirmation"]
+    missing_findings = [item for item in blockers if "unavailable" in item["reason"].lower() or "unknown" in item["reason"].lower()]
+    data_gaps.extend(item["reason"] for item in missing_findings)
+    fundamental_risks = [
+        {**item, "hard_block": item["gate"] in {"Deterministic risk review", "Qualitative review"},
+         "supporting_evidence": conclusions}
+        for item in blockers if item not in missing_findings and item["gate"] in {"Deterministic risk review", "Qualitative review", "Risk review"}
+    ]
+    for item in evidence:
+        details = item.get("details") or {} if isinstance(item, dict) else {}
+        if not isinstance(details, dict):
+            continue
+        catalysts.extend(str(value) for value in details.get("catalysts", []) if value)
+        for risk in details.get("fundamental_risks", []):
+            if isinstance(risk, dict) and risk.get("reason"):
+                fundamental_risks.append({
+                    "gate": "Qualitative review", "reason": str(risk["reason"]),
+                    "supporting_evidence": risk.get("supporting_evidence") or [item.get("summary")],
+                    "hard_block": bool(risk.get("hard_block")),
+                    "clear_condition": str(risk.get("clear_condition") or "Source evidence must establish the measurable resolution condition."),
+                })
     return {
         "group": "watch_first" if status in {"BUY_NOW", "ALMOST_READY", "RADAR"} else "excluded_worth_reviewing",
+        "decision_summary": classification,
+        "positive_fundamentals": positive_fundamentals,
+        "fundamental_risks": fundamental_risks,
+        "technical_requirements": technical_requirements,
+        "screen_failures": screen_failures,
+        "data_gaps": data_gaps,
+        "catalysts": catalysts,
+        "research_status": "fresh" if evidence_status == "fresh_researched" else "carry_forward" if evidence_status == "reused_current" else "missing",
+        "research_as_of": max(research_dates) if research_dates else None,
+        "current_price": candidate.get("current_price"),
+        "trigger_price": trigger,
+        "distance_to_trigger_pct": candidate.get("distance_to_trigger_pct"),
+        "planned_stop_after_entry": stop,
+        "r_multiples": [item.get("r_multiple") for item in candidate.get("structural_targets") or []],
+        "rr_basis": "Potential R/R calculated from proposed trigger and planned post-entry stop.",
+        "what_changes_status": list(dict.fromkeys(item["clear_condition"] for item in [*blockers, *fundamental_risks])),
         "classification": classification,
         "positive_factors": positive_factors or ["No positive deterministic factors are currently available."],
         "blockers": blockers,
@@ -325,4 +412,27 @@ def presentation_groups(candidates: list[dict[str, Any]], detailed_tickers: list
         groups[presentation["group"]].append(item)
     for items in groups.values():
         items.sort(key=report_focus_sort_key)
+    ordered = sorted(candidates, key=report_focus_sort_key)
+    viable = [item for item in ordered if report_focus_sort_key(item)[0] <= 2]
+    groups["primary_setups"] = viable[:5]
+    primary = {item["ticker"] for item in groups["primary_setups"]}
+    def useful_next(item: dict[str, Any]) -> bool:
+        payload = item.get("payload") or {}
+        view = payload.get("presentation") or {}
+        if not view.get("what_changes_status"):
+            return False
+        if report_focus_sort_key(item)[0] < 4:
+            return True
+        # A single measurable screen improvement can justify a compact watch;
+        # fundamental hard blocks and invalidated setups remain audit-only.
+        return bool(
+            len(view.get("screen_failures") or []) == 1
+            and not item.get("deterministic_risk_flags")
+            and not payload.get("qualitative_blockers")
+            and not any(risk.get("hard_block") for risk in view.get("fundamental_risks", []))
+            and (payload.get("lifecycle") or {}).get("state") != "INVALIDATED"
+            and item.get("trigger_price") is not None
+            and (_decimal((item.get("metrics") or {}).get("relative_return_20d_vs_qqq_pct")) or 0) > 0
+        )
+    groups["next_watchlist"] = [item for item in ordered if item["ticker"] not in primary and useful_next(item)][:5]
     return groups

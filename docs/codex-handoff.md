@@ -1,5 +1,14 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-10-14 — Decision-first Daily Stock Alert
+
+- **Implemented:** Server stamps normalized checkpoint tickers on saved, candidate, and canonical evidence, including older checkpoint records at finalization. Current evidence and its qualitative blockers/flags survive carry-forward without crossing ticker boundaries.
+- **Implemented:** Bounded research now prioritizes actionable history and the closest viable setups before new distant hard-blocked names. Existing daily budgets, strategy thresholds, market veto, evidence requirements, validation, and production idempotency are preserved.
+- **Implemented:** Canonical investor summaries separate positive fundamentals, fundamental risks with evidence and clearance conditions, technical requirements, screen failures, data gaps, catalysts, research freshness, and the proposed entry/stop/target plan. Actual research conclusions replace evidence-type boilerplate. Potential R/R uses the official proposed trigger and planned post-entry stop.
+- **Decision:** Backend owns ordered `primary_setups` and `next_watchlist` ticker groups. Markdown and companion website/email consume that order; useful exclusions remain in the audit material. Website renderer 0.8.3 leads with decisions and setup cards, with detailed audit tables collapsed.
+- **Verified locally:** Full Python suite and Ruff pass; regression coverage includes checkpoint-to-canonical STRL evidence reuse, ticker isolation, closest-setup queue priority, categorized summaries, and unchanged actionability/idempotency checks. Companion website tests and production build pass.
+- **Deployment:** Pending push and guarded deployment. No saved alert was manually resumed, republished, or emailed during implementation.
+
 ## 2026-09-30 — Phase 3 decline-rule comparison
 
 - **Executed:** Ran the bounded, resumable six-scenario historical comparison on the deployed stack for 2024-08-05 through 2026-08-05 using feature calculation version 1.5.0. Coverage was confirmed from 2024-08-05 through 2026-09-29 across 540 stored sessions before the run.

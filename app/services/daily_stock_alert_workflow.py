@@ -71,8 +71,12 @@ def _normalize_evidence_record(item: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _normalize_evidence_records(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [_normalize_evidence_record(item) for item in evidence]
+def _normalize_evidence_records(evidence: list[dict[str, Any]], ticker: str | None = None) -> list[dict[str, Any]]:
+    records = [_normalize_evidence_record(item) for item in evidence]
+    if ticker is not None:
+        for record in records:
+            record["ticker"] = ticker.strip().upper()
+    return records
 
 
 @contextmanager
@@ -207,7 +211,7 @@ def record_daily_stock_alert_research(
         DailyAlertPreparationResearch.ticker == normalized_ticker,
     ))
     values = {
-        "evidence": _normalize_evidence_records(evidence), "required_dimensions": dict(required_dimensions),
+        "evidence": _normalize_evidence_records(evidence, normalized_ticker), "required_dimensions": dict(required_dimensions),
         "qualitative_blockers": sorted(set(qualitative_blockers or [])),
         "qualitative_flags": sorted(set(qualitative_flags or [])),
         "candidate_decision": deepcopy(candidate_decision),
@@ -333,9 +337,9 @@ def _default_candidate(
                 "fresh_researched" if fresh_research_checkpoint else plan["evidence_state"]
             ),
             "qualitative_research_checkpoint": fresh_research_checkpoint,
-            "qualitative_blockers": research.qualitative_blockers if research else [],
-            "qualitative_flags": research.qualitative_flags if research else [],
-            "qualitative_evidence": deepcopy(research.evidence) if research else [],
+            "qualitative_blockers": research.qualitative_blockers if research else deepcopy(plan.get("prior_qualitative_blockers") or []),
+            "qualitative_flags": research.qualitative_flags if research else deepcopy(plan.get("prior_qualitative_flags") or []),
+            "qualitative_evidence": _normalize_evidence_records(research.evidence, snapshot["ticker"]) if research else deepcopy(plan.get("reusable_prior_evidence") or []),
         },
     }
     snapshot_payload = snapshot.get("payload") if isinstance(snapshot.get("payload"), dict) else {}
@@ -365,6 +369,9 @@ def _default_candidate(
                 "fresh_researched" if fresh_research_checkpoint else "stale_researched"
             ),
             "qualitative_research_checkpoint": fresh_research_checkpoint,
+            "qualitative_evidence": _normalize_evidence_records(research.evidence, snapshot["ticker"]),
+            "qualitative_blockers": list(research.qualitative_blockers or []),
+            "qualitative_flags": list(research.qualitative_flags or []),
         }
 
     # All finalization rules are shared with validation; do not derive effective
@@ -374,7 +381,11 @@ def _default_candidate(
         market_regime_gate_passed=bool(gates["market_regime_gate_passed"]),
         fresh_checkpoint=fresh_research_checkpoint,
     )
-    normalized.update(report_enrichment(snapshot=snapshot, plan=plan, research=research))
+    report_snapshot = {**snapshot,
+        "suggested_trigger_price": normalized.get("trigger_price"),
+        "suggested_invalidation_price": normalized.get("invalidation_price"),
+        "distance_to_trigger_pct": normalized.get("distance_to_trigger_pct")}
+    normalized.update(report_enrichment(snapshot=report_snapshot, plan=plan, research=research))
     presentation = candidate_presentation(normalized)
     # Presentation is canonical structured data consumed by the shared report;
     # it is never inferred separately by delivery destinations.
@@ -429,9 +440,9 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
     ]
     evidence = []
     for item in snapshot["carry_forward_queue"]:
-        evidence.extend(_normalize_evidence_records(item["reusable_prior_evidence"]))
+        evidence.extend(_normalize_evidence_records(item["reusable_prior_evidence"], item["ticker"]))
     for item in research.values():
-        evidence.extend(_normalize_evidence_records(item.evidence))
+        evidence.extend(_normalize_evidence_records(item.evidence, item.ticker))
     payload = deepcopy(snapshot["run_template"])
     payload["candidates"] = candidates
     payload["evidence"] = evidence
@@ -463,6 +474,8 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
             preparation_scope["preparation_created_at_utc"] = created_at.isoformat()
     groups = presentation_groups(candidates, snapshot["report_scope"]["detailed_tickers"])
     payload["summary"]["presentation"] = {
+        "primary_setups": [item["ticker"] for item in groups["primary_setups"]],
+        "next_watchlist": [item["ticker"] for item in groups["next_watchlist"]],
         "watch_first_tickers": [item["ticker"] for item in groups["watch_first"]],
         "excluded_worth_reviewing_tickers": [item["ticker"] for item in groups["excluded_worth_reviewing"]],
     }
@@ -470,7 +483,7 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
         {"ticker": item["ticker"], "setup_score": item["setup_score"]}
         for item in groups["watch_first"]
     ]
-    lines = ["# Daily Stock Alert", "", "## Watch first"]
+    lines = ["# Daily Stock Alert", "", "Market gate: " + str((payload["summary"].get("market_regime") or {}).get("status", "unavailable")), "", "## Buy now" if any(item["buyability_status"] == "BUY_NOW" for item in candidates) else "## No buy today — closest setups"]
     def render_candidate(item: dict[str, Any]) -> list[str]:
         item_payload = item.get("payload") or {}
         presentation = item_payload["presentation"]
@@ -491,34 +504,43 @@ def finalize_daily_stock_alert_preparation(session: Session, settings: Settings,
             return f"${Decimal(str(value)):.2f}" if value is not None else "not available"
         distance = item.get("distance_to_trigger_pct")
         distance_text = f"{Decimal(str(distance)):.1f}% below trigger" if distance is not None else "trigger distance not available"
-        blockers = presentation["blockers"]
-        blocker_text = "\n".join(
-            f"- {blocker['gate']}: {blocker['reason']} Clear when: {blocker['clear_condition']}"
-            for blocker in blockers
-        ) or "- None."
+        def requirements(name: str) -> str:
+            return "; ".join(f"{value['reason']} Clear when: {value['clear_condition']}" for value in presentation[name]) or "None recorded."
+
         return [
             f"### {item['ticker']}{' — ' + company if company else ''}",
             f"{decision_text} · Setup score **{item['setup_score']}/100**",
             f"Current {money(item.get('current_price'))} · Trigger {money(item.get('trigger_price'))} · {distance_text} · Stop {money(item.get('invalidation_price'))}",
-            f"Targets: {target_text}",
+            f"Targets: {target_text}. Potential R/R calculated from proposed trigger and planned post-entry stop.",
+            "Positive fundamentals: " + "; ".join(presentation["positive_fundamentals"]),
+            "Fundamental risks: " + "; ".join(risk["reason"] + " Clear when: " + risk["clear_condition"] for risk in presentation["fundamental_risks"]),
+            "Data gaps: " + "; ".join(presentation["data_gaps"]),
             f"Decision: {presentation['classification']}",
             "Why: " + presentation["why"],
             "Next: " + presentation["next"],
             "Score: " + presentation["score_summary"],
             *( ["Research: " + presentation["research_summary"]] if presentation["research_summary"] else []),
-            "Blocking gates:\n" + blocker_text,
+            "Technical requirements: " + requirements("technical_requirements"),
+            "Screen failures: " + requirements("screen_failures"),
+            "What changes status: " + "; ".join(presentation["what_changes_status"]),
+            "Research freshness: " + presentation["research_status"] + "; as of " + str(presentation["research_as_of"] or "unavailable"),
             f"Technical trigger after eligibility: {presentation['technical_trigger']}",
             f"Invalidation level: {presentation['invalidation_level']}",
             "",
         ]
     if groups["watch_first"]:
-        for item in groups["watch_first"]:
+        for item in groups["primary_setups"]:
             lines.extend(render_candidate(item))
     else:
         lines.extend(["No BUY_NOW, ALMOST_READY, or RADAR candidates are in the detailed scope.", ""])
     if groups["excluded_worth_reviewing"]:
         lines.extend(["## Excluded — worth reviewing", ""])
         for item in groups["excluded_worth_reviewing"]:
+            lines.extend(render_candidate(item))
+    excluded = [item for item in groups["excluded_worth_reviewing"] if item not in groups["next_watchlist"]]
+    if excluded:
+        lines.extend(["## Additional details: excluded candidates", ""])
+        for item in excluded:
             lines.extend(render_candidate(item))
     compact = len(snapshot["report_scope"]["compact_summary_tickers"])
     if compact:
