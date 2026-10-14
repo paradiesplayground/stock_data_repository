@@ -2,6 +2,9 @@
 
 ## 2026-10-14 — Decision-first Daily Stock Alert
 
+- **Companion presentation correction:** Website/email renderer 0.8.4 (`24cdd56`) now summarizes saved evidence into at most four strengths, four typed concerns, three exact requirements, and a direct conclusion. STRL narrative risks are surfaced even when its saved fundamental-risk array is empty. Only the first realistic target appears in the primary card; potential R/R uses the official trigger and planned post-entry stop, with one-decimal percentages/R multiples. Full research and secondary targets stay in collapsed website details; email links to the full research.
+- **Verified / deployment boundary:** All 95 companion tests and its production build passed; live STRL card, service health, and image cleanup were verified. This correction changes shared server-side rendering only. Backend strategy/actionability, canonical ranking, stored evidence, and historical records are unchanged; no stock image was rebuilt and no research or alert delivery was rerun.
+
 - **Implemented:** Server stamps normalized checkpoint tickers on saved, candidate, and canonical evidence, including older checkpoint records at finalization. Current evidence and its qualitative blockers/flags survive carry-forward without crossing ticker boundaries.
 - **Implemented:** Bounded research now prioritizes actionable history and the closest viable setups before new distant hard-blocked names. Existing daily budgets, strategy thresholds, market veto, evidence requirements, validation, and production idempotency are preserved.
 - **Implemented:** Canonical investor summaries separate positive fundamentals, fundamental risks with evidence and clearance conditions, technical requirements, screen failures, data gaps, catalysts, research freshness, and the proposed entry/stop/target plan. Actual research conclusions replace evidence-type boilerplate. Potential R/R uses the official proposed trigger and planned post-entry stop.
