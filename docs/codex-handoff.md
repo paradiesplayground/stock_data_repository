@@ -32,12 +32,21 @@
 - **Implemented (Phase 1, not deployed):**
   - Feature calculation 1.6.0 corrects the TTM YoY anchor and adds prior-session 20-day high, low, and ATR (migration `0018`). 1.5.0 is still written every day, legacy first, and the v0.8 preparation is pinned to 1.5.0, so the live alert's inputs are unchanged. `backfill-features` accepts `--versions`.
   - A live outcome scorecard writes forward 5/10/20-session returns against QQQ and the alert's own trade path (fill, 1R, 2R or stop) for every as-run and shadow candidate after the daily feature job. It also adds a `sync-alert-outcomes` backfill command, an `alert-scorecard` CLI, an API endpoint, and a read-only MCP tool. The website gateway allowlist does not include the new tool yet.
-- **Verified locally:** 266 tests and Ruff pass. The trade-path and forward-window logic, run on exported production data, reproduces the review's figures. The database-backed sync and the scorecard queries have not run against PostgreSQL yet.
-- **Remaining (Phase 1 deploy gate, needs the owner's go-ahead):**
-  - deploy, then run the contract suite and migration `0018`;
-  - backfill 1.6.0 from 2026-06-01 (`--versions 1.6.0`);
-  - run `sync-alert-outcomes --since 2026-08-27`;
-  - confirm the next v0.8 alert is unaffected.
+- **Verified locally:** 266 tests and Ruff pass. The trade-path and forward-window logic, run on exported production data, reproduces the review's figures.
+- **Deployed / verified (`14fb1bd`):**
+  - The guarded contract suite passed (266 tests, Ruff), and migration `0018` applied.
+  - API, MCP, worker, and database are healthy with no OOM kills or restarts; the tunnel needed its usual tunnel-only restart.
+  - Feature 1.6.0 was backfilled for 99 sessions (2026-06-01 to 2026-10-20). On Sep 30, 258 names pass the 40/40 growth gate under 1.6.0 versus 219 under 1.5.0. APH and MXL hold their growth across the quarter end.
+  - The scorecard sync recorded 35 v0.8 runs, and a repeat sync was a no-op.
+  - First v0.8 scorecard by unique fills:
+
+    | Setup status | 10-day vs QQQ | Unique fills | Reached 2R | Expectancy |
+    |---|---|---|---|---|
+    | RADAR | +2.6% | 28 | 5 | −0.47R |
+    | NOT_ELIGIBLE | −1.1% | 45 | 2 | −0.89R |
+- **Remaining:**
+  - Confirm the next 5:30 AM feature job, which now writes both versions, still finishes before the alert, and that the v0.8 alert is unchanged.
+  - Phase 2 (v0.9 engine in shadow) is next.
 
 ## 2026-10-14 — Decision-first Daily Stock Alert
 
