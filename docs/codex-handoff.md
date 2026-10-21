@@ -1,5 +1,12 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-10-21 — Claude takes over the Daily Stock Alert client
+
+- **Implemented:** The assistant side of the Daily Stock Alert is moving from the ChatGPT scheduled task to a Claude Code cloud routine. The prompt lives in `docs/claude-daily-stock-alert-routine.md`, with a `MODE: CHECK` (read-only) / `MODE: LIVE` switch. It keeps the existing contract: freshness gate, idempotent no-op when a canonical run is delivered, resume-not-restart preparation, research only the server's deep-research queue, server-owned finalization and delivery.
+- **Integration decision:** Claude cloud routines can't reach the LAN-only stock MCP, and the server has no auth, so it stays private. The website now exposes an OAuth-protected `/stock/mcp` gateway that forwards to it and allowlists only read tools and the daily-alert workflow. Delivery, revision, manual payload, outcome, and scenario tools remain LAN-only. No stock code or config changed, and the OpenAI tunnel keeps serving ChatGPT during the transition.
+- **Schedule:** Tue–Sat 11:45 UTC, which is 6:45 AM CDT until daylight saving ends and then 5:45 AM CST. Until Nov 1 the routine runs after the ChatGPT task, so it should find each run already delivered and no-op.
+- **Remaining:** Read-only check, parallel no-op mornings, one Claude-first morning, then pause the ChatGPT task.
+
 ## 2026-10-14 — Decision-first Daily Stock Alert
 
 - **Companion presentation correction:** Website/email renderer 0.8.4 (`24cdd56`) now summarizes saved evidence into at most four strengths, four typed concerns, three exact requirements, and a direct conclusion. STRL narrative risks are surfaced even when its saved fundamental-risk array is empty. Only the first realistic target appears in the primary card; potential R/R uses the official trigger and planned post-entry stop, with one-decimal percentages/R multiples. Full research and secondary targets stay in collapsed website details; email links to the full research.
