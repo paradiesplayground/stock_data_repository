@@ -9,6 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
+from app.services.alert_outcomes import sync_alert_outcomes
 from app.services.feature_calculation import calculate_daily_features
 from app.services.massive_ingestion import (
     sync_corporate_actions,
@@ -58,6 +59,18 @@ def _run_sec() -> None:
 def _run_features() -> None:
     with SessionLocal() as session:
         calculate_daily_features(session, get_settings())
+    _run_alert_outcomes()
+
+
+def _run_alert_outcomes() -> None:
+    # The scorecard reads the bars the feature job just confirmed. It must never
+    # block or fail the feature job, so errors are logged and retried next day.
+    try:
+        with SessionLocal() as session:
+            result = sync_alert_outcomes(session)
+        logger.info("Alert outcome scorecard sync: %s", result)
+    except Exception:  # noqa: BLE001
+        logger.exception("Alert outcome scorecard sync failed")
 
 
 def _advance_daily_alert_preparations() -> None:

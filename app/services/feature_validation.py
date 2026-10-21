@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models import DailyPriceBar, FinancialFact, Security, SecurityDailyFeature
 from app.services.feature_calculation import (
     CALCULATION_VERSION,
+    CALCULATION_VERSIONS,
     FEATURE_FACT_CONCEPTS,
     _financial_metrics,
     _price_metrics,
@@ -161,7 +162,14 @@ def validate_feature_calculations(
             benchmark_return = benchmark_metrics["price_change_20d_pct"]
         price_metrics, _ = _price_metrics(price_rows, effective_date, benchmark_return)
         financial_metrics, _ = _financial_metrics(
-            facts_by_concept, effective_date, price_metrics["close"]
+            facts_by_concept,
+            effective_date,
+            price_metrics["close"],
+            calculation_version=(
+                feature.calculation_version
+                if feature.calculation_version in CALCULATION_VERSIONS
+                else CALCULATION_VERSION
+            ),
         )
         recomputed = {**price_metrics, **financial_metrics}
         comparisons = {

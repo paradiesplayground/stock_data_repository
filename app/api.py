@@ -24,6 +24,7 @@ from app.models import (
     Security,
 )
 from app.security import require_api_token, require_configured_api_token
+from app.services.alert_outcomes import alert_outcome_scorecard
 from app.services.strategy_tracking import (
     get_strategy_run as query_strategy_run,
     list_strategy_runs as query_strategy_runs,
@@ -270,6 +271,23 @@ def get_price_revisions(
         start.isoformat() if start else None,
         end.isoformat() if end else None,
         limit,
+    )
+
+
+@router.get("/alert-outcome-scorecard")
+def get_alert_outcome_scorecard(
+    session: DbSession,
+    strategy_version: str | None = None,
+    run_type: str = "as_run",
+    start: date | None = None,
+    end: date | None = None,
+) -> dict[str, object]:
+    return alert_outcome_scorecard(
+        session,
+        strategy_version=strategy_version,
+        run_type=run_type,
+        start_date=start,
+        end_date=end,
     )
 
 

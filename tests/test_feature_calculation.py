@@ -170,10 +170,10 @@ def test_resumable_backfill_skips_only_complete_dates(monkeypatch) -> None:
     monkeypatch.setattr(
         feature_calculation,
         "_feature_date_is_complete",
-        lambda _session, market_date: market_date == first,
+        lambda _session, market_date, *_versions: market_date == first,
     )
 
-    def calculate(_session, _settings, market_date):
+    def calculate(_session, _settings, market_date, **_kwargs):
         calculated.append(market_date)
         return 1, 1
 
@@ -467,3 +467,98 @@ def test_capex_value_rejects_generic_incurred_capital_spending_label() -> None:
         {"CapitalExpendituresIncurred": [annual]},
         date(2026, 7, 17),
     ) == (None, None, "unavailable")
+
+
+def _revenue_facts() -> dict[str, list]:
+    def fact(value, start, end, filed, year, period):
+        item = _fact(value, start, end, filed, year, period)
+        item.concept = "Revenues"
+        return item
+
+    return {
+        "Revenues": [
+            fact("100", date(2024, 1, 1), date(2024, 12, 31), date(2025, 2, 15), 2024, "FY"),
+            fact("160", date(2025, 1, 1), date(2025, 12, 31), date(2026, 2, 15), 2025, "FY"),
+            fact("50", date(2024, 1, 1), date(2024, 6, 30), date(2024, 8, 5), 2024, "Q2"),
+            fact("80", date(2024, 1, 1), date(2024, 9, 30), date(2024, 11, 5), 2024, "Q3"),
+            fact("70", date(2025, 1, 1), date(2025, 6, 30), date(2025, 8, 5), 2025, "Q2"),
+            fact("110", date(2025, 1, 1), date(2025, 9, 30), date(2025, 11, 5), 2025, "Q3"),
+            fact("120", date(2026, 1, 1), date(2026, 6, 30), date(2026, 8, 5), 2026, "Q2"),
+        ]
+    }
+
+
+def test_current_ttm_growth_is_stable_across_quarter_end_without_new_filing() -> None:
+    facts = _revenue_facts()
+    before, _ = _financial_metrics(facts, date(2026, 9, 29), Decimal("10"))
+    after, _ = _financial_metrics(facts, date(2026, 9, 30), Decimal("10"))
+
+    # TTM to Jun 30 2026 = 160 + 120 - 70 = 210; a year earlier = 100 + 70 - 50 = 120.
+    assert before["revenue_ttm"] == Decimal("210")
+    assert before["revenue_ttm_yoy_pct"] == Decimal("75")
+    assert after["revenue_ttm_yoy_pct"] == Decimal("75")
+
+
+def test_legacy_ttm_growth_keeps_its_quarter_end_behavior() -> None:
+    facts = _revenue_facts()
+    before, _ = _financial_metrics(
+        facts, date(2026, 9, 29), Decimal("10"), calculation_version="1.5.0"
+    )
+    after, _ = _financial_metrics(
+        facts, date(2026, 9, 30), Decimal("10"), calculation_version="1.5.0"
+    )
+
+    assert before["revenue_ttm_yoy_pct"] == Decimal("75")
+    # 1.5.0 compares with the TTM to Sep 30 2025 (100 + 110 - 80 = 130): nine months apart.
+    assert after["revenue_ttm_yoy_pct"].quantize(Decimal("0.01")) == Decimal("61.54")
+
+
+def test_current_ttm_growth_rejects_a_prior_period_that_is_not_one_year_back() -> None:
+    facts = {"Revenues": [item for item in _revenue_facts()["Revenues"] if item.fiscal_year != 2024]}
+    metrics, flags = _financial_metrics(facts, date(2026, 9, 30), Decimal("10"))
+
+    assert metrics["revenue_ttm"] == Decimal("210")
+    assert metrics["revenue_ttm_yoy_pct"] is None
+    assert "revenue_ttm_growth_unavailable" in flags
+
+
+def test_price_metrics_include_prior_session_levels() -> None:
+    as_of = date(2026, 7, 17)
+    rows = []
+    for offset in range(60):
+        close = Decimal("100") + Decimal(offset % 5)
+        rows.append(
+            SimpleNamespace(
+                trade_date=as_of - timedelta(days=59 - offset),
+                open=close,
+                close=close,
+                high=close + Decimal("1"),
+                low=close - Decimal("1"),
+                volume=Decimal("1000"),
+            )
+        )
+    rows[-1].high = Decimal("150")
+    rows[-1].close = Decimal("149")
+    rows[-1].low = Decimal("90")
+
+    metrics, _ = _price_metrics(rows, as_of)
+
+    assert metrics["high_20d"] == Decimal("150")
+    assert metrics["prior_high_20d"] == Decimal("105")
+    assert metrics["low_20d"] == Decimal("90")
+    assert metrics["prior_low_20d"] == Decimal("99")
+    assert metrics["prior_atr_14"] is not None
+    assert metrics["prior_atr_14"] < metrics["atr_14"]
+
+
+def test_calculation_versions_are_written_legacy_first_and_validated() -> None:
+    assert feature_calculation._calculation_versions(None) == ("1.5.0", "1.6.0")
+    assert feature_calculation._calculation_versions(["1.6.0", "1.5.0"]) == ("1.5.0", "1.6.0")
+    assert feature_calculation._calculation_versions(["1.6.0"]) == ("1.6.0",)
+    for bad in (["1.4.0"], []):
+        try:
+            feature_calculation._calculation_versions(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{bad} should be rejected")

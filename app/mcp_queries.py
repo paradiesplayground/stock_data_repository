@@ -69,13 +69,24 @@ def _sic_prefixes(
     return sorted(normalized, key=lambda prefix: (len(prefix), prefix))
 
 
+PRIOR_SESSION_FEATURES_SINCE = (1, 6, 0)
+
+
+def _has_prior_session_features(calculation_version: str | None) -> bool:
+    try:
+        parts = tuple(int(part) for part in str(calculation_version).split("."))
+    except ValueError:
+        return False
+    return parts >= PRIOR_SESSION_FEATURES_SINCE
+
+
 def _feature_item(feature: SecurityDailyFeature, security: Security) -> dict[str, Any]:
     reference_name = feature.reference_name or security.name
     reference_exchange = feature.reference_primary_exchange
     reference_type = feature.reference_security_type
     reference_sic = feature.reference_sic_code
     reference_sic_description = feature.reference_sic_description
-    return {
+    item = {
         "ticker": feature.ticker,
         "company": reference_name,
         "primary_exchange": reference_exchange,
@@ -138,6 +149,15 @@ def _feature_item(feature: SecurityDailyFeature, security: Security) -> dict[str
         "source_data_cutoff_utc": _json_value(feature.source_data_cutoff_utc),
         "source_manifest": feature.source_manifest,
     }
+    # Prior-session levels exist from calculation 1.6.0. They are omitted for
+    # older rows so pinned v0.8 alert snapshots keep their exact field set.
+    if _has_prior_session_features(feature.calculation_version):
+        item.update(
+            prior_high_20d=_json_value(feature.prior_high_20d),
+            prior_low_20d=_json_value(feature.prior_low_20d),
+            prior_atr_14=_json_value(feature.prior_atr_14),
+        )
+    return item
 
 
 def get_security_features(

@@ -27,6 +27,9 @@ STRATEGY_VERSION = "0.8"
 SKILL_VERSION = "1.6.0"
 DECISION_CONTRACT_VERSION = "0.8"
 MINIMUM_FEATURE_VERSION = (1, 4, 0)
+# v0.8 is pinned to the feature calculation it was validated against. Newer
+# calculations (1.6.0+) are written alongside it for v0.9 shadow runs.
+FEATURE_CALCULATION_VERSION = "1.5.0"
 NORMAL_DEEP_RESEARCH_BUDGET = 12
 BLOCK_DEEP_RESEARCH_BUDGET = 6
 EVIDENCE_STALENESS_DAYS = 30
@@ -376,6 +379,7 @@ def prepare_daily_stock_alert(
         min_avg_dollar_volume_20d=30_000_000,
         exclude_industry_groups=exclusions,
         limit=limit,
+        calculation_version=FEATURE_CALCULATION_VERSION,
     )
     if pool["as_of_date"] != as_of_date:
         raise RuntimeError("deterministic feature query did not resolve to the requested date")

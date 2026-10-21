@@ -6,6 +6,7 @@ from decimal import Decimal
 from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
+from app.services.alert_outcomes import alert_outcome_scorecard, sync_alert_outcomes
 from app.services.feature_calculation import (
     backfill_daily_features,
     calculate_daily_features,
@@ -76,6 +77,10 @@ def main() -> None:
     feature_backfill.add_argument("--start", type=_date, required=True)
     feature_backfill.add_argument("--end", type=_date, required=True)
     feature_backfill.add_argument("--resume", action="store_true")
+    feature_backfill.add_argument(
+        "--versions",
+        help="comma-separated calculation versions to write (default: all current)",
+    )
     replay = subparsers.add_parser("replay-strategy")
     replay.add_argument("--start", type=_date, required=True)
     replay.add_argument("--end", type=_date, required=True)
@@ -104,6 +109,13 @@ def main() -> None:
     validation = subparsers.add_parser("validate-features")
     validation.add_argument("--ticker", action="append", required=True)
     validation.add_argument("--date", type=_date)
+    outcomes = subparsers.add_parser("sync-alert-outcomes")
+    outcomes.add_argument("--since", type=_date)
+    scorecard = subparsers.add_parser("alert-scorecard")
+    scorecard.add_argument("--strategy-version")
+    scorecard.add_argument("--run-type", default="as_run")
+    scorecard.add_argument("--start", type=_date)
+    scorecard.add_argument("--end", type=_date)
     subparsers.add_parser("sync-companyfacts")
     subparsers.add_parser("sync-submissions")
     subparsers.add_parser("sync-sec")
@@ -162,6 +174,11 @@ def main() -> None:
                 args.start,
                 args.end,
                 resume=args.resume,
+                calculation_versions=(
+                    [item.strip() for item in args.versions.split(",") if item.strip()]
+                    if args.versions
+                    else None
+                ),
             )
         elif args.command == "replay-strategy":
             result = replay_strategy_range(
@@ -200,6 +217,16 @@ def main() -> None:
             )
         elif args.command == "validate-features":
             result = validate_feature_calculations(session, args.ticker, args.date)
+        elif args.command == "sync-alert-outcomes":
+            result = sync_alert_outcomes(session, since=args.since)
+        elif args.command == "alert-scorecard":
+            result = alert_outcome_scorecard(
+                session,
+                strategy_version=args.strategy_version,
+                run_type=args.run_type,
+                start_date=args.start,
+                end_date=args.end,
+            )
         elif args.command == "sync-companyfacts":
             result = sync_companyfacts(session, settings)
         elif args.command == "sync-submissions":
@@ -215,6 +242,8 @@ def main() -> None:
         "list-simulations",
         "get-simulation",
         "publish-stock-alert",
+        "sync-alert-outcomes",
+        "alert-scorecard",
     }:
         print(json.dumps(result, indent=2))
     else:

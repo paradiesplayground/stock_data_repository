@@ -226,3 +226,12 @@ def test_freshness_blocks_screening_for_stale_critical_job() -> None:
     assert result["freshness_issues"] == [
         "massive_corporate_actions has been running for more than six hours"
     ]
+
+
+def test_prior_session_features_are_exposed_from_calculation_1_6_0() -> None:
+    from app.mcp_queries import _has_prior_session_features
+
+    assert _has_prior_session_features("1.6.0")
+    assert _has_prior_session_features("1.10.0")
+    assert not _has_prior_session_features("1.5.0")
+    assert not _has_prior_session_features(None)

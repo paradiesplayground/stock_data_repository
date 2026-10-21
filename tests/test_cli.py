@@ -24,6 +24,7 @@ def test_backfill_features_does_not_require_strategy_configuration(
         start_date,
         end_date,
         resume=False,
+        calculation_versions=None,
     ):
         captured.update(
             session=actual_session,
@@ -31,6 +32,7 @@ def test_backfill_features_does_not_require_strategy_configuration(
             start_date=start_date,
             end_date=end_date,
             resume=resume,
+            calculation_versions=calculation_versions,
         )
         return {"completed_sessions": 1}
 
@@ -60,5 +62,6 @@ def test_backfill_features_does_not_require_strategy_configuration(
         "start_date": date(2025, 7, 23),
         "end_date": date(2026, 7, 20),
         "resume": True,
+        "calculation_versions": None,
     }
     assert "'completed_sessions': 1" in capsys.readouterr().out

@@ -301,6 +301,10 @@ class SecurityDailyFeature(Base):
     rsi_14: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
     relative_volume_20d: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
 
+    prior_high_20d: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    prior_low_20d: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    prior_atr_14: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+
     revenue_ttm: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
     revenue_ttm_yoy_pct: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
     latest_quarter_revenue: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))

@@ -24,6 +24,7 @@ from app.mcp_queries import (
     query_security_features as query_features_universe,
     search_securities as query_securities,
 )
+from app.services.alert_outcomes import alert_outcome_scorecard
 from app.services.strategy_tracking import (
     get_strategy_run as query_strategy_run,
     list_strategy_runs as query_strategy_runs,
@@ -294,6 +295,31 @@ def list_strategy_runs(
             start_date,
             end_date,
             limit,
+        )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def get_alert_outcome_scorecard(
+    strategy_version: str | None = None,
+    run_type: str = "as_run",
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
+    """Summarize what happened after daily-alert calls: forward returns vs QQQ and trade-plan results."""
+    with SessionLocal() as session:
+        return alert_outcome_scorecard(
+            session,
+            strategy_version=strategy_version,
+            run_type=run_type,
+            start_date=date.fromisoformat(start_date) if start_date else None,
+            end_date=date.fromisoformat(end_date) if end_date else None,
         )
 
 

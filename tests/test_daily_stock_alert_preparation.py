@@ -414,3 +414,19 @@ def test_server_stamped_evidence_is_reused_only_for_its_ticker_next_preparation(
     app = next(item for item in result["all_research_plans"] if item["ticker"] == "APP")
     assert app["evidence_state"] == "missing"
     assert app["reusable_prior_evidence"] == []
+
+
+def test_v08_preparation_pins_feature_calculation_1_5_0(monkeypatch) -> None:
+    captured = {}
+
+    def query(*_args, **kwargs):
+        captured.update(kwargs)
+        return {"as_of_date": "2026-08-21", "calculation_version": "1.5.0", "count": 1, "items": [_feature("MSFT")], "excluded_industry_groups": [], "excluded_sic_prefixes": []}
+
+    monkeypatch.setattr("app.services.daily_stock_alert_preparation.get_data_freshness", lambda *_args: {"expected_market_date": "2026-08-21", "ready_for_screening": True, "freshness_issues": []})
+    monkeypatch.setattr("app.services.daily_stock_alert_preparation.query_security_features", query)
+    monkeypatch.setattr("app.services.daily_stock_alert_preparation._spy_market_regime", lambda *_args: {"benchmark_ticker": "SPY", "status": "pass", "gate_passed": True})
+    monkeypatch.setattr("app.services.daily_stock_alert_preparation._prior_run", lambda *_args: None)
+    prepare_daily_stock_alert(object(), Settings(), as_of_date="2026-08-21")
+
+    assert captured["calculation_version"] == "1.5.0"

@@ -23,7 +23,13 @@ from app.services.runs import RunTracker
 
 logger = logging.getLogger(__name__)
 
-CALCULATION_VERSION = "1.5.0"
+CALCULATION_VERSION = "1.6.0"
+# 1.5.0 is still written every day so the live v0.8 alert keeps its exact inputs
+# until v0.9 replaces it. Older versions are written first, so the current
+# version is the most recently calculated row for readers that do not pin one.
+LEGACY_CALCULATION_VERSION = "1.5.0"
+CALCULATION_VERSIONS = (LEGACY_CALCULATION_VERSION, CALCULATION_VERSION)
+PRIOR_SESSION_FIELDS = ("prior_high_20d", "prior_low_20d", "prior_atr_14")
 HUNDRED = Decimal("100")
 FEATURE_CALCULATION_BATCH_SIZE = 100
 
@@ -219,6 +225,10 @@ def _price_metrics(
 
     last_20 = eligible[-20:]
     last_60 = eligible[-60:]
+    # Levels as of the previous completed session, so a trigger built from
+    # them can be crossed by today's bar.
+    prior_rows = eligible[:-1]
+    prior_20 = prior_rows[-20:]
     prior_20_session = eligible[-21] if len(eligible) >= 21 else None
     change_20d = _percent_change(
         latest.close, prior_20_session.close if prior_20_session else None
@@ -274,6 +284,11 @@ def _price_metrics(
             "distance_to_20d_high_pct": _percent_change(latest.close, high_20d),
             "distance_to_60d_high_pct": _percent_change(latest.close, high_60d),
             "atr_14": atr_14,
+            "prior_high_20d": max((row.high for row in prior_20), default=None),
+            "prior_low_20d": min(
+                (getattr(row, "low", row.close) for row in prior_20), default=None
+            ),
+            "prior_atr_14": _atr(prior_rows, 14),
             "atr_14_pct": (
                 (atr_14 / latest.close) * HUNDRED
                 if atr_14 is not None and latest.close != 0
@@ -571,18 +586,43 @@ def _shares_metrics(
     return None, None, None
 
 
+def _prior_year_revenue_ttm(
+    revenue_facts: list[FinancialFact],
+    as_of_date: date,
+    revenue_end: date | None,
+    calculation_version: str,
+) -> Decimal | None:
+    if calculation_version == LEGACY_CALCULATION_VERSION:
+        # 1.5.0 anchored the comparison to the calendar date. At each quarter
+        # end, before the next filing, that compares about nine months apart.
+        prior, _, _ = _ttm_value(
+            revenue_facts, as_of_date - timedelta(days=365), filing_cutoff=as_of_date
+        )
+        return prior
+    if revenue_end is None:
+        return None
+    # Compare with the TTM that ended about one year before the current TTM.
+    # The 15-day allowance covers 52/53-week fiscal calendars without reaching
+    # the following quarter.
+    prior, prior_end, _ = _ttm_value(
+        revenue_facts, revenue_end - timedelta(days=350), filing_cutoff=as_of_date
+    )
+    if prior_end is None or not 335 <= (revenue_end - prior_end).days <= 395:
+        return None
+    return prior
+
+
 def _financial_metrics(
     facts_by_concept: dict[str, list[FinancialFact]],
     as_of_date: date,
     close: Decimal,
+    calculation_version: str = CALCULATION_VERSION,
 ) -> tuple[dict[str, Any], list[str]]:
     flags: list[str] = []
     concept, revenue_facts = _select_revenue_concept(facts_by_concept, as_of_date)
     revenue_ttm, revenue_end, revenue_status = _ttm_value(revenue_facts, as_of_date)
-    prior_revenue_ttm, _, _ = _ttm_value(
-        revenue_facts,
-        as_of_date - timedelta(days=365),
-        filing_cutoff=as_of_date,
+    prior_revenue_ttm = _prior_year_revenue_ttm(
+        revenue_facts, as_of_date, revenue_end, calculation_version
     )
     quarter_revenue, prior_quarter_revenue, quarter_end = _latest_quarter_pair(
         revenue_facts, as_of_date
@@ -909,17 +949,37 @@ def _feature_universe(session: Session, as_of_date: date) -> list[FeatureSecurit
     return _resolve_feature_securities(securities, history_rows, dated_rows)
 
 
-def _feature_date_is_complete(session: Session, as_of_date: date) -> bool:
+def _feature_date_is_complete(
+    session: Session,
+    as_of_date: date,
+    calculation_versions: tuple[str, ...] = CALCULATION_VERSIONS,
+) -> bool:
     expected = len(_feature_universe(session, as_of_date))
     if expected == 0:
         return False
-    actual = session.scalar(
-        select(func.count(SecurityDailyFeature.id)).where(
-            SecurityDailyFeature.as_of_date == as_of_date,
-            SecurityDailyFeature.calculation_version == CALCULATION_VERSION,
+    for version in calculation_versions:
+        actual = session.scalar(
+            select(func.count(SecurityDailyFeature.id)).where(
+                SecurityDailyFeature.as_of_date == as_of_date,
+                SecurityDailyFeature.calculation_version == version,
+            )
         )
-    )
-    return int(actual or 0) == expected
+        if int(actual or 0) != expected:
+            return False
+    return True
+
+
+def _calculation_versions(requested: Iterable[str] | None) -> tuple[str, ...]:
+    if requested is None:
+        return CALCULATION_VERSIONS
+    versions = set(requested)
+    unknown = sorted(versions - set(CALCULATION_VERSIONS))
+    if unknown or not versions:
+        raise ValueError(
+            "calculation versions must be among: " + ", ".join(CALCULATION_VERSIONS)
+        )
+    # Keep the canonical write order (legacy first) whatever the caller passed.
+    return tuple(version for version in CALCULATION_VERSIONS if version in versions)
 
 
 def backfill_daily_features(
@@ -928,7 +988,9 @@ def backfill_daily_features(
     start_date: date,
     end_date: date,
     resume: bool = False,
+    calculation_versions: Iterable[str] | None = None,
 ) -> dict[str, Any]:
+    versions = _calculation_versions(calculation_versions)
     if start_date > end_date:
         raise ValueError("Feature backfill start date must be on or before end date")
 
@@ -950,18 +1012,20 @@ def backfill_daily_features(
     skipped: list[str] = []
     rows_written = 0
     for market_date in sessions:
-        if resume and _feature_date_is_complete(session, market_date):
+        if resume and _feature_date_is_complete(session, market_date, versions):
             skipped.append(market_date.isoformat())
             logger.info("Skipping complete feature date %s", market_date)
             continue
-        _, written = calculate_daily_features(session, settings, market_date)
+        _, written = calculate_daily_features(
+            session, settings, market_date, calculation_versions=versions
+        )
         completed.append(market_date.isoformat())
         rows_written += written
 
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
-        "calculation_version": CALCULATION_VERSION,
+        "calculation_versions": list(versions),
         "market_sessions": len(sessions),
         "completed_sessions": len(completed),
         "skipped_sessions": len(skipped),
@@ -975,7 +1039,9 @@ def calculate_daily_features(
     session: Session,
     settings: Settings,
     as_of_date: date | None = None,
+    calculation_versions: Iterable[str] | None = None,
 ) -> tuple[int, int]:
+    versions = _calculation_versions(calculation_versions)
     tracker = RunTracker(session, "derived_features", "massive+sec-edgar")
     seen = written = 0
     try:
@@ -1074,18 +1140,15 @@ def calculate_daily_features(
             for fact in fact_rows:
                 facts_by_cik[fact.cik][fact.concept].append(fact)
 
-            output_rows: list[dict[str, Any]] = []
+            output_rows: dict[str, list[dict[str, Any]]] = {
+                version: [] for version in versions
+            }
             for position, security in enumerate(security_batch, start=offset + 1):
                 price_history = prices_by_ticker.get(security.ticker, [])
                 if not price_history:
                     continue
                 price_metrics, price_flags = _price_metrics(
                     price_history, effective_date, benchmark_20d_return
-                )
-                financial_metrics, financial_flags = _financial_metrics(
-                    facts_by_cik.get(security.cik or "", {}),
-                    effective_date,
-                    price_metrics["close"],
                 )
                 metadata_flags = []
                 if not security.cik:
@@ -1098,47 +1161,58 @@ def calculate_daily_features(
                     metadata_flags.append("reference_metadata_imputed")
                 if not security.current_active:
                     metadata_flags.append("historical_active_inferred_from_price_bar")
-                flags = sorted(set(price_flags + financial_flags + metadata_flags))
-                output_rows.append(
-                    {
-                        "ticker": security.ticker,
-                        "as_of_date": effective_date,
-                        "reference_name": security.name,
-                        "reference_primary_exchange": security.primary_exchange,
-                        "reference_security_type": security.security_type,
-                        "reference_active": security.active,
-                        "reference_sic_code": security.sic_code,
-                        "reference_sic_description": security.sic_description,
-                        **price_metrics,
-                        **financial_metrics,
-                        "calculation_version": CALCULATION_VERSION,
-                        "quality_flags": flags,
-                        "source_data_cutoff_utc": source_cutoff,
-                        "source_manifest": {
-                            "market_source": "massive",
-                            "market_date": price_metrics["price_date"].isoformat(),
-                            "financial_source": "sec-edgar",
-                            "financial_filing_cutoff_date": effective_date.isoformat(),
-                            "benchmark": "QQQ",
-                            "feature_universe": "exact-session-price-bar-v2",
-                            "security_reference": {
-                                "name": security.name,
-                                "primary_exchange": security.primary_exchange,
-                                "security_type": security.security_type,
-                                "active": security.active,
-                                "current_active": security.current_active,
-                                "sic_code": security.sic_code,
-                                "sic_description": security.sic_description,
-                                "metadata_imputed": security.reference_metadata_imputed,
-                                "observed_at_utc": (
-                                    security.reference_observed_at_utc.isoformat()
-                                    if security.reference_observed_at_utc
-                                    else None
-                                ),
+                for version in versions:
+                    financial_metrics, financial_flags = _financial_metrics(
+                        facts_by_cik.get(security.cik or "", {}),
+                        effective_date,
+                        price_metrics["close"],
+                        calculation_version=version,
+                    )
+                    version_price_metrics = dict(price_metrics)
+                    if version == LEGACY_CALCULATION_VERSION:
+                        for field in PRIOR_SESSION_FIELDS:
+                            version_price_metrics[field] = None
+                    flags = sorted(set(price_flags + financial_flags + metadata_flags))
+                    output_rows[version].append(
+                        {
+                            "ticker": security.ticker,
+                            "as_of_date": effective_date,
+                            "reference_name": security.name,
+                            "reference_primary_exchange": security.primary_exchange,
+                            "reference_security_type": security.security_type,
+                            "reference_active": security.active,
+                            "reference_sic_code": security.sic_code,
+                            "reference_sic_description": security.sic_description,
+                            **version_price_metrics,
+                            **financial_metrics,
+                            "calculation_version": version,
+                            "quality_flags": flags,
+                            "source_data_cutoff_utc": source_cutoff,
+                            "source_manifest": {
+                                "market_source": "massive",
+                                "market_date": price_metrics["price_date"].isoformat(),
+                                "financial_source": "sec-edgar",
+                                "financial_filing_cutoff_date": effective_date.isoformat(),
+                                "benchmark": "QQQ",
+                                "feature_universe": "exact-session-price-bar-v2",
+                                "security_reference": {
+                                    "name": security.name,
+                                    "primary_exchange": security.primary_exchange,
+                                    "security_type": security.security_type,
+                                    "active": security.active,
+                                    "current_active": security.current_active,
+                                    "sic_code": security.sic_code,
+                                    "sic_description": security.sic_description,
+                                    "metadata_imputed": security.reference_metadata_imputed,
+                                    "observed_at_utc": (
+                                        security.reference_observed_at_utc.isoformat()
+                                        if security.reference_observed_at_utc
+                                        else None
+                                    ),
+                                },
                             },
-                        },
-                    }
-                )
+                        }
+                    )
                 if position % 1000 == 0:
                     logger.info(
                         "Calculated features for %s/%s securities",
@@ -1146,30 +1220,34 @@ def calculate_daily_features(
                         len(securities),
                     )
 
-            if not output_rows:
-                continue
-            statement = insert(SecurityDailyFeature).values(output_rows)
-            excluded = statement.excluded
-            update_values = {
-                column.name: getattr(excluded, column.name)
-                for column in SecurityDailyFeature.__table__.columns
-                if column.name
-                not in {
-                    "id",
-                    "ticker",
-                    "as_of_date",
-                    "calculation_version",
-                    "calculated_at_utc",
+            # One transaction per version: legacy rows commit first, so the
+            # current version carries the later calculated_at_utc.
+            for version in versions:
+                rows = output_rows[version]
+                if not rows:
+                    continue
+                statement = insert(SecurityDailyFeature).values(rows)
+                excluded = statement.excluded
+                update_values = {
+                    column.name: getattr(excluded, column.name)
+                    for column in SecurityDailyFeature.__table__.columns
+                    if column.name
+                    not in {
+                        "id",
+                        "ticker",
+                        "as_of_date",
+                        "calculation_version",
+                        "calculated_at_utc",
+                    }
                 }
-            }
-            update_values["calculated_at_utc"] = func.now()
-            statement = statement.on_conflict_do_update(
-                constraint="uq_security_features_ticker_date_version",
-                set_=update_values,
-            )
-            session.execute(statement)
-            session.commit()
-            written += len(output_rows)
+                update_values["calculated_at_utc"] = func.now()
+                statement = statement.on_conflict_do_update(
+                    constraint="uq_security_features_ticker_date_version",
+                    set_=update_values,
+                )
+                session.execute(statement)
+                session.commit()
+                written += len(rows)
 
         tracker.succeed(
             seen,
@@ -1180,7 +1258,7 @@ def calculate_daily_features(
                 "source_market_rows": source_rows,
                 "feature_universe_rows": seen,
                 "feature_universe": "exact-session-price-bar-v2",
-                "calculation_version": CALCULATION_VERSION,
+                "calculation_versions": list(versions),
                 "price_rows_read": price_rows_read,
                 "financial_facts_read": financial_facts_read,
             },

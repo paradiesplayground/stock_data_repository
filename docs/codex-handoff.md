@@ -9,6 +9,36 @@
 - **Status:** The routine is switched to LIVE. Until daylight saving ends it runs an hour after the ChatGPT task, so it should no-op on a delivered run, or finish a preparation ChatGPT left incomplete.
 - **Remaining:** Confirm a no-op morning, run one Claude-first morning, then pause the ChatGPT task.
 
+### Alert strategy review and v0.9 Phase 1
+
+- **Reviewed (read-only):** In 35 v0.8 alert days the alert produced no BUY_NOW and two ALMOST_READY decisions. The causes are structural:
+  - the trigger includes the alert session's own high, so a fresh setup can't be at or above it;
+  - ALMOST_READY depends on an assistant-written decision object, and most research checkpoints carry none;
+  - names that recover out of the decline screen leave the alert after one "dropped" day, even though lifecycle tracking keeps them;
+  - anchored triggers never reset after a breakdown.
+
+  RADAR names did beat QQQ over 10 sessions, so the screening ranks; the breakout plan lost money in a sector selloff that the SPY gate did not catch.
+- **Problem found:** The prior-year TTM revenue was anchored to the alert date minus 365 days instead of the current TTM's period end. At each calendar quarter end, before the next 10-Q, YoY growth was understated: 45 names failed the 40/40 growth gate overnight on Sep 30, and the same happened on Jun 30.
+- **Decision (owner-approved):** Build v0.9 in shadow mode first:
+  - recovering names stay tracked with exit rules;
+  - the server derives Buy / Close labels, and research can only veto, with typed blockers;
+  - the trigger uses the prior session's 20-day high;
+  - broken setups reset;
+  - risk-flag blocks re-check daily;
+  - a capped "Buy / Close / Recovering / Blocked" email;
+  - v0.8 stays live and unchanged until cutover.
+
+  Exit-rule and market-gate backtests run alongside.
+- **Implemented (Phase 1, not deployed):**
+  - Feature calculation 1.6.0 corrects the TTM YoY anchor and adds prior-session 20-day high, low, and ATR (migration `0018`). 1.5.0 is still written every day, legacy first, and the v0.8 preparation is pinned to 1.5.0, so the live alert's inputs are unchanged. `backfill-features` accepts `--versions`.
+  - A live outcome scorecard writes forward 5/10/20-session returns against QQQ and the alert's own trade path (fill, 1R, 2R or stop) for every as-run and shadow candidate after the daily feature job. It also adds a `sync-alert-outcomes` backfill command, an `alert-scorecard` CLI, an API endpoint, and a read-only MCP tool. The website gateway allowlist does not include the new tool yet.
+- **Verified locally:** 266 tests and Ruff pass. The trade-path and forward-window logic, run on exported production data, reproduces the review's figures. The database-backed sync and the scorecard queries have not run against PostgreSQL yet.
+- **Remaining (Phase 1 deploy gate, needs the owner's go-ahead):**
+  - deploy, then run the contract suite and migration `0018`;
+  - backfill 1.6.0 from 2026-06-01 (`--versions 1.6.0`);
+  - run `sync-alert-outcomes --since 2026-08-27`;
+  - confirm the next v0.8 alert is unaffected.
+
 ## 2026-10-14 — Decision-first Daily Stock Alert
 
 - **Companion presentation correction:** Website/email renderer 0.8.4 (`24cdd56`) now summarizes saved evidence into at most four strengths, four typed concerns, three exact requirements, and a direct conclusion. STRL narrative risks are surfaced even when its saved fundamental-risk array is empty. Only the first realistic target appears in the primary card; potential R/R uses the official trigger and planned post-entry stop, with one-decimal percentages/R multiples. Full research and secondary targets stay in collapsed website details; email links to the full research.
