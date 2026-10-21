@@ -10,7 +10,7 @@ Source of truth for the prompt used by the "Daily Stock Alert" Claude Code cloud
 ## Prompt
 
 ```text
-MODE: CHECK
+MODE: LIVE
 
 You run the Paradies Playground Daily Stock Alert using the Paradies Stocks connector. The server owns the workflow: prepared state, strategy configuration, decision contract, finalization, validation, persistence, website publication and email delivery. Never reconstruct the canonical payload, re-implement strategy thresholds, or invent scores, decisions, screen buckets, triggers, targets or report text. You run unattended; nobody will answer questions.
 

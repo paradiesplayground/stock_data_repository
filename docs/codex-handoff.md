@@ -5,7 +5,9 @@
 - **Implemented:** The assistant side of the Daily Stock Alert is moving from the ChatGPT scheduled task to a Claude Code cloud routine. The prompt lives in `docs/claude-daily-stock-alert-routine.md`, with a `MODE: CHECK` (read-only) / `MODE: LIVE` switch. It keeps the existing contract: freshness gate, idempotent no-op when a canonical run is delivered, resume-not-restart preparation, research only the server's deep-research queue, server-owned finalization and delivery.
 - **Integration decision:** Claude cloud routines can't reach the LAN-only stock MCP, and the server has no auth, so it stays private. The website now exposes an OAuth-protected `/stock/mcp` gateway that forwards to it and allowlists only read tools and the daily-alert workflow. Delivery, revision, manual payload, outcome, and scenario tools remain LAN-only. No stock code or config changed, and the OpenAI tunnel keeps serving ChatGPT during the transition.
 - **Schedule:** Tue–Sat 11:45 UTC, which is 6:45 AM CDT until daylight saving ends and then 5:45 AM CST. Until Nov 1 the routine runs after the ChatGPT task, so it should find each run already delivered and no-op.
-- **Remaining:** Read-only check, parallel no-op mornings, one Claude-first morning, then pause the ChatGPT task.
+- **Verified:** A read-only check through the gateway read freshness, the latest canonical run and its preparation, and fetched SEC EDGAR. That needed the cloud environment's network access opened; the first check could search but not fetch pages.
+- **Status:** The routine is switched to LIVE. Until daylight saving ends it runs an hour after the ChatGPT task, so it should no-op on a delivered run, or finish a preparation ChatGPT left incomplete.
+- **Remaining:** Confirm a no-op morning, run one Claude-first morning, then pause the ChatGPT task.
 
 ## 2026-10-14 — Decision-first Daily Stock Alert
 
