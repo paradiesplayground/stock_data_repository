@@ -148,6 +148,24 @@ def build_presentation(
 
     buy, close, recovering = (sections[name] for name in (SECTION_BUY, SECTION_CLOSE, SECTION_RECOVERING))
     blocked = [item for item in candidates if (item.get("payload") or {}).get("section") == SECTION_BLOCKED]
+
+    def distance(item: dict[str, Any]) -> Decimal:
+        return abs(_decimal(item.get("distance_to_trigger_pct")) or Decimal("999"))
+
+    # Uncapped lists for the website; the email shows only the capped sections.
+    all_recovering = [
+        {"ticker": item["ticker"], "position": _position(item), "next": (item.get("buy_conditions") or [None])[0],
+         "broken": item.get("technical_state") == "broken"}
+        for item in sorted(
+            (item for item in candidates if (item.get("payload") or {}).get("section") == SECTION_RECOVERING),
+            key=lambda item: (item.get("technical_state") == "broken", distance(item), item["ticker"]),
+        )
+    ]
+    all_blocked = [
+        {"ticker": item["ticker"], "position": _position(item),
+         "blockers": [code.replace("_", " ") for code in item.get("blocker_codes") or (item.get("payload") or {}).get("blocker_codes") or []]}
+        for item in sorted(blocked, key=lambda item: (distance(item), item["ticker"]))
+    ]
     buy_total = len(buy["shown"]) + buy["more_on_website"] + len(buy["unchanged"])
     close_total = len(close["shown"]) + close["more_on_website"] + len(close["unchanged"])
     if not market_ok:
@@ -166,10 +184,11 @@ def build_presentation(
             SECTION_BUY: {"cards": cards(buy["shown"]), "more": buy["more_on_website"], "unchanged": buy["unchanged"]},
             SECTION_CLOSE: {"cards": cards(close["shown"]), "more": close["more_on_website"], "unchanged": close["unchanged"]},
             SECTION_RECOVERING: {"cards": cards(recovering["shown"]), "more": recovering["more_on_website"],
-                                 "unchanged": recovering["unchanged"]},
+                                 "unchanged": recovering["unchanged"], "all": all_recovering},
             SECTION_BLOCKED: {
                 "count": len(blocked),
                 "changed": [card(item) for item in blocked if (item.get("payload") or {}).get("section_changed")],
+                "all": all_blocked,
             },
         },
         "changes": _changes(candidates),

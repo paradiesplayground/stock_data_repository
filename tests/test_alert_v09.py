@@ -332,3 +332,16 @@ def test_older_shadow_runs_get_their_presentation_derived_at_publication() -> No
     assert published["presentation_derived_at_publication"] is True
     assert "presentation_v09" not in stored["summary"]
     assert with_shadow_presentation(published) is published
+
+
+def test_presentation_lists_every_recovering_and_blocked_name_for_the_website() -> None:
+    candidates = replay()[date(2026, 10, 7)]
+    presentation = build_presentation(date(2026, 10, 7), candidates, email_sections(candidates, CONFIGURATION),
+                                      market_ok=True, shadow=True)
+    recovering = [item["ticker"] for item in candidates if item["payload"]["section"] == "recovering"]
+    blocked = [item["ticker"] for item in candidates if item["payload"]["section"] == "blocked"]
+
+    assert sorted(line["ticker"] for line in presentation["sections"]["recovering"]["all"]) == sorted(recovering)
+    assert sorted(line["ticker"] for line in presentation["sections"]["blocked"]["all"]) == sorted(blocked)
+    assert len(presentation["sections"]["recovering"]["cards"]) <= CONFIGURATION["email"]["max_recovering"]
+    assert all(line["blockers"] for line in presentation["sections"]["blocked"]["all"])
