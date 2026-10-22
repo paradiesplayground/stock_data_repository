@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     # v0.9 shadow alert: after the live alert's morning window, Tue-Sat.
     alert_shadow_enabled: bool = True
     alert_shadow_cron: str = "30 7 * * 2-6"
+    # Saturday morning: compare the week's live v0.8 and shadow v0.9 alerts.
+    alert_weekly_comparison_cron: str = "0 9 * * 6"
     log_level: str = "INFO"
 
     @property

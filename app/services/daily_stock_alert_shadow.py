@@ -28,6 +28,7 @@ from app.models import (
     DailyPriceBar,
     StrategyCandidateLifecycle,
     StrategyCandidateLifecycleObservation,
+    StrategyDefinition,
     StrategyRun,
 )
 from app.services.alert_v09_engine import (
@@ -41,8 +42,10 @@ from app.services.alert_v09_engine import (
     evaluate,
     load_configuration,
 )
+from app.services.alert_v09_presentation import build_presentation, render_markdown
 from app.services.blocker_codes import blocker_codes
 from app.services.daily_stock_alert_preparation import _spy_market_regime
+from app.services.stock_alert_delivery import publish_shadow_run
 from app.services.strategy_tracking import configuration_fingerprint, record_strategy_run
 
 logger = logging.getLogger(__name__)
@@ -174,31 +177,6 @@ def email_sections(candidates: list[dict[str, Any]], configuration: dict[str, An
         "newly_blocked": sorted(item["ticker"] for item in blocked if item["payload"].get("section_changed")),
     }
     return sections
-
-
-def render_markdown(as_of_date: date, market_ok: bool, candidates: list[dict[str, Any]], sections: dict[str, Any]) -> str:
-    by_ticker = {item["ticker"]: item for item in candidates}
-    lines = [f"# Daily Stock Alert v0.9 (SHADOW) - {as_of_date.isoformat()}", "",
-             "Shadow run: not delivered and not advice.",
-             "Market gate: " + ("PASS" if market_ok else "BLOCKED - setups listed for awareness only"), ""]
-    titles = {SECTION_BUY: "Buy today", SECTION_CLOSE: "Close (within 5% of trigger)", SECTION_RECOVERING: "Recovering"}
-    for section in (SECTION_BUY, SECTION_CLOSE, SECTION_RECOVERING):
-        detail = sections[section]
-        lines.append(f"## {titles[section]}")
-        if not detail["shown"] and not detail["unchanged"]:
-            lines.append("- none")
-        for ticker in detail["shown"]:
-            item = by_ticker[ticker]
-            lines.append(f"- **{ticker}** - {item['status_reason']} Next: {item['buy_conditions'][0]}")
-        if detail["more_on_website"]:
-            lines.append(f"- +{detail['more_on_website']} more in the full record")
-        if detail["unchanged"]:
-            lines.append("- Unchanged: " + ", ".join(detail["unchanged"]))
-        lines.append("")
-    blocked = sections[SECTION_BLOCKED]
-    lines.append(f"## Blocked: {blocked['count']}" + (
-        " (newly blocked: " + ", ".join(blocked["newly_blocked"]) + ")" if blocked["newly_blocked"] else ""))
-    return "\n".join(lines)
 
 
 def _live_comparison(session: Session, as_of_date: date) -> dict[str, Any] | None:
@@ -338,6 +316,10 @@ def run_daily_stock_alert_shadow(
         ))
 
     sections = email_sections(candidates, CONFIGURATION)
+    presentation = build_presentation(
+        as_of_date, candidates, sections, market_ok=market_ok, shadow=True,
+        scorecard_line=None if replayed else _scorecard_line(session),
+    )
     research_queue = [
         item["ticker"] for item in candidates
         if item["payload"].get("needs_research") and item["technical_state"] in {"confirmed", "near_trigger"}
@@ -352,6 +334,7 @@ def run_daily_stock_alert_shadow(
             for section in (*SECTION_ORDER, SECTION_EXITED, "incomplete")
         },
         "email_sections": sections,
+        "presentation_v09": presentation,
         "research_queue": research_queue,
         "missing_feature_tickers": missing,
         "tracked_count": len([item for item in candidates if item["payload"]["section"] != SECTION_EXITED]),
@@ -374,14 +357,42 @@ def run_daily_stock_alert_shadow(
         filters={"exclude_industry_groups": EXCLUDED_INDUSTRY_GROUPS, "lifecycle_key": LIFECYCLE_KEY},
         candidates=candidates,
         summary=summary,
-        report_markdown=render_markdown(as_of_date, market_ok, candidates, sections),
+        report_markdown=render_markdown(presentation),
         feature_calculation_version=FEATURE_VERSION,
         decision_contract_version=V09_DECISION_CONTRACT_VERSION,
         notes=f"v0.9 shadow; configuration {configuration_fingerprint(CONFIGURATION)}",
         publish=False,
     )
+    delivery = None
+    if not replayed and settings is not None:
+        # Website publication is best-effort; the shadow record is already durable.
+        try:
+            delivery = publish_shadow_run(session, settings, result["run_id"])
+        except Exception as error:  # noqa: BLE001
+            logger.warning("v0.9 shadow run %s was not published to the website: %s", result["run_id"], error)
+            delivery = {"status": "failed", "error": str(error)}
     return {"status": "recorded", "as_of_date": as_of_date.isoformat(), "run_id": result["run_id"],
-            "section_counts": summary["section_counts"], "research_queue": research_queue}
+            "section_counts": summary["section_counts"], "research_queue": research_queue,
+            "website": delivery}
+
+
+def _scorecard_line(session: Session) -> str | None:
+    from app.services.alert_outcomes import alert_outcome_scorecard
+
+    try:
+        card = alert_outcome_scorecard(session, strategy_key=SHADOW_STRATEGY_KEY, run_type="shadow")
+    except Exception:  # noqa: BLE001 - the scorecard is informational
+        logger.exception("v0.9 shadow scorecard summary failed")
+        return None
+    trades = (card.get("by_setup_status") or {}).get("BUY_NOW", {}).get("trades") or {}
+    if not trades.get("unique_fills"):
+        return None
+    return (
+        f"Buy calls since {card['start_date']}: {trades['unique_fills']} filled, "
+        f"{trades['target_2r']} reached 2R, {trades['stopped']} stopped, {trades['open']} open"
+        + (f"; average {trades['expectancy_r']}R per resolved trade" if trades.get("expectancy_r") else "")
+        + "."
+    )
 
 
 def _store_lifecycle(
@@ -461,3 +472,19 @@ def bootstrap_daily_stock_alert_shadow(
             "recorded_runs": sum(1 for item in results if item["status"] == "recorded"),
             "already_processed": sum(1 for item in results if item["status"] == "already_processed"),
             "results": results}
+
+
+def publish_shadow_runs_since(session: Session, settings: Settings, since: date) -> dict[str, Any]:
+    """(Re)publish stored shadow runs to the website's shadow page; the website keeps the first copy."""
+    runs = session.scalars(
+        select(StrategyRun)
+        .join(StrategyDefinition, StrategyDefinition.id == StrategyRun.strategy_definition_id)
+        .where(
+            StrategyDefinition.strategy_key == SHADOW_STRATEGY_KEY,
+            StrategyRun.run_type == "shadow",
+            StrategyRun.as_of_date >= since,
+        )
+        .order_by(StrategyRun.as_of_date)
+    ).all()
+    results = [publish_shadow_run(session, settings, run.run_id) for run in runs]
+    return {"published": len(results), "results": results}

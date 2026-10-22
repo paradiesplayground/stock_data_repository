@@ -369,7 +369,10 @@ def evaluate(
 
     if technical_state == "extended":
         failing.insert(0, "Extended past the buy window; wait for a new base.")
-    elif technical_state in {"near_trigger", "developing", "no_setup"}:
+    elif technical_state == "near_trigger":
+        # Already within the close band: the failing gate is what to watch first.
+        failing.append(trigger_text)
+    elif technical_state in {"developing", "no_setup"}:
         failing.insert(0, trigger_text)
     position = (
         f"{-distance:.1f}% above" if distance <= 0 else f"{distance:.1f}% below"

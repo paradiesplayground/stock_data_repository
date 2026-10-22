@@ -10,6 +10,7 @@ from app.services.alert_outcomes import alert_outcome_scorecard, sync_alert_outc
 from app.services.daily_stock_alert_shadow import (
     SHADOW_STRATEGY_KEY,
     bootstrap_daily_stock_alert_shadow,
+    publish_shadow_runs_since,
     run_daily_stock_alert_shadow,
 )
 from app.services.feature_calculation import (
@@ -118,6 +119,11 @@ def main() -> None:
     outcomes.add_argument("--since", type=_date)
     shadow = subparsers.add_parser("run-alert-shadow")
     shadow.add_argument("--date", type=_date)
+    shadow_publish = subparsers.add_parser("publish-alert-shadow")
+    shadow_publish.add_argument("--since", type=_date, required=True)
+    weekly = subparsers.add_parser("alert-weekly-comparison")
+    weekly.add_argument("--week-ending", type=_date, required=True)
+    weekly.add_argument("--send", action="store_true", help="store on the website and email it")
     shadow_bootstrap = subparsers.add_parser("bootstrap-alert-shadow")
     shadow_bootstrap.add_argument("--start", type=_date, required=True)
     shadow_bootstrap.add_argument("--end", type=_date, required=True)
@@ -233,6 +239,14 @@ def main() -> None:
             result = sync_alert_outcomes(session, since=args.since)
         elif args.command == "run-alert-shadow":
             result = run_daily_stock_alert_shadow(session, settings, as_of_date=args.date)
+        elif args.command == "publish-alert-shadow":
+            result = publish_shadow_runs_since(session, settings, args.since)
+        elif args.command == "alert-weekly-comparison":
+            from app.services.alert_weekly_comparison import build_weekly_comparison
+            from app.services.stock_alert_delivery import send_weekly_comparison
+
+            comparison = build_weekly_comparison(session, args.week_ending)
+            result = send_weekly_comparison(settings, comparison) if args.send else comparison
         elif args.command == "bootstrap-alert-shadow":
             result = bootstrap_daily_stock_alert_shadow(
                 session,
@@ -270,6 +284,8 @@ def main() -> None:
         "alert-scorecard",
         "run-alert-shadow",
         "bootstrap-alert-shadow",
+        "publish-alert-shadow",
+        "alert-weekly-comparison",
     }:
         print(json.dumps(result, indent=2))
     else:

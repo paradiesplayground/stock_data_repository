@@ -84,6 +84,20 @@ def _run_alert_shadow() -> None:
         logger.exception("v0.9 shadow alert failed")
 
 
+def _run_weekly_comparison() -> None:
+    from app.services.alert_weekly_comparison import build_weekly_comparison
+    from app.services.stock_alert_delivery import send_weekly_comparison
+
+    settings = get_settings()
+    week_ending = datetime.now(ZoneInfo(settings.timezone)).date() - timedelta(days=1)
+    try:
+        with SessionLocal() as session:
+            comparison = build_weekly_comparison(session, week_ending)
+        logger.info("Weekly alert comparison: %s", send_weekly_comparison(settings, comparison))
+    except Exception:  # noqa: BLE001
+        logger.exception("Weekly alert comparison failed")
+
+
 def _advance_daily_alert_preparations() -> None:
     with SessionLocal() as session:
         results = advance_eligible_daily_stock_alert_preparations(session, get_settings())
@@ -150,6 +164,12 @@ def main() -> None:
             _run_alert_shadow,
             CronTrigger.from_crontab(settings.alert_shadow_cron, timezone=settings.timezone),
             id="daily_alert_v09_shadow",
+            **common,
+        )
+        scheduler.add_job(
+            _run_weekly_comparison,
+            CronTrigger.from_crontab(settings.alert_weekly_comparison_cron, timezone=settings.timezone),
+            id="weekly_alert_comparison",
             **common,
         )
     scheduler.add_job(

@@ -289,3 +289,55 @@ def publish_strategy_run_safely(
     except Exception as error:
         logger.exception("Stock alert delivery failed for run %s", run_id)
         return {"status": "failed", "run_id": run_id, "error": str(error)}
+
+
+def _website_endpoint(settings: Settings, suffix: str) -> str:
+    """Sibling endpoint of the stock-alert webhook (for example ``.../stock-alerts/shadow``)."""
+    return settings.stock_alert_webhook_url.rstrip("/") + "/" + suffix
+
+
+def publish_shadow_run(session: Session, settings: Settings, run_id: str) -> dict[str, Any]:
+    """Store a v0.9 shadow run on the website's unlisted shadow page. Never emails."""
+    if not settings.stock_alert_webhook_url or not settings.stock_alert_webhook_token:
+        return {"status": "disabled", "run_id": run_id}
+    run = get_strategy_run(session, run_id)
+    if not run.get("found"):
+        raise ValueError("run_id was not found")
+    if run["run_type"] != "shadow":
+        raise ValueError("only shadow runs are published to the shadow page")
+    response = httpx.post(
+        _website_endpoint(settings, "shadow"),
+        headers={
+            "Authorization": f"Bearer {settings.stock_alert_webhook_token}",
+            "Content-Type": "application/json",
+        },
+        json=run,
+        timeout=settings.stock_alert_webhook_timeout_seconds,
+        follow_redirects=True,
+    )
+    response.raise_for_status()
+    result = response.json()
+    if result.get("status") != "stored":
+        raise RuntimeError("website did not confirm the shadow run: " + str(result.get("status") or "missing"))
+    return {"status": "published", "run_id": run_id, "publication": result.get("publication")}
+
+
+def send_weekly_comparison(settings: Settings, comparison: dict[str, Any]) -> dict[str, Any]:
+    """Store the weekly v0.8-vs-v0.9 comparison on the website and email it once per week."""
+    if not settings.stock_alert_webhook_url or not settings.stock_alert_webhook_token:
+        return {"status": "disabled", "week_key": comparison.get("week_key")}
+    response = httpx.post(
+        _website_endpoint(settings, "weekly-comparison"),
+        headers={
+            "Authorization": f"Bearer {settings.stock_alert_webhook_token}",
+            "Content-Type": "application/json",
+        },
+        json=comparison,
+        timeout=settings.stock_alert_webhook_timeout_seconds,
+        follow_redirects=True,
+    )
+    response.raise_for_status()
+    result = response.json()
+    if result.get("email") != "sent":
+        raise RuntimeError("website did not confirm the weekly comparison email: " + str(result.get("email") or "missing"))
+    return {"status": "sent", "week_key": comparison.get("week_key"), "email_receipt": result.get("email_receipt")}

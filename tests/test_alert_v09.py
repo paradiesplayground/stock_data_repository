@@ -6,7 +6,8 @@ import pytest
 
 from app.services.alert_v09_engine import EngineConfig, Research, evaluate, load_configuration
 from app.services.blocker_codes import blocker_code, blocker_codes
-from app.services.daily_stock_alert_shadow import _sessions_counter, email_sections, render_markdown
+from app.services.alert_v09_presentation import build_presentation, render_markdown
+from app.services.daily_stock_alert_shadow import _sessions_counter, email_sections
 from app.strategy_decisions import normalize_candidate_decision
 from tests.v09_golden_replay import FIXTURE, replay, section_map
 
@@ -189,7 +190,7 @@ def test_email_sections_apply_caps_and_collapse_unchanged_names() -> None:
     assert len(sections["close"]["shown"]) == CONFIGURATION["email"]["max_close"]
     assert sections["close"]["more_on_website"] == 1
     assert sections["close"]["unchanged"] == ["T6"]
-    markdown = render_markdown(DAY, True, candidates, sections)
+    markdown = render_markdown(build_presentation(DAY, candidates, sections, market_ok=True, shadow=True))
     assert "SHADOW" in markdown
     assert len(markdown) < CONFIGURATION["email"]["target_max_chars"]
 
@@ -251,3 +252,65 @@ def test_v09_is_not_deliverable_yet() -> None:
     from app.decision_contract import SUPPORTED_DECISION_CONTRACT_VERSIONS
 
     assert "0.9" not in SUPPORTED_DECISION_CONTRACT_VERSIONS
+
+
+def test_presentation_cards_carry_plan_target_and_why() -> None:
+    from app.services.alert_v09_presentation import card
+
+    candidate, _ = _evaluate(_item(close="104", high_60d="130", drawdown_52w_pct="-40"))
+    presented = card(candidate)
+
+    assert presented["section"] == "buy"
+    assert presented["entry_zone"].startswith("$102.10")
+    assert presented["first_target"]["basis"] == "60-day resistance"
+    assert presented["first_target"]["r_multiple"].endswith("R")
+    assert any("vs QQQ" in reason for reason in presented["why"])
+
+
+def test_presentation_reports_changes_and_market_gate() -> None:
+    candidate, _ = _evaluate(_item(close="104"))
+    candidate["payload"].update(section_changed=True, previous_section="close")
+    sections = email_sections([candidate], CONFIGURATION)
+    presentation = build_presentation(DAY, [candidate], sections, market_ok=False, shadow=True)
+
+    assert presentation["headline"].startswith("Market gate closed")
+    assert presentation["changes"][0]["text"] == "Close → Buy today."
+    assert presentation["sections"]["buy"]["cards"][0]["ticker"] == "TEST"
+
+
+def test_weekly_comparison_markdown_renders_days_calls_and_scorecard() -> None:
+    from app.services.alert_weekly_comparison import render_comparison_markdown
+
+    comparison = {
+        "week_start": "2026-10-03", "week_ending": "2026-10-09", "headline": "v0.9 had buy or close calls on 3 of 4 days; v0.8 on 0.",
+        "days": [
+            {"date": "2026-10-05", "market_gate": "pass",
+             "v08": {"buy": [], "almost_ready": [], "radar": ["APP"], "not_eligible_count": 7},
+             "v09": {"buy": ["NVT"], "close": ["CRDO"], "recovering_count": 21, "blocked_count": 24, "run_id": "x"}},
+            {"date": "2026-10-07", "market_gate": "pass", "v08": None,
+             "v09": {"buy": ["CRDO"], "close": [], "recovering_count": 22, "blocked_count": 24, "run_id": "y"}},
+        ],
+        "v09_calls": [{"ticker": "NVT", "status": "BUY_NOW", "date": "2026-10-05", "trade": "stopped", "exit_r": "-1.0000", "fwd_5s": "-3.2"}],
+        "v08_calls": [],
+        "scorecard": {"since": "2026-09-30", "v08": {}, "v09": {"BUY_NOW": {
+            "candidate_days": 8, "fwd_10s_excess_vs_qqq_pct": "-4.1", "fwd_10s_observations": 6,
+            "unique_fills": 4, "target_2r": 0, "stopped": 3, "open": 1, "expectancy_r": "-1.0"}}},
+        "notes": ["Shadow results were not sent as advice."],
+    }
+    markdown = render_comparison_markdown(comparison)
+
+    assert "| 2026-10-07 | pass | no run | no run | CRDO | none | 22 / 24 |" in markdown
+    assert "Buy **NVT**: trade stopped (-1.0000R), 5-day -3.2%" in markdown
+    assert "| v0.9 | BUY_NOW | 8 | -4.1% | 4 | 0 | 3 | 1 | -1.0 |" in markdown
+
+
+def test_shadow_publication_is_disabled_without_a_webhook_and_refuses_live_runs(monkeypatch) -> None:
+    from app.config import Settings
+    from app.services import stock_alert_delivery
+
+    assert stock_alert_delivery.publish_shadow_run(object(), Settings(stock_alert_webhook_url=""), "r")["status"] == "disabled"
+    monkeypatch.setattr(stock_alert_delivery, "get_strategy_run", lambda *_args: {"found": True, "run_type": "as_run"})
+    settings = Settings(stock_alert_webhook_url="https://example.test/api/v1/stock-alerts", stock_alert_webhook_token="t")
+    with pytest.raises(ValueError, match="only shadow runs"):
+        stock_alert_delivery.publish_shadow_run(object(), settings, "r")
+    assert stock_alert_delivery._website_endpoint(settings, "shadow") == "https://example.test/api/v1/stock-alerts/shadow"

@@ -14,6 +14,17 @@
   - About 23 names were Blocked, mostly by the 15% share-count rule.
   - The would-be research queue added APH, SANM, TLN, MU, CLS, TER, and VIAV.
   - Shadow reports are 750–1,450 characters, against 70–100k for v0.8.
+- **Implemented (Phase 3 backend, not deployed):**
+  - **Presentation.** A server-owned v0.9 presentation (`alert_v09_presentation`) is stored in each run's `summary.presentation_v09` and also drives the compact Markdown report. It holds:
+    - Buy today and Close cards with plan, entry zone, stop and risk, the first structural target with its R multiple, why, and what next;
+    - Recovering, one line each;
+    - a Blocked count and newly blocked names;
+    - up to eight section changes and a shadow scorecard line.
+
+    For a name within 5% of its trigger, "Next" now names the failing gate first.
+  - **Shadow page publishing.** Shadow runs are published to the website's unlisted shadow page; it is best-effort, never emails, and only accepts shadow runs. `publish-alert-shadow --since` backfills them.
+  - **Weekly comparison.** `alert_weekly_comparison` builds a weekly v0.8-vs-v0.9 comparison: day-by-day calls, each version's first Buy/Close calls with trade results so far, and the scorecard since Sep 30. It is sent to the website for one email per week on Saturday at 9:00 AM CT; `alert-weekly-comparison --week-ending … [--send]` builds or sends it on demand.
+  - Verified locally: 291 tests and Ruff pass.
 - **Remaining:**
   - Daily shadow runs at 7:30 AM CT.
   - Phase 3: the "Buy / Close / why" presentation and an unlisted shadow page with a weekly comparison email.
