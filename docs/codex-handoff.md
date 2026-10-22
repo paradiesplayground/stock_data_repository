@@ -25,6 +25,18 @@
   - **Shadow page publishing.** Shadow runs are published to the website's unlisted shadow page; it is best-effort, never emails, and only accepts shadow runs. `publish-alert-shadow --since` backfills them.
   - **Weekly comparison.** `alert_weekly_comparison` builds a weekly v0.8-vs-v0.9 comparison: day-by-day calls, each version's first Buy/Close calls with trade results so far, and the scorecard since Sep 30. It is sent to the website for one email per week on Saturday at 9:00 AM CT; `alert-weekly-comparison --week-ending … [--send]` builds or sends it on demand.
   - Verified locally: 291 tests and Ruff pass.
+- **Deployed / verified (Phase 3: `c4bd540`, `b955a8f`):**
+  - The guarded contract suite passed (292 tests) and services are healthy. The weekly comparison job is scheduled.
+  - Shadow runs recorded before the presentation existed get it rebuilt from their own stored candidates at publication; the stored runs are not rewritten (`b955a8f`).
+  - All 16 shadow runs (Sep 30 – Oct 21) are on the website's unlisted shadow page.
+  - A preview weekly comparison for the week ending Oct 16 was accepted by SMTP.
+- **Scorecard so far (Sep 30 – Oct 16, small sample in a sector selloff):**
+  - v0.9 Buy: 7 fills, all stopped, average −1.21R.
+  - v0.9 Close: 7 fills, all stopped, average −1.04R.
+  - v0.8 made no actionable calls.
+
+  The labelling now surfaces setups, but the breakout entry and stop plan has not paid in this window. That raises the priority of the B4 (exits) and B7 (market gate) backtests before cutover.
+- **Problem found:** The website page shows only the email-capped Recovering list, and its full record repeats the cap. The remaining tracked names and the Blocked names are not listed anywhere. The fix is to add uncapped Recovering and Blocked lists to the presentation for the website only.
 - **Remaining:**
   - Daily shadow runs at 7:30 AM CT.
   - Phase 3: the "Buy / Close / why" presentation and an unlisted shadow page with a weekly comparison email.
