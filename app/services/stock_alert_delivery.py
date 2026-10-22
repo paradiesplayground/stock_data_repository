@@ -305,6 +305,7 @@ def publish_shadow_run(session: Session, settings: Settings, run_id: str) -> dic
         raise ValueError("run_id was not found")
     if run["run_type"] != "shadow":
         raise ValueError("only shadow runs are published to the shadow page")
+    run = with_shadow_presentation(run)
     response = httpx.post(
         _website_endpoint(settings, "shadow"),
         headers={
@@ -341,3 +342,32 @@ def send_weekly_comparison(settings: Settings, comparison: dict[str, Any]) -> di
     if result.get("email") != "sent":
         raise RuntimeError("website did not confirm the weekly comparison email: " + str(result.get("email") or "missing"))
     return {"status": "sent", "week_key": comparison.get("week_key"), "email_receipt": result.get("email_receipt")}
+
+
+def with_shadow_presentation(run: dict[str, Any]) -> dict[str, Any]:
+    """Shadow runs recorded before the presentation existed get it derived at publication.
+
+    The stored run is never rewritten; the presentation is rebuilt from the run's
+    own stored candidates and capped sections, which is what it would have held.
+    """
+    summary = dict(run.get("summary") or {})
+    if "presentation_v09" in summary or "email_sections" not in summary:
+        return run
+    from datetime import date
+
+    from app.services.alert_v09_presentation import build_presentation, render_markdown
+
+    presentation = build_presentation(
+        date.fromisoformat(str(run["as_of_date"])),
+        list(run.get("candidates") or []),
+        summary["email_sections"],
+        market_ok=bool((summary.get("market_regime") or {}).get("gate_passed")),
+        shadow=True,
+    )
+    summary["presentation_v09"] = presentation
+    return {
+        **run,
+        "summary": summary,
+        "report_markdown": render_markdown(presentation),
+        "presentation_derived_at_publication": True,
+    }

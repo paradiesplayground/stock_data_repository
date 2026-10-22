@@ -314,3 +314,21 @@ def test_shadow_publication_is_disabled_without_a_webhook_and_refuses_live_runs(
     with pytest.raises(ValueError, match="only shadow runs"):
         stock_alert_delivery.publish_shadow_run(object(), settings, "r")
     assert stock_alert_delivery._website_endpoint(settings, "shadow") == "https://example.test/api/v1/stock-alerts/shadow"
+
+
+def test_older_shadow_runs_get_their_presentation_derived_at_publication() -> None:
+    from app.services.stock_alert_delivery import with_shadow_presentation
+
+    candidates = replay()[date(2026, 10, 2)]
+    stored = {
+        "as_of_date": "2026-10-02",
+        "candidates": candidates,
+        "summary": {"email_sections": email_sections(candidates, CONFIGURATION), "market_regime": {"gate_passed": True}},
+        "report_markdown": "old",
+    }
+    published = with_shadow_presentation(stored)
+
+    assert published["summary"]["presentation_v09"]["headline"] == "2 to buy, 3 close."
+    assert published["presentation_derived_at_publication"] is True
+    assert "presentation_v09" not in stored["summary"]
+    assert with_shadow_presentation(published) is published
