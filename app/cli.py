@@ -7,6 +7,11 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
 from app.services.alert_outcomes import alert_outcome_scorecard, sync_alert_outcomes
+from app.services.daily_stock_alert_shadow import (
+    SHADOW_STRATEGY_KEY,
+    bootstrap_daily_stock_alert_shadow,
+    run_daily_stock_alert_shadow,
+)
 from app.services.feature_calculation import (
     backfill_daily_features,
     calculate_daily_features,
@@ -111,7 +116,14 @@ def main() -> None:
     validation.add_argument("--date", type=_date)
     outcomes = subparsers.add_parser("sync-alert-outcomes")
     outcomes.add_argument("--since", type=_date)
+    shadow = subparsers.add_parser("run-alert-shadow")
+    shadow.add_argument("--date", type=_date)
+    shadow_bootstrap = subparsers.add_parser("bootstrap-alert-shadow")
+    shadow_bootstrap.add_argument("--start", type=_date, required=True)
+    shadow_bootstrap.add_argument("--end", type=_date, required=True)
+    shadow_bootstrap.add_argument("--record-from", type=_date)
     scorecard = subparsers.add_parser("alert-scorecard")
+    scorecard.add_argument("--strategy-key")
     scorecard.add_argument("--strategy-version")
     scorecard.add_argument("--run-type", default="as_run")
     scorecard.add_argument("--start", type=_date)
@@ -219,9 +231,21 @@ def main() -> None:
             result = validate_feature_calculations(session, args.ticker, args.date)
         elif args.command == "sync-alert-outcomes":
             result = sync_alert_outcomes(session, since=args.since)
+        elif args.command == "run-alert-shadow":
+            result = run_daily_stock_alert_shadow(session, settings, as_of_date=args.date)
+        elif args.command == "bootstrap-alert-shadow":
+            result = bootstrap_daily_stock_alert_shadow(
+                session,
+                start_date=args.start,
+                end_date=args.end,
+                record_from=args.record_from,
+            )
         elif args.command == "alert-scorecard":
             result = alert_outcome_scorecard(
                 session,
+                strategy_key=args.strategy_key or (
+                    SHADOW_STRATEGY_KEY if args.run_type == "shadow" else "dynamic_swing_buy_alerts"
+                ),
                 strategy_version=args.strategy_version,
                 run_type=args.run_type,
                 start_date=args.start,
@@ -244,6 +268,8 @@ def main() -> None:
         "publish-stock-alert",
         "sync-alert-outcomes",
         "alert-scorecard",
+        "run-alert-shadow",
+        "bootstrap-alert-shadow",
     }:
         print(json.dumps(result, indent=2))
     else:

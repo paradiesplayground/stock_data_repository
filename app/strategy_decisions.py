@@ -28,6 +28,14 @@ from app.decision_contract import (
     LEGACY_DECISION_PRIORITY,
     SCREEN_BUCKETS,
     TECHNICAL_STATES,
+    V09_ALMOST_READY_MAX_DISTANCE_PCT,
+    V09_BUY_NOW_MAX_DISTANCE_PCT,
+    V09_DECISION_CONTRACT_VERSION,
+    V09_DECISION_STATUSES,
+    V09_ELIGIBLE_BUCKETS,
+    V09_INELIGIBLE_BUCKETS,
+    V09_SCREEN_BUCKETS,
+    V09_TECHNICAL_STATES,
 )
 from app.models import Base
 
@@ -496,10 +504,107 @@ def _normalize_v08_candidate_decision(item: dict[str, Any]) -> dict[str, Any]:
     return decision
 
 
+def _normalize_v09_candidate_decision(item: dict[str, Any]) -> dict[str, Any]:
+    """v0.9 labels are server-derived; validate that they are internally consistent."""
+    ticker = str(item.get("ticker") or "<unknown>")
+    bucket = _choice(item.get("screen_bucket"), "screen_bucket", V09_SCREEN_BUCKETS)
+    technical_state = _choice(
+        item.get("technical_state"), "technical_state", V09_TECHNICAL_STATES
+    )
+    status = str(item.get("buyability_status") or "").strip().upper()
+    if status not in V09_DECISION_STATUSES:
+        raise ValueError(
+            "buyability_status must be one of: " + ", ".join(sorted(V09_DECISION_STATUSES))
+        )
+    if item.get("action") is not None or item.get("decision_status") is not None:
+        raise ValueError(f"{ticker} v0.9 candidates must not emit action or decision_status")
+    metrics = _mapping(item.get("metrics"), f"{ticker}.metrics")
+    current_price = _required_decimal(item.get("current_price"), f"{ticker}.current_price")
+    if current_price <= 0:
+        raise ValueError(f"{ticker}.current_price must be greater than zero")
+    if metrics.get("close") is not None:
+        _require_close(
+            current_price,
+            _required_decimal(metrics["close"], f"{ticker}.metrics.close"),
+            f"{ticker}.current_price",
+        )
+    trigger = _decimal(item.get("trigger_price"), "trigger_price")
+    distance = _decimal(item.get("distance_to_trigger_pct"), "distance_to_trigger_pct")
+    invalidation = _decimal(item.get("invalidation_price"), "invalidation_price")
+    remaining = _non_negative_integer(
+        item.get("remaining_gate_count"), f"{ticker}.remaining_gate_count"
+    )
+    gates = {}
+    for gate in ("technical_gate_passed", "market_regime_gate_passed"):
+        if not isinstance(item.get(gate), bool):
+            raise ValueError(f"{ticker}.{gate} must be true or false")
+        gates[gate] = item[gate]
+    if trigger is not None:
+        if trigger <= 0 or distance is None:
+            raise ValueError(
+                f"{ticker}.trigger_price must be positive and carry distance_to_trigger_pct"
+            )
+        _require_close(
+            distance,
+            ((trigger - current_price) / trigger) * Decimal("100"),
+            f"{ticker}.distance_to_trigger_pct",
+        )
+        if gates["technical_gate_passed"] != (current_price >= trigger):
+            raise ValueError(f"{ticker}.technical_gate_passed must equal close >= trigger")
+    elif distance is not None:
+        raise ValueError(f"{ticker}.trigger_price is required with distance_to_trigger_pct")
+    blocker_codes = item.get("blocker_codes") or []
+    if not isinstance(blocker_codes, list) or any(
+        not isinstance(code, str) for code in blocker_codes
+    ):
+        raise ValueError(f"{ticker}.blocker_codes must be a list of strings")
+
+    if status in {"BUY_NOW", "ALMOST_READY", "RADAR"} and bucket not in V09_ELIGIBLE_BUCKETS:
+        raise ValueError(f"{ticker}.{status} requires a screen or tracked_recovery bucket")
+    if status == "NOT_ELIGIBLE" and bucket not in V09_INELIGIBLE_BUCKETS:
+        raise ValueError(f"{ticker}.NOT_ELIGIBLE requires a blocked, exited, or incomplete bucket")
+    if status in {"BUY_NOW", "ALMOST_READY"}:
+        if trigger is None or invalidation is None:
+            raise ValueError(f"{ticker}.{status} requires trigger and invalidation prices")
+        if invalidation >= current_price:
+            raise ValueError(f"{ticker}.{status} stop must be below the current price")
+        if not gates["market_regime_gate_passed"] or blocker_codes:
+            raise ValueError(
+                f"{ticker}.{status} requires a passing market gate and no blocker codes"
+            )
+    if status == "BUY_NOW":
+        if remaining != 0 or technical_state != "confirmed" or not gates["technical_gate_passed"]:
+            raise ValueError(f"{ticker}.BUY_NOW requires zero remaining gates and a confirmed trigger")
+        if not -V09_BUY_NOW_MAX_DISTANCE_PCT <= distance <= 0:
+            raise ValueError(f"{ticker}.BUY_NOW must be at or within five percent above its trigger")
+    elif status == "ALMOST_READY":
+        if remaining != 1 or gates["technical_gate_passed"]:
+            raise ValueError(f"{ticker}.ALMOST_READY requires exactly the trigger gate remaining")
+        if not 0 < distance <= V09_ALMOST_READY_MAX_DISTANCE_PCT:
+            raise ValueError(f"{ticker}.ALMOST_READY must be within five percent below its trigger")
+    elif status == "RADAR" and remaining == 0:
+        raise ValueError(f"{ticker}.RADAR requires at least one remaining gate")
+
+    return {
+        "buyability_status": status,
+        "status_reason": _required_text(item.get("status_reason"), "status_reason"),
+        "buy_conditions": _required_string_list(item.get("buy_conditions"), "buy_conditions"),
+        "remaining_gate_count": remaining,
+        "technical_state": technical_state,
+        "current_price": current_price,
+        "trigger_price": trigger,
+        "distance_to_trigger_pct": distance,
+        "invalidation_price": invalidation,
+        **gates,
+    }
+
+
 def normalize_candidate_decision(
     item: dict[str, Any], *, contract_version: str | None = None,
     contract_required: bool = False,
 ) -> dict[str, Any] | None:
+    if contract_version == V09_DECISION_CONTRACT_VERSION:
+        return _normalize_v09_candidate_decision(item)
     if contract_version == DECISION_CONTRACT_VERSION:
         return _normalize_v08_candidate_decision(item)
     return _normalize_v07_candidate_decision(
@@ -515,7 +620,7 @@ def decision_sort_key(
 ) -> tuple[int, Decimal, str]:
     priorities = (
         DECISION_PRIORITY
-        if contract_version == DECISION_CONTRACT_VERSION
+        if contract_version in {DECISION_CONTRACT_VERSION, V09_DECISION_CONTRACT_VERSION}
         else LEGACY_DECISION_PRIORITY
     )
     priority = priorities.get(status or "", len(priorities) + 1)

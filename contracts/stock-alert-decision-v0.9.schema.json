@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/paradiesplayground/stock_data_repository/main/contracts/stock-alert-decision-v0.9.schema.json",
+  "title": "Stock Alert Buyability Contract",
+  "contract_version": "0.9",
+  "type": "object",
+  "required": [
+    "ticker",
+    "screen_bucket",
+    "technical_state",
+    "buyability_status",
+    "status_reason",
+    "buy_conditions",
+    "remaining_gate_count",
+    "current_price",
+    "technical_gate_passed",
+    "market_regime_gate_passed",
+    "metrics"
+  ],
+  "properties": {
+    "ticker": {"type": "string"},
+    "screen_bucket": {
+      "type": "string",
+      "enum": ["screen", "tracked_recovery", "blocked", "exited", "incomplete"]
+    },
+    "technical_state": {
+      "type": "string",
+      "enum": ["no_setup", "developing", "near_trigger", "confirmed", "extended", "broken", "unknown"]
+    },
+    "buyability_status": {
+      "type": "string",
+      "enum": ["BUY_NOW", "ALMOST_READY", "RADAR", "NOT_ELIGIBLE"]
+    },
+    "status_reason": {"type": "string", "minLength": 1},
+    "buy_conditions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "remaining_gate_count": {"type": "integer", "minimum": 0},
+    "current_price": {"type": ["string", "number"]},
+    "trigger_price": {"type": ["string", "number", "null"]},
+    "distance_to_trigger_pct": {"type": ["string", "number", "null"]},
+    "invalidation_price": {"type": ["string", "number", "null"]},
+    "technical_gate_passed": {"type": "boolean"},
+    "market_regime_gate_passed": {"type": "boolean"},
+    "blocker_codes": {"type": "array", "items": {"type": "string"}},
+    "metrics": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"buyability_status": {"const": "BUY_NOW"}}},
+      "then": {
+        "required": ["trigger_price", "distance_to_trigger_pct", "invalidation_price"],
+        "properties": {
+          "screen_bucket": {"enum": ["screen", "tracked_recovery"]},
+          "remaining_gate_count": {"const": 0},
+          "technical_state": {"const": "confirmed"},
+          "technical_gate_passed": {"const": true},
+          "market_regime_gate_passed": {"const": true}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"buyability_status": {"const": "ALMOST_READY"}}},
+      "then": {
+        "required": ["trigger_price", "distance_to_trigger_pct", "invalidation_price"],
+        "properties": {
+          "screen_bucket": {"enum": ["screen", "tracked_recovery"]},
+          "remaining_gate_count": {"const": 1},
+          "market_regime_gate_passed": {"const": true}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"buyability_status": {"const": "RADAR"}}},
+      "then": {"properties": {"screen_bucket": {"enum": ["screen", "tracked_recovery"]}}}
+    },
+    {
+      "if": {"properties": {"buyability_status": {"const": "NOT_ELIGIBLE"}}},
+      "then": {"properties": {"screen_bucket": {"enum": ["blocked", "exited", "incomplete"]}}}
+    }
+  ],
+  "x-semantic-rules": {
+    "buy_now_max_distance_pct": "5.00",
+    "almost_ready_max_distance_pct": "5.00",
+    "calculation_tolerance": "0.02",
+    "stop_below_price_for_actionable": true,
+    "labels_assigned_by": "server",
+    "research_role": "veto with typed blocker codes"
+  },
+  "x-decision-statuses": [
+    {
+      "status": "BUY_NOW",
+      "label": "Buy today",
+      "priority": 0,
+      "meaning": "Closed 0-5% above its trigger within three sessions of crossing it, with positive relative strength, a passing market gate, current research, and no block.",
+      "response": "Review the plan and event risk before entering."
+    },
+    {
+      "status": "ALMOST_READY",
+      "label": "Close",
+      "priority": 1,
+      "meaning": "Within five percent below its trigger with every other gate passing; only the trigger remains.",
+      "response": "Watch for a close above the trigger."
+    },
+    {
+      "status": "RADAR",
+      "label": "Recovering",
+      "priority": 2,
+      "meaning": "Tracked and not blocked, but further from the trigger, extended, broken, lacking current research, or failing strength or market gates.",
+      "response": "Keep watching; the reason names what must change."
+    },
+    {
+      "status": "NOT_ELIGIBLE",
+      "label": "Blocked or exited",
+      "priority": 3,
+      "meaning": "Blocked by a risk flag or research blocker (re-checked daily), exited from tracking, or missing data.",
+      "response": "Do not act; the reason names what would clear it."
+    }
+  ]
+}

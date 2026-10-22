@@ -18,6 +18,11 @@ from app.models import (
     StrategyOutcomeObservation,
     StrategyRun,
 )
+from app.decision_contract import (
+    RECORDABLE_DECISION_CONTRACT_VERSIONS,
+    V09_DECISION_CONTRACT_VERSION,
+    V09_SCREEN_BUCKETS,
+)
 from app.services.candidate_lifecycle import archive_stale_lifecycles, persist_lifecycle, get_lifecycle
 from app.strategy_decisions import (
     DECISION_CONTRACT_VERSION,
@@ -27,7 +32,7 @@ from app.strategy_decisions import (
     normalize_candidate_decision,
 )
 
-RUN_TYPES = {"as_run", "replay", "backtest"}
+RUN_TYPES = {"as_run", "replay", "backtest", "shadow"}
 IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 
@@ -93,7 +98,7 @@ def _strategy_payload_hash(
     payload: dict[str, Any], decision_contract_version: str | None
 ) -> str:
     """Hash v0.8 payloads across stateless JSON transports without numeric drift."""
-    if decision_contract_version == DECISION_CONTRACT_VERSION:
+    if decision_contract_version in RECORDABLE_DECISION_CONTRACT_VERSIONS:
         payload = _canonical_json_numbers(payload)
     return _canonical_hash(payload)
 
@@ -313,11 +318,22 @@ def record_strategy_run(
         )
     if decision_contract_version is not None:
         decision_contract_version = str(decision_contract_version).strip()
-        if decision_contract_version != DECISION_CONTRACT_VERSION:
+        if decision_contract_version not in RECORDABLE_DECISION_CONTRACT_VERSIONS:
             raise ValueError(
-                f"decision_contract_version must be {DECISION_CONTRACT_VERSION}"
+                "decision_contract_version must be one of: "
+                + ", ".join(sorted(RECORDABLE_DECISION_CONTRACT_VERSIONS))
             )
-    contract_required = decision_contract_version == DECISION_CONTRACT_VERSION
+    if normalized_run_type == "as_run" and decision_contract_version != DECISION_CONTRACT_VERSION:
+        # v0.9 stays shadow-only until cutover changes this deliberately.
+        raise ValueError(
+            "as_run alerts require decision_contract_version=" + DECISION_CONTRACT_VERSION
+        )
+    contract_required = decision_contract_version in RECORDABLE_DECISION_CONTRACT_VERSIONS
+    bucket_choices = (
+        V09_SCREEN_BUCKETS
+        if decision_contract_version == V09_DECISION_CONTRACT_VERSION
+        else SCREEN_BUCKETS
+    )
     evidence = list(evidence or [])
     if report_markdown is not None:
         report_markdown = report_markdown.strip()
@@ -341,9 +357,9 @@ def record_strategy_run(
         seen_tickers.add(ticker)
         if contract_required:
             stage = _identifier(str(item.get("screen_bucket", "")), "screen_bucket", 32)
-            if stage not in SCREEN_BUCKETS:
+            if stage not in bucket_choices:
                 raise ValueError(
-                    "screen_bucket must be one of: " + ", ".join(sorted(SCREEN_BUCKETS))
+                    "screen_bucket must be one of: " + ", ".join(sorted(bucket_choices))
                 )
             legacy_stage = item.get("stage")
             if legacy_stage is not None and str(legacy_stage).strip().lower() != stage:
@@ -807,7 +823,7 @@ def get_strategy_run(session: Session, run_id: str) -> dict[str, Any]:
                 if decision
                 else None,
             }
-        if getattr(run, "decision_contract_version", None) == DECISION_CONTRACT_VERSION:
+        if getattr(run, "decision_contract_version", None) in RECORDABLE_DECISION_CONTRACT_VERSIONS:
             candidate_item.pop("action", None)
             candidate_item.pop("decision_status", None)
             candidate_item.pop("next_condition", None)

@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     corporate_actions_sync_cron: str = "0 3 * * 6"
     sec_sync_cron: str = "30 4 * * 1-6"
     feature_sync_cron: str = "0 17 * * 1-5"
+    # v0.9 shadow alert: after the live alert's morning window, Tue-Sat.
+    alert_shadow_enabled: bool = True
+    alert_shadow_cron: str = "30 7 * * 2-6"
     log_level: str = "INFO"
 
     @property

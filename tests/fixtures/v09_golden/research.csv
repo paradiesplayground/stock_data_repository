@@ -1,0 +1,72 @@
+as_of_date,ticker,blockers
+2026-09-15,APP,"[""market_regime_block""]"
+2026-09-15,APP,"[""market_regime_block""]"
+2026-09-15,NVT,"[""dropped_from_raw_pool"", ""market_regime_block"", ""negative_relative_strength""]"
+2026-09-15,NVT,"[""dropped_from_raw_pool"", ""market_regime_block"", ""negative_relative_strength""]"
+2026-09-16,APP,"[""market_regime_block""]"
+2026-09-17,MXL,[]
+2026-09-18,SNDK,[]
+2026-09-21,ALAB,[]
+2026-09-21,APP,[]
+2026-09-21,FLY,"[""negative_free_cash_flow"", ""negative_relative_strength""]"
+2026-09-21,LMND,"[""negative_relative_strength"", ""weak_chart_structure""]"
+2026-09-21,MXL,[]
+2026-09-22,ALAB,[]
+2026-09-22,ALAB,[]
+2026-09-22,APP,[]
+2026-09-22,APP,[]
+2026-09-22,COMP,[]
+2026-09-22,COMP,"[""material_share_dilution""]"
+2026-09-22,KLIC,[]
+2026-09-22,KLIC,[]
+2026-09-22,MXL,[]
+2026-09-22,MXL,[]
+2026-09-23,AAON,[]
+2026-09-23,ALAB,[]
+2026-09-23,KLIC,[]
+2026-09-23,STRL,[]
+2026-09-24,AAON,[]
+2026-09-24,KLIC,[]
+2026-09-24,MXL,[]
+2026-09-25,AAON,[]
+2026-09-25,FLY,[]
+2026-09-25,KLIC,[]
+2026-09-28,AAON,[]
+2026-09-28,CRDO,[]
+2026-09-28,KLIC,[]
+2026-09-29,KLIC,[]
+2026-09-29,KLIC,[]
+2026-10-01,CRDO,[]
+2026-10-01,STRL,[]
+2026-10-02,STRL,[]
+2026-10-05,STRL,[]
+2026-10-06,AAON,[]
+2026-10-06,COMP,[]
+2026-10-06,STRL,[]
+2026-10-07,AAON,[]
+2026-10-07,STRL,[]
+2026-10-12,STRL,[]
+2026-10-13,APP,[]
+2026-10-13,LMND,[]
+2026-10-13,RUN,"[""reduced_2026_cash_generation_guidance"", ""very_high_debt_and_financing_dependence""]"
+2026-10-13,STRL,[]
+2026-10-14,AAON,"[""gross_margin_compression_during_capacity_ramp""]"
+2026-10-14,APP,[]
+2026-10-14,CRDO,"[""high_hyperscaler_end_customer_concentration""]"
+2026-10-14,LMND,[]
+2026-10-14,STRL,[]
+2026-10-15,APP,[]
+2026-10-15,KLIC,"[""material_china_customer_and_receivables_concentration""]"
+2026-10-15,LMND,[]
+2026-10-15,STRL,[]
+2026-10-16,APP,[]
+2026-10-16,LMND,[]
+2026-10-16,STRL,[]
+2026-10-19,APP,[]
+2026-10-19,COMP,"[""high_merger_related_share_count_growth"", ""substantial_debt_and_repayment_dependence""]"
+2026-10-19,LMND,[]
+2026-10-19,STRL,[]
+2026-10-20,APP,[]
+2026-10-20,COMP,"[""material_convertible_dilution_exposure""]"
+2026-10-20,LMND,[]
+2026-10-20,STRL,[]

@@ -34,6 +34,7 @@ from app.models import (
 from app.strategy_decisions import StrategyCandidateDecision
 
 STRATEGY_KEY = "dynamic_swing_buy_alerts"
+SHADOW_STRATEGY_KEY = "dynamic_swing_buy_alerts_shadow"
 RUN_TYPES = ("as_run", "shadow")
 FORWARD_HORIZONS = (5, 10, 20)
 TRIGGER_WINDOW_SESSIONS = 20
@@ -258,16 +259,20 @@ def _close_on(session: Session, ticker: str, as_of_date: date) -> Decimal | None
 def sync_alert_outcomes(
     session: Session,
     *,
-    strategy_key: str = STRATEGY_KEY,
+    strategy_keys: Iterable[str] = (STRATEGY_KEY, SHADOW_STRATEGY_KEY),
     since: date | None = None,
     today: date | None = None,
     run_types: Iterable[str] = RUN_TYPES,
 ) -> dict[str, Any]:
     """Write or advance outcome observations for recent alert runs (idempotent)."""
     since = since or (today or date.today()) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
-    runs = _latest_runs_per_day(
-        _runs(session, strategy_key=strategy_key, run_types=run_types, since=since)
-    )
+    runs = [
+        run
+        for strategy_key in strategy_keys
+        for run in _latest_runs_per_day(
+            _runs(session, strategy_key=strategy_key, run_types=run_types, since=since)
+        )
+    ]
     written = updated = unchanged = runs_seen = 0
     for run, _definition in runs:
         decisions = session.scalars(

@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
 from app.services.alert_outcomes import sync_alert_outcomes
+from app.services.daily_stock_alert_shadow import run_daily_stock_alert_shadow
 from app.services.feature_calculation import calculate_daily_features
 from app.services.massive_ingestion import (
     sync_corporate_actions,
@@ -73,6 +74,16 @@ def _run_alert_outcomes() -> None:
         logger.exception("Alert outcome scorecard sync failed")
 
 
+def _run_alert_shadow() -> None:
+    # Shadow output is never delivered; a failure is logged and the live alert is unaffected.
+    try:
+        with SessionLocal() as session:
+            result = run_daily_stock_alert_shadow(session, get_settings())
+        logger.info("v0.9 shadow alert: %s", result)
+    except Exception:  # noqa: BLE001
+        logger.exception("v0.9 shadow alert failed")
+
+
 def _advance_daily_alert_preparations() -> None:
     with SessionLocal() as session:
         results = advance_eligible_daily_stock_alert_preparations(session, get_settings())
@@ -134,6 +145,13 @@ def main() -> None:
         id="sec_incremental",
         **common,
     )
+    if settings.alert_shadow_enabled:
+        scheduler.add_job(
+            _run_alert_shadow,
+            CronTrigger.from_crontab(settings.alert_shadow_cron, timezone=settings.timezone),
+            id="daily_alert_v09_shadow",
+            **common,
+        )
     scheduler.add_job(
         _run_features,
         CronTrigger.from_crontab(

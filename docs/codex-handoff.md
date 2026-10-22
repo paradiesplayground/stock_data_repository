@@ -46,7 +46,40 @@
     | NOT_ELIGIBLE | −1.1% | 45 | 2 | −0.89R |
 - **Remaining:**
   - Confirm the next 5:30 AM feature job, which now writes both versions, still finishes before the alert, and that the v0.8 alert is unchanged.
-  - Phase 2 (v0.9 engine in shadow) is next.
+- **Implemented (Phase 2, not deployed): the v0.9 engine in shadow mode.**
+  - **Config and contract.** New config `dynamic-swing-buy-alerts-v0.9.json` and decision contract v0.9:
+    - the same four statuses;
+    - buckets `screen` / `tracked_recovery` / `blocked` / `exited` / `incomplete`;
+    - technical state `broken`;
+    - typed `blocker_codes`.
+
+    v0.9 can be recorded only as `run_type=shadow`; `as_run` still requires v0.8, and v0.9 is not in the delivery allowlist.
+  - **Engine.** A pure engine (`alert_v09_engine`) assigns every label on the server:
+    - the trigger is built from the prior-session 20-day high (Buy is reachable on a breakout session);
+    - names stay tracked after they recover out of the screen;
+    - exit rules: base gates fail, more than 60 sessions outside the screen, or no progress in 30 sessions;
+    - broken setups reset, and no actionable label ever shows a stop above the price;
+    - risk flags and typed research blockers give a daily re-checked Blocked state.
+
+    Saved free-text blockers map to typed codes (`blocker_codes`).
+  - **Shadow job.** `daily_stock_alert_shadow` runs at 7:30 AM CT, Tue–Sat. It reuses the live alert's saved research read-only and keeps its own lifecycle rows under `dynamic_swing_buy_alerts@0.9`. It records one shadow run per date under strategy key `dynamic_swing_buy_alerts_shadow`, with capped email sections, a compact report, the would-be research queue, and a comparison with v0.8. It never publishes or emails.
+  - **Commands.** `bootstrap-alert-shadow` replays tracking point-in-time and resumes safely; `run-alert-shadow` runs one date. The outcome scorecard now also covers shadow runs.
+- **Verified locally:**
+  - 287 tests and Ruff pass.
+  - The golden replay drives the shadow job's own per-day function with production 1.6.0 features for 19 tickers (Jul 1 – Oct 20). It checks that:
+    - recovering names stay visible every day;
+    - nothing is labelled Buy or Close on market-blocked days;
+    - Buy and Close calls appear;
+    - stops sit below the price;
+    - APP and STRL are no longer led by stale triggers;
+    - every candidate validates against contract v0.9.
+  - The shadow job's database path has not run against PostgreSQL yet; the first bootstrap at deploy is its first real run.
+- **Remaining (Phase 2 deploy gate, needs the owner's go-ahead):**
+  - deploy;
+  - `bootstrap-alert-shadow --start 2026-07-01 --end <latest market date> --record-from 2026-09-30`;
+  - review the shadow runs against v0.8.
+
+  The live v0.9 preparation wiring (research queue order, finalization through the engine) and the A8 presentation are Phase 3 / cutover work.
 
 ## 2026-10-14 — Decision-first Daily Stock Alert
 
