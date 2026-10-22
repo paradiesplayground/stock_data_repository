@@ -52,8 +52,8 @@
   - The routine prompt document and the skill now ask for the fields and the typed blocker codes. The live v0.8 alert ignores the fields, so its behaviour is unchanged.
 - **Verified locally:** 300 tests and Ruff pass.
 - **Deployed / verified (`7515965`):** The contract suite passed (300 tests), migration `0019` applied, and services are healthy. The live MCP research tool accepts `research_fields`.
-- **Implemented (not deployed):** The v0.9 presentation now carries uncapped Recovering and Blocked lists for the website, closing the gap found earlier. Each Blocked entry includes its reasons. The email still uses only the capped sections. Shadow runs already stored on the website keep their old capped view. 301 tests pass.
-- **Remaining:** Copy the updated routine prompt into the claude.ai routine; this was requested from the migration session (re-sent after that session hit its usage limit). The fields are populated only for names the live alert researches.
+- **Implemented and deployed (`969a12f`, contract suite 301 passed):** The v0.9 presentation now carries uncapped Recovering and Blocked lists for the website, closing the gap found earlier. Each Blocked entry includes its reasons. The email still uses only the capped sections. Shadow runs already stored on the website keep their old capped view. 301 tests pass.
+- **Remaining:** Copy the updated routine prompt into the claude.ai routine; the migration session has now done this. Research fields stay empty until the ChatGPT stock task is paused, because ChatGPT still researches first and Claude no-ops on the delivered alert. The fields are populated only for names the live alert researches.
 - **Remaining:**
   - Daily shadow runs at 7:30 AM CT.
   - Phase 3: the "Buy / Close / why" presentation and an unlisted shadow page with a weekly comparison email.
