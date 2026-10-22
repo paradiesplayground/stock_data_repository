@@ -307,6 +307,7 @@ def sync_alert_outcomes(
                 "effective_status": decision.buyability_status,
                 "market_regime_gate_passed": decision.market_regime_gate_passed,
                 "distance_to_trigger_pct": _text(_decimal(decision.distance_to_trigger_pct)),
+                "research_fields": payload.get("research_fields"),
             }
             ticker_bars = bars.get(decision.ticker, [])
             alert_close = _decimal(decision.current_price) or _close_on(session, decision.ticker, run.as_of_date)
@@ -422,3 +423,63 @@ def alert_outcome_scorecard(
             "and treat small samples as directional only."
         ),
     }
+
+
+def research_field_breakdown(
+    session: Session,
+    field: str,
+    *,
+    strategy_key: str = SHADOW_STRATEGY_KEY,
+    run_type: str = "shadow",
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[str, Any]:
+    """Outcomes grouped by one typed research finding, for researched candidates only.
+
+    ``next_earnings_date`` is bucketed by distance from the alert date. Trades are
+    deduped by ticker and fill date, as in the main scorecard.
+    """
+    from app.services.research_fields import FIELD_NAMES, earnings_bucket
+
+    if field not in FIELD_NAMES:
+        raise ValueError("field must be one of: " + ", ".join(FIELD_NAMES))
+    runs = _latest_runs_per_day(
+        _runs(session, strategy_key=strategy_key, run_types=(run_type,), since=start_date, until=end_date)
+    )
+    run_dates = {run.run_id: run.as_of_date for run, _ in runs}
+    observations = session.scalars(
+        select(StrategyOutcomeObservation).where(StrategyOutcomeObservation.run_id.in_(list(run_dates)))
+    ).all() if run_dates else []
+    groups: dict[str, dict[str, Any]] = defaultdict(lambda: {"candidate_days": 0, "excess": [], "trades": {}})
+    for item in sorted(observations, key=lambda obs: run_dates[obs.run_id]):
+        metrics = item.metrics or {}
+        fields = metrics.get("research_fields")
+        if not fields:
+            continue
+        value = (
+            earnings_bucket(fields, run_dates[item.run_id])
+            if field == "next_earnings_date" else str(fields.get(field) or "unknown")
+        )
+        group = groups[value]
+        if item.horizon == "trade_path":
+            group["candidate_days"] += 1
+            if metrics.get("entry_date"):
+                group["trades"].setdefault((item.ticker, metrics["entry_date"]), (item.status, metrics))
+        elif item.horizon == "fwd_10s" and metrics.get("excess_return_pct") is not None:
+            group["excess"].append(Decimal(str(metrics["excess_return_pct"])))
+    result = {}
+    for value, group in sorted(groups.items()):
+        resolved = [(status, metrics) for status, metrics in group["trades"].values() if status in RESOLVED_TRADE_STATUSES]
+        result[value] = {
+            "candidate_days": group["candidate_days"],
+            "fwd_10s_observations": len(group["excess"]),
+            "fwd_10s_mean_excess_vs_qqq_pct": _mean(group["excess"]),
+            "unique_fills": len(group["trades"]),
+            "resolved": len(resolved),
+            "target_2r": sum(1 for status, _ in resolved if status == "target_2r"),
+            "stopped": sum(1 for status, _ in resolved if status == "stopped"),
+            "expectancy_r": _mean([Decimal(str(m["exit_r"])) for _, m in resolved if m.get("exit_r") is not None]),
+        }
+    return {"field": field, "strategy_key": strategy_key, "run_type": run_type, "by_value": result,
+            "interpretation": "Measurement only; a field changes labels only after it separates outcomes "
+                              "with at least 30 resolved trades."}

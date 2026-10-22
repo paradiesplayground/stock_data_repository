@@ -104,6 +104,8 @@ class EngineConfig:
 class Research:
     as_of_date: date
     blocker_codes: tuple[str, ...] = ()
+    # Typed findings are recorded for measurement only; they never change a label.
+    fields: dict[str, Any] | None = None
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -323,6 +325,7 @@ def evaluate(
         deterministic_risk_flags=risk_flags,
         research_as_of=research.as_of_date.isoformat() if research else None,
         research_current=research_current,
+        research_fields=research.fields if research_current and research else None,
     )
     if risk_flags or codes:
         readable = [flag.replace("_", " ") for flag in risk_flags + codes]

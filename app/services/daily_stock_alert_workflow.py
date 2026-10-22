@@ -25,6 +25,7 @@ from app.services.daily_stock_alert_report import (
     presentation_groups,
     report_enrichment,
 )
+from app.services.research_fields import normalize_research_fields
 from app.services.stock_alert_delivery import publish_strategy_run_only, send_strategy_run_email
 from app.services.strategy_tracking import get_strategy_run, record_strategy_run
 
@@ -193,6 +194,7 @@ def record_daily_stock_alert_research(
     qualitative_blockers: list[str] | None = None,
     qualitative_flags: list[str] | None = None,
     candidate_decision: dict[str, Any] | None = None,
+    research_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Idempotently checkpoint one completed deep-research result."""
     preparation = _preparation(session, preparation_id)
@@ -215,6 +217,7 @@ def record_daily_stock_alert_research(
         "qualitative_blockers": sorted(set(qualitative_blockers or [])),
         "qualitative_flags": sorted(set(qualitative_flags or [])),
         "candidate_decision": deepcopy(candidate_decision),
+        "research_fields": normalize_research_fields(research_fields),
     }
     if existing:
         for field, value in values.items():

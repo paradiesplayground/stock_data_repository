@@ -585,14 +585,22 @@ if settings.mcp_enable_strategy_writes:
         qualitative_blockers: list[str] | None = None,
         qualitative_flags: list[str] | None = None,
         candidate_decision: dict[str, Any] | None = None,
+        research_fields: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Durably checkpoint one completed deep-research ticker."""
+        """Durably checkpoint one completed deep-research ticker.
+
+        research_fields (optional, typed): next_earnings_date (ISO date or null),
+        guidance_direction (raised|held|cut|none|unknown), gross_margin_trend
+        (expanding|stable|contracting|unknown), estimate_revisions (up|flat|down|unknown),
+        insider_activity (net_buying|neutral|net_selling|unknown), institutional_activity
+        (accumulating|neutral|distributing|unknown), catalyst_quality (strong|neutral|weak|unknown).
+        """
         with SessionLocal() as session:
             return record_daily_alert_research_workflow(
                 session, settings=get_settings(), preparation_id=preparation_id, ticker=ticker, evidence=evidence,
                 required_dimensions=required_dimensions,
                 qualitative_blockers=qualitative_blockers, qualitative_flags=qualitative_flags,
-                candidate_decision=candidate_decision,
+                candidate_decision=candidate_decision, research_fields=research_fields,
             )
 
     @mcp.tool(

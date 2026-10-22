@@ -37,6 +37,21 @@
 
   The labelling now surfaces setups, but the breakout entry and stop plan has not paid in this window. That raises the priority of the B4 (exits) and B7 (market gate) backtests before cutover.
 - **Problem found:** The website page shows only the email-capped Recovering list, and its full record repeats the cap. The remaining tracked names and the Blocked names are not listed anywhere. The fix is to add uncapped Recovering and Blocked lists to the presentation for the website only.
+- **Decision (owner):** Research findings become typed fields, so the scorecard can measure each one before any of them is allowed to change a label. Later options, not built: an earnings-proximity rule, and conviction ranking of Buy and Close names.
+- **Implemented (not deployed):**
+  - `record_daily_stock_alert_research` accepts optional `research_fields`, stored after validation (migration `0019`). Omitted fields are recorded as unknown. The fields are:
+    - `next_earnings_date`;
+    - `guidance_direction`;
+    - `gross_margin_trend`;
+    - `estimate_revisions`;
+    - `insider_activity`;
+    - `institutional_activity`;
+    - `catalyst_quality`.
+  - v0.9 shadow candidates carry the current research's fields, and Buy/Close cards gain a "Research:" line. The fields never change a label.
+  - Outcome observations record the fields. `alert-scorecard --by-research-field FIELD` breaks shadow outcomes down by each value, with the earnings date bucketed by distance from the alert.
+  - The routine prompt document and the skill now ask for the fields and the typed blocker codes. The live v0.8 alert ignores the fields, so its behaviour is unchanged.
+- **Verified locally:** 300 tests and Ruff pass.
+- **Remaining:** Deploy (migration `0019`); website card line `paradies-playground`. Copy the updated routine prompt into the claude.ai routine. The fields are populated only for names the live alert researches.
 - **Remaining:**
   - Daily shadow runs at 7:30 AM CT.
   - Phase 3: the "Buy / Close / why" presentation and an unlisted shadow page with a weekly comparison email.

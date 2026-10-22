@@ -6,7 +6,11 @@ from decimal import Decimal
 from app.config import get_settings
 from app.db import SessionLocal
 from app.logging_config import configure_logging
-from app.services.alert_outcomes import alert_outcome_scorecard, sync_alert_outcomes
+from app.services.alert_outcomes import (
+    alert_outcome_scorecard,
+    research_field_breakdown,
+    sync_alert_outcomes,
+)
 from app.services.daily_stock_alert_shadow import (
     SHADOW_STRATEGY_KEY,
     bootstrap_daily_stock_alert_shadow,
@@ -130,6 +134,7 @@ def main() -> None:
     shadow_bootstrap.add_argument("--record-from", type=_date)
     scorecard = subparsers.add_parser("alert-scorecard")
     scorecard.add_argument("--strategy-key")
+    scorecard.add_argument("--by-research-field", help="break shadow outcomes down by one typed research field")
     scorecard.add_argument("--strategy-version")
     scorecard.add_argument("--run-type", default="as_run")
     scorecard.add_argument("--start", type=_date)
@@ -253,6 +258,10 @@ def main() -> None:
                 start_date=args.start,
                 end_date=args.end,
                 record_from=args.record_from,
+            )
+        elif args.command == "alert-scorecard" and args.by_research_field:
+            result = research_field_breakdown(
+                session, args.by_research_field, start_date=args.start, end_date=args.end
             )
         elif args.command == "alert-scorecard":
             result = alert_outcome_scorecard(

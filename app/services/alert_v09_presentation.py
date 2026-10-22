@@ -19,6 +19,7 @@ from app.services.alert_v09_engine import (
     SECTION_RECOVERING,
 )
 from app.services.daily_stock_alert_report import structural_targets
+from app.services.research_fields import research_summary
 
 PRESENTATION_VERSION = "v0.9-presentation-1"
 SECTION_TITLES = {
@@ -105,6 +106,10 @@ def card(candidate: dict[str, Any], entry_band_pct: Decimal = Decimal("5")) -> d
         "in_screen": bool(payload.get("in_screen")),
         "needs_research": bool(payload.get("needs_research")),
         "exit_reason": payload.get("exit_reason"),
+        "research": research_summary(
+            payload.get("research_fields"),
+            date.fromisoformat(str(payload["research_as_of"])) if payload.get("research_as_of") else date.today(),
+        ),
     }
 
 
@@ -200,6 +205,8 @@ def render_markdown(presentation: dict[str, Any]) -> str:
             lines.append(f"### {item['ticker']}" + (f" — {item['company']}" if item.get("company") else ""))
             lines.append(plan(item))
             lines.append("Why: " + "; ".join(item["why"]) + ".")
+            if item.get("research"):
+                lines.append("Research: " + item["research"] + ".")
             lines.append("Next: " + str(item["next"]))
         if detail["more"]:
             lines.append(f"- +{detail['more']} more on the website")

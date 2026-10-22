@@ -25,6 +25,8 @@ After preparation, call `get_daily_stock_alert_preparation_status` only to inspe
 - If `outstanding_deep_research_tickers` is non-empty, research only those tickers. Immediately call `record_daily_stock_alert_research` after each completed ticker. Supply its evidence, mark every required dimension complete, and include blockers, flags, and any per-ticker decision detail. Never hold completed research only in chat context.
 - Once the final required checkpoint is recorded, stop. The server finalizes, validates, persists the stored canonical payload, publishes it, and sends email asynchronously.
 
+Also supply `research_fields` with each checkpoint: `next_earnings_date` (ISO date or null), `guidance_direction` (raised|held|cut|none|unknown), `gross_margin_trend` (expanding|stable|contracting|unknown), `estimate_revisions` (up|flat|down|unknown), `insider_activity` (net_buying|neutral|net_selling|unknown), `institutional_activity` (accumulating|neutral|distributing|unknown), and `catalyst_quality` (strong|neutral|weak|unknown). Use `unknown` whenever the evidence does not establish a value; never infer one. The server records these findings for measurement and does not change any decision from them. For blockers, prefer the typed codes: `going_concern`, `dilution_material`, `dilution_overhang_atm_convert`, `cash_burn_runway`, `customer_concentration`, `debt_refinancing`, `revenue_quality_acquired`, `event_risk_near_term`, `accounting_or_legal`, `other_fundamental`.
+
 Checkpoint only per-ticker research. Do not use `candidate_decision` to construct a canonical candidate array, summary, or report. A resume must reuse the latest saved `preparation_id`; never restart work merely because an earlier execution ended.
 
 ### Explicit same-date reruns

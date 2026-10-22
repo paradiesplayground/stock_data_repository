@@ -101,6 +101,7 @@ def _research_by_ticker(session: Session, as_of_date: date, max_age_days: int) -
         latest[research.ticker.upper()] = Research(
             as_of_date=research_date,
             blocker_codes=tuple(blocker_codes(research.qualitative_blockers or [])),
+            fields=getattr(research, "research_fields", None),
         )
     return latest
 

@@ -633,6 +633,7 @@ class DailyAlertPreparationResearch(Base):
     qualitative_blockers: Mapped[list] = mapped_column(JSONB)
     qualitative_flags: Mapped[list] = mapped_column(JSONB)
     candidate_decision: Mapped[dict | None] = mapped_column(JSONB)
+    research_fields: Mapped[dict | None] = mapped_column(JSONB)
     updated_at_utc: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
