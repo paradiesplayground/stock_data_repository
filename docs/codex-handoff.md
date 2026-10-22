@@ -51,7 +51,8 @@
   - Outcome observations record the fields. `alert-scorecard --by-research-field FIELD` breaks shadow outcomes down by each value, with the earnings date bucketed by distance from the alert.
   - The routine prompt document and the skill now ask for the fields and the typed blocker codes. The live v0.8 alert ignores the fields, so its behaviour is unchanged.
 - **Verified locally:** 300 tests and Ruff pass.
-- **Remaining:** Deploy (migration `0019`); website card line `paradies-playground`. Copy the updated routine prompt into the claude.ai routine. The fields are populated only for names the live alert researches.
+- **Deployed / verified (`7515965`):** The contract suite passed (300 tests), migration `0019` applied, and services are healthy. The live MCP research tool accepts `research_fields`.
+- **Remaining:** Copy the updated routine prompt into the claude.ai routine; this was requested from the migration session. The fields are populated only for names the live alert researches.
 - **Remaining:**
   - Daily shadow runs at 7:30 AM CT.
   - Phase 3: the "Buy / Close / why" presentation and an unlisted shadow page with a weekly comparison email.
