@@ -1,5 +1,25 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-10-22 — v0.9 shadow alert deployed
+
+- **Verified:** The first scheduled feature job writing both 1.5.0 and 1.6.0 took 2½ minutes, unchanged. The live v0.8 alert for Oct 21 completed and was delivered at 5:43 AM CT. The PostgreSQL container restarted at 3:08 AM CT for an unknown reason (not OOM, restart count 0); services were healthy afterwards.
+- **Deployed / verified (`3b7a5a5`):**
+  - The guarded contract suite passed (287 tests, Ruff). Services were recreated after 7:30 AM CT, so the new shadow job could not fire before the bootstrap. Health is OK after the usual tunnel-only restart.
+  - The bootstrap replayed v0.9 tracking from Jul 1 to Oct 21 and recorded 16 shadow runs (Sep 30 – Oct 21).
+  - The scorecard sync covered 52 runs, live and shadow, and wrote 1,580 new observations.
+- **Shadow vs v0.8 (Sep 30 – Oct 21):**
+  - v0.9 tracked 45–49 names a day; v0.8 showed 3–6 RADAR names.
+  - v0.9 called Buy for NVT (Oct 1, 2, 5), CRDO (Oct 2, 6, 7, 9), and STRL (Oct 7). It called Close for CRDO, FLY, SNDK, STRL, NVT, and KLIC on several days. v0.8 had no Buy or Close calls in that period.
+  - Nothing was labelled Buy or Close on market-blocked days.
+  - About 23 names were Blocked, mostly by the 15% share-count rule.
+  - The would-be research queue added APH, SANM, TLN, MU, CLS, TER, and VIAV.
+  - Shadow reports are 750–1,450 characters, against 70–100k for v0.8.
+- **Remaining:**
+  - Daily shadow runs at 7:30 AM CT.
+  - Phase 3: the "Buy / Close / why" presentation and an unlisted shadow page with a weekly comparison email.
+  - At cutover: wire v0.9 into the live preparation and research queue.
+  - In parallel: the B4 (exit) and B7 (market gate) backtests.
+
 ## 2026-10-21 — Claude takes over the Daily Stock Alert client
 
 - **Implemented:** The assistant side of the Daily Stock Alert is moving from the ChatGPT scheduled task to a Claude Code cloud routine. The prompt lives in `docs/claude-daily-stock-alert-routine.md`, with a `MODE: CHECK` (read-only) / `MODE: LIVE` switch. It keeps the existing contract: freshness gate, idempotent no-op when a canonical run is delivered, resume-not-restart preparation, research only the server's deep-research queue, server-owned finalization and delivery.
