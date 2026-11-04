@@ -1,5 +1,14 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-11-04 — Daily alert for Nov 3 completed
+
+- **Completed / verified:** The scheduled routine ran the live Daily Stock Alert for market date 2026-11-03 (preparation `335c56c6`, canonical run `19257156`). Data freshness was current; no same-date run existed beforehand. Finalization and validation passed, and the website and email stages both reported complete. The market regime gate was BLOCK.
+- **Research:** Six names were in the deep-research queue (WDC, KLIC, NVT, STX, FN, QXO) and all six checkpoints were recorded. 25 names were deterministic-only; none were carried forward.
+- **Problem / resolution:** The server rejected the first WDC checkpoint because every required dimension must be covered. Evidence was deepened from SEC 10-K/10-Q/8-K filings; chart and liquidity dimensions came from the connector's price and feature data. The bid/ask spread is not observable from public sources, so a liquidity proxy was used and flagged. Fields without source support were left `unknown`.
+- **Blockers recorded:** WDC and FN: customer concentration (WDC top three ~44% of revenue; FN top four ~57%). QXO: material dilution, debt refinancing, and acquisition-driven revenue.
+- **Backlog / technical debt:** Research dimensions for bid/ask spread and float cannot be satisfied from public sources; consider a server-accepted "proxy" evidence type. The prepare and strategy-run tools return very large payloads (hundreds of thousands of characters); a compact summary mode would help unattended runs.
+- No code changes were made this session.
+
 ## 2026-10-22 — v0.9 shadow alert deployed
 
 - **Verified:** The first scheduled feature job writing both 1.5.0 and 1.6.0 took 2½ minutes, unchanged. The live v0.8 alert for Oct 21 completed and was delivered at 5:43 AM CT. The PostgreSQL container restarted at 3:08 AM CT for an unknown reason (not OOM, restart count 0); services were healthy afterwards.
