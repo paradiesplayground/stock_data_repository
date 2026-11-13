@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Make the tunnel service wait for an MCP handshake before starting the tunnel client, so a
+  start that beats MCP no longer leaves the tunnel permanently not ready.
 - Bind the API host port to loopback and the MCP host port to the Docker bridge by default
   (`API_BIND`, `MCP_BIND`), so neither is reachable from other machines on the network.
 - Advance the hybrid production alert to repository-owned strategy v0.8 so it no longer collides

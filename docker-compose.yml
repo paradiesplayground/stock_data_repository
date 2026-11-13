@@ -118,6 +118,31 @@ services:
     image: stock-data-tunnel-client:0.0.10
     container_name: stock-data-tunnel
     restart: unless-stopped
+    # tunnel-client probes its MCP once at startup and never retries, so a start that
+    # beats the MCP (server reboot, nightly backup restart) leaves it not ready for good.
+    # Wait here until the MCP answers a handshake, then start the client.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        probe() {
+          wget -S -q -O /dev/null -T 5 \
+              --header 'Content-Type: application/json' \
+              --header 'Accept: application/json, text/event-stream' \
+              --post-data '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"tunnel-wait","version":"1"}}}' \
+              "$$MCP_SERVER_URL" 2>&1 | sed -n 's/.*HTTP\/[0-9.]* \([0-9][0-9][0-9]\).*/\1/p' | head -n 1
+        }
+        tries=0
+        until code=$$(probe); [ -n "$$code" ] && [ "$$code" -lt 500 ]; do
+          tries=$$((tries + 1))
+          if [ "$$tries" -ge "$${MCP_WAIT_ATTEMPTS:-120}" ]; then
+            echo "tunnel-wait: MCP still not ready, starting tunnel-client anyway"
+            break
+          fi
+          echo "tunnel-wait: waiting for MCP (last answer: $${code:-none})"
+          sleep 5
+        done
+        exec /usr/bin/tunnel-client run
     mem_limit: 256m
     environment:
       CONTROL_PLANE_TUNNEL_ID: ${OPENAI_TUNNEL_ID:?Set OPENAI_TUNNEL_ID in .env}

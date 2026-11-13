@@ -8,7 +8,7 @@
 - **Decision:** The pattern matches the pool-chemistry stack, which already publishes its MCP port on the Docker bridge only. Anyone who needs the API from another trusted machine can set `API_BIND` deliberately; MCP should not be bound to a LAN address.
 - **Deployed / verified (`e7f94ed`):** Deployed with the repository update script. The API, MCP, and tunnel report healthy. Both ports refuse connections from another machine on the network, the API answers on the host, and the website container still completes an MCP handshake through `host.docker.internal`.
 - **Problem / resolution:** The tunnel client was unhealthy before the deploy (it had started ahead of MCP after the nightly update) and was still starting after it; one more tunnel-only restart brought it to healthy.
-- **Backlog / technical debt:** The tunnel client does not recover on its own when it starts before MCP is ready, so it needs a manual restart after server reboots and nightly updates. A retry or a start-order guard would remove that.
+- **Implemented (tunnel start order):** The tunnel client probes MCP once at startup and never retries, so a start that beat MCP (server reboot, the nightly backup restart, a deploy) left it not ready until a manual restart. The tunnel service now runs a short wait loop first and only starts the client once MCP answers a handshake without a server error; after ten minutes it starts anyway. The deploy script's tunnel-only restart is now harmless rather than necessary. The same change was made in the pool chemistry and website repositories, where a deliberately reversed start order confirmed the tunnel recovers by itself.
 
 ## 2026-11-04 — Daily alert for Nov 3 completed
 
