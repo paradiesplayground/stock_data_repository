@@ -6,7 +6,9 @@
 - **Implemented:** `docker-compose.yml` now binds the API port to the host loopback (`API_BIND`) and the MCP port to the Docker bridge address (`MCP_BIND`). The website's OAuth-protected MCP gateway still reaches MCP through `host.docker.internal`; other machines on the network no longer can. `.env.example` and the README document both settings.
 - **Changed on the server (not in the repository):** The placeholder API bearer token was replaced with a random one. Requests with no token or the old placeholder are now rejected.
 - **Decision:** The pattern matches the pool-chemistry stack, which already publishes its MCP port on the Docker bridge only. Anyone who needs the API from another trusted machine can set `API_BIND` deliberately; MCP should not be bound to a LAN address.
-- **Deployment status:** Implemented; deployment and verification are recorded below once done.
+- **Deployed / verified (`e7f94ed`):** Deployed with the repository update script. The API, MCP, and tunnel report healthy. Both ports refuse connections from another machine on the network, the API answers on the host, and the website container still completes an MCP handshake through `host.docker.internal`.
+- **Problem / resolution:** The tunnel client was unhealthy before the deploy (it had started ahead of MCP after the nightly update) and was still starting after it; one more tunnel-only restart brought it to healthy.
+- **Backlog / technical debt:** The tunnel client does not recover on its own when it starts before MCP is ready, so it needs a manual restart after server reboots and nightly updates. A retry or a start-order guard would remove that.
 
 ## 2026-11-04 — Daily alert for Nov 3 completed
 

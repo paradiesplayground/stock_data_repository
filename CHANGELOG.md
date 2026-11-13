@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bind the API host port to loopback and the MCP host port to the Docker bridge by default
+  (`API_BIND`, `MCP_BIND`), so neither is reachable from other machines on the network.
 - Advance the hybrid production alert to repository-owned strategy v0.8 so it no longer collides
   with the different immutable v0.7 definition already stored in production.
 - Make dry validation read and compare an existing strategy definition, catching configuration or
