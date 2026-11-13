@@ -52,8 +52,10 @@ services:
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
       - /mnt/user/appdata/stock-data-repository/data:/data
+    # Unraid host only by default (not LAN or internet). Set API_BIND to the Unraid
+    # LAN IP in .env only if another machine on the trusted LAN must call the API.
     ports:
-      - "8787:8000"
+      - "${API_BIND:-127.0.0.1}:8787:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -92,8 +94,10 @@ services:
     mem_limit: 6g
     env_file: .env
     command: ["python", "-m", "app.mcp_server"]
+    # Docker bridge address only (not LAN or internet), so the website's OAuth-protected
+    # MCP gateway can reach MCP through host.docker.internal. MCP itself has no login.
     ports:
-      - "8788:8001"
+      - "${MCP_BIND:-172.17.0.1}:8788:8001"
     depends_on:
       migrate:
         condition: service_completed_successfully

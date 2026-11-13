@@ -21,9 +21,9 @@ read-only to clients.
 The Compose project runs one application image in four roles:
 
 - `migrate`: applies database migrations and exits
-- `api`: FastAPI repository on host port `8787`; source reads plus authenticated strategy writes
+- `api`: FastAPI repository on host port `8787` (Unraid host only by default, see `API_BIND`); source reads plus authenticated strategy writes
 - `worker`: scheduled Massive and SEC ingestion plus deterministic feature calculation
-- `mcp`: Streamable HTTP MCP service on host port `8788`; source reads plus optional strategy writes
+- `mcp`: Streamable HTTP MCP service on host port `8788` (Docker bridge only by default, see `MCP_BIND`); source reads plus optional strategy writes
 - `tunnel`: outbound-only OpenAI Secure MCP Tunnel client
 
 PostgreSQL stores normalized data. Original SEC ZIP archives are retained under `/data/raw/sec` by default.
@@ -283,15 +283,18 @@ POST /v1/strategy-runs/{run_id}/outcomes
 The two POST routes require a configured `API_BEARER_TOKEN`. They append downstream observations
 only; no API route can modify Massive or SEC source data.
 
-Interactive OpenAPI documentation is available at `http://UNRAID-IP:8787/docs`.
+Interactive OpenAPI documentation is available at `http://localhost:8787/docs` on the Unraid host. To reach it from a trusted LAN browser, set `API_BIND` to the Unraid LAN IP in `.env` and redeploy.
 
 ## MCP service
 
-The MCP endpoint is:
+The MCP endpoint, reachable from containers on the Unraid host, is:
 
 ```text
-http://UNRAID-IP:8788/mcp
+http://host.docker.internal:8788/mcp
 ```
+
+The port listens on the Docker bridge address only (`MCP_BIND`, default `172.17.0.1`). MCP has
+no login of its own, so it is not published to the LAN.
 
 It uses stateless Streamable HTTP and exposes:
 

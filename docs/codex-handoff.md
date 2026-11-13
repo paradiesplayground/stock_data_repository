@@ -1,5 +1,13 @@
 # Codex handoff — Stock Data Repository — through September 18, 2026
 
+## 2026-11-13 — API and MCP ports taken off the LAN
+
+- **Why:** A security review of the home server found the API and MCP host ports listening on every network interface. MCP has no login of its own and strategy writes are enabled, and the API was still running with the placeholder bearer token from the example configuration.
+- **Implemented:** `docker-compose.yml` now binds the API port to the host loopback (`API_BIND`) and the MCP port to the Docker bridge address (`MCP_BIND`). The website's OAuth-protected MCP gateway still reaches MCP through `host.docker.internal`; other machines on the network no longer can. `.env.example` and the README document both settings.
+- **Changed on the server (not in the repository):** The placeholder API bearer token was replaced with a random one. Requests with no token or the old placeholder are now rejected.
+- **Decision:** The pattern matches the pool-chemistry stack, which already publishes its MCP port on the Docker bridge only. Anyone who needs the API from another trusted machine can set `API_BIND` deliberately; MCP should not be bound to a LAN address.
+- **Deployment status:** Implemented; deployment and verification are recorded below once done.
+
 ## 2026-11-04 — Daily alert for Nov 3 completed
 
 - **Completed / verified:** The scheduled routine ran the live Daily Stock Alert for market date 2026-11-03 (preparation `335c56c6`, canonical run `19257156`). Data freshness was current; no same-date run existed beforehand. Finalization and validation passed, and the website and email stages both reported complete. The market regime gate was BLOCK.
